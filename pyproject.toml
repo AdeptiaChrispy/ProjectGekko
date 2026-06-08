@@ -33,6 +33,7 @@ dependencies = [
     "python-dateutil",
     "tzdata",
     "typer>=0.12",
+    "aiosqlite>=0.22.1",
 ]
 
 [project.optional-dependencies]
