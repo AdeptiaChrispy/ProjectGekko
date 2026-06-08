@@ -7,8 +7,8 @@ when a required env-var is missing, (b) never leak secret values via repr, and
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 import pytest
 from pydantic import SecretStr, ValidationError
