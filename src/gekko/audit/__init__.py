@@ -24,10 +24,12 @@ from gekko.audit.canonical import (
     normalize_decimals,
 )
 from gekko.audit.log import append_event
+from gekko.audit.verify import walk_chain
 
 __all__: tuple[str, ...] = (
     "GENESIS_PREV_HASH",
     "append_event",
     "canonical_json",
     "normalize_decimals",
+    "walk_chain",
 )
