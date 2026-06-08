@@ -54,7 +54,7 @@ Plans:
 - [ ] 01-01-PLAN.md — Project scaffold (pyproject.toml + uv + ruff/mypy/pytest configs + CLI stub + `gekko doctor` env audit) — Wave 0
 - [x] 01-02-PLAN.md — Pydantic Settings + structlog credential redaction (AUTH-04) + tests/conftest.py fixtures — Wave 0 ✅ 2026-06-08
 - [x] 01-03-PLAN.md — SQLCipher engine (AUTH-03) + SQLAlchemy models for 6 P1 tables + Alembic 0001_initial migration — Wave 1 ✅ 2026-06-08
-- [ ] 01-04-PLAN.md — Audit chain: canonical_json + append_event + walk_chain with SHA-256 hash chain (AUDT-01, AUDT-02) — Wave 1
+- [x] 01-04-PLAN.md — Audit chain: canonical_json + append_event + walk_chain with SHA-256 hash chain (AUDT-01, AUDT-02) — Wave 1 ✅ 2026-06-08
 - [ ] 01-05-PLAN.md — Core types + Brokerage ABC + AlpacaBroker paper-only + TradingStream + paper round-trip integration test (EXEC-01, EXEC-02, EXEC-07, BROK-A-01/03/04/05/06) — Wave 1
 - [ ] 01-06-PLAN.md — Pydantic schemas: Strategy + ResearchBrief + TradeProposal/NoActionProposal + EventPayload + plain-English diff (STRAT-04/05/06, REPT-04, RES-08) — Wave 1
 - [ ] 01-07-PLAN.md — Agent runtime: Researcher + Decision subagents, BudgetTracker, 6 tools, ProposalWriter, trigger_strategy_run, compile_strategy_from_chat (STRAT-01, STRAT-03, RES-01..05) — Wave 2

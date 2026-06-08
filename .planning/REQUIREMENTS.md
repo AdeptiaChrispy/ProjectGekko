@@ -135,8 +135,8 @@ Requirements for initial release. Each maps to roadmap phases (see Traceability)
 
 ### Audit Log
 
-- [ ] **AUDT-01**: Every decision, every order, every fill, every cap rejection, every kill-switch event is recorded as an append-only audit entry
-- [ ] **AUDT-02**: Audit entries include: actor (user/system/agent), action, inputs, outputs, rationale, row hash chained to previous entry
+- [x] **AUDT-01**: Every decision, every order, every fill, every cap rejection, every kill-switch event is recorded as an append-only audit entry ✅ Plan 01-04
+- [x] **AUDT-02**: Audit entries include: actor (user/system/agent), action, inputs, outputs, rationale, row hash chained to previous entry ✅ Plan 01-04
 - [ ] **AUDT-03**: Audit log is browsable via the dashboard with filtering and search
 - [ ] **AUDT-04**: Audit log is exportable as CSV for tax / personal-records use
 
@@ -306,8 +306,8 @@ Mapping of every v1 requirement to exactly one phase. Updated at roadmap creatio
 | COST-03 | Phase 4 | Pending |
 | COST-04 | Phase 4 | Pending |
 | COST-05 | Phase 4 | Pending |
-| AUDT-01 | Phase 1 | Pending |
-| AUDT-02 | Phase 1 | Pending |
+| AUDT-01 | Phase 1 | Complete (Plan 01-04) |
+| AUDT-02 | Phase 1 | Complete (Plan 01-04) |
 | AUDT-03 | Phase 6 | Pending |
 | AUDT-04 | Phase 6 | Pending |
 | OPS-01 | Phase 7 | Pending |

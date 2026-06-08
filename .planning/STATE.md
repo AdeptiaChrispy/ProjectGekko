@@ -3,18 +3,18 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-06-08T18:35:00.000Z"
+last_updated: "2026-06-08T19:30:00.000Z"
 progress:
   total_phases: 9
   completed_phases: 0
   total_plans: 9
-  completed_plans: 3
-  percent: 3
+  completed_plans: 4
+  percent: 4
 ---
 
 # Project State: Project Gekko
 
-**Last updated:** 2026-06-08 (Plan 01-03 complete — SQLCipher engine + 6-table data model + alembic 0001_initial)
+**Last updated:** 2026-06-08 (Plan 01-04 complete — audit chain: canonical_json + append_event + walk_chain, SHA-256 over canonical-subset, per-user asyncio.Lock; AUDT-01 + AUDT-02 closed)
 
 ## Project Reference
 
@@ -25,16 +25,16 @@ progress:
 ## Current Position
 
 Phase: 1 (Foundation & Vertical Slice) — EXECUTING
-Plan: 4 of 9 (01-01 + 01-02 + 01-03 complete)
+Plan: 5 of 9 (01-01 + 01-02 + 01-03 + 01-04 complete)
 
 - **Phase:** 1 (Foundation & Vertical Slice)
-- **Plan:** 01-04 (Audit chain: canonical_json + append_event + walk_chain) — next
+- **Plan:** 01-05 (Core types + Brokerage ABC + AlpacaBroker paper-only + TradingStream) — next
 - **Status:** Executing Phase 1, Wave 1
-- **Progress:** Phase 0 / 9 phases complete; Plan 3 / 9 of Phase 1 complete (~33%)
-- **Resume from:** `.planning/phases/01-foundation-vertical-slice-alpaca-paper-slack-hitl/01-04-PLAN.md`
+- **Progress:** Phase 0 / 9 phases complete; Plan 4 / 9 of Phase 1 complete (~44%)
+- **Resume from:** `.planning/phases/01-foundation-vertical-slice-alpaca-paper-slack-hitl/01-05-PLAN.md`
 
 ```
-[######............] 33%
+[########..........] 44%
 ```
 
 ## Performance Metrics
@@ -86,7 +86,8 @@ Plan: 4 of 9 (01-01 + 01-02 + 01-03 complete)
 - [x] Plan 01-01 executed — uv scaffold + Typer CLI + `gekko doctor` (2026-06-08)
 - [x] Plan 01-02 executed — Pydantic Settings + structlog credential redaction (AUTH-04) + conftest fixtures (2026-06-08)
 - [x] Plan 01-03 executed — SQLCipher engine (AUTH-03) + 6-table data model + alembic 0001_initial (2026-06-08)
-- [ ] Plan 01-04 — Audit chain: canonical_json + append_event + walk_chain (Wave 1 — next)
+- [x] Plan 01-04 executed — Audit chain: canonical_json + append_event + walk_chain (AUDT-01, AUDT-02) (2026-06-08)
+- [ ] Plan 01-05 — Core types + Brokerage ABC + AlpacaBroker paper-only + TradingStream (Wave 1 — next)
 - [x] Resolve "wash-sale default" decision before Phase 2 plan-phase — flag-only chosen 2026-06-08
 - [ ] Resolve "default LLM cost ceiling" value before Phase 4 plan-phase
 - [ ] Resolve "trust ladder promotion criteria" placeholder before Phase 5 plan-phase
@@ -107,9 +108,9 @@ None.
 
 ## Session Continuity
 
-**Next action:** Execute Plan 01-04 — Audit chain (canonical_json + append_event + walk_chain) with SHA-256 hash chain over the `events` table (AUDT-01, AUDT-02). Uses Event from gekko.db.models (just shipped in 01-03) and AuditChainBroken from gekko.core.errors.
+**Next action:** Execute Plan 01-05 — Core types + Brokerage ABC + AlpacaBroker paper-only + TradingStream + paper round-trip integration test (EXEC-01, EXEC-02, EXEC-07, BROK-A-01/03/04/05/06). Will import `gekko.core.errors.BrokerConfigError` / `BrokerOrderError` (shipped in 01-03) and the `broker_credentials` table model. Money-handling code uses `Decimal` per D-20; deterministic `client_order_id = sha256(f"{strategy_id}|{decision_id}|{side}|{qty}|{ticker}")[:32]` lands in this plan.
 
-**Resumable from:** `.planning/phases/01-foundation-vertical-slice-alpaca-paper-slack-hitl/01-04-PLAN.md`. STATE.md + ROADMAP.md + REQUIREMENTS.md + the Plan 01-01, 01-02, and 01-03 SUMMARYs provide full context for any agent to pick up the work.
+**Resumable from:** `.planning/phases/01-foundation-vertical-slice-alpaca-paper-slack-hitl/01-05-PLAN.md`. STATE.md + ROADMAP.md + REQUIREMENTS.md + the Plan 01-01, 01-02, 01-03, and 01-04 SUMMARYs provide full context for any agent to pick up the work.
 
 ### Decisions from Plan 01-02 (added 2026-06-08)
 
@@ -131,7 +132,20 @@ None.
 - _`BrokerCredential.paper` has `server_default='1'` (TRUE)._ Belt-and-braces over AlpacaBroker's constructor guard (Plan 01-05) — Phase 1 paper-only invariant enforced at both the DB and Python layers.
 - _Defense-in-depth `__repr__` excludes payload_json + key_blob + secret_blob._ Defends against accidental `log.info(model_instance)` (AUTH-04 belt-and-braces).
 
+### Decisions from Plan 01-04 (added 2026-06-08)
+
+- _`payload_json` stores the FULL canonical-subset string, not just the inner payload dict._ Per RESEARCH §Pattern 3 the choice was a planner decision; locking in the full string means `walk_chain` is a one-liner `sha256(prev_hash + row.payload_json)` and verification cannot drift out of sync with the writer's canonical-subset schema. Cost: ~30-50 bytes of duplicate data per row.
+- _Canonical-subset shape is locked at `{event_type, payload, ts, user_id}`._ Future plans can add keys to the inner `payload` dict without breaking the chain (canonical_json sort_keys handles it). They CANNOT add/remove canonical-subset-level keys without a coordinated migration that invalidates every existing event row's hash. Treat as a one-shot architectural decision.
+- _Per-user `asyncio.Lock` dict (registry guarded by a separate `_registry_lock`) over a single module-level Lock._ Plan 01-09 will run APScheduler + Slack + dashboard in the same event loop; independent users must be able to append audit events in parallel. Same-user concurrent appends still serialize (the test gates this with 50-task asyncio.gather).
+- _Decimal normalization is the CALLER's responsibility, not `canonical_json`'s._ Per RESEARCH §Pitfall 6, `normalize_decimals(payload)` is the explicit pre-step every money-handling plan must call before `append_event`. The serializer itself does NOT auto-normalize — silently mutating caller-visible payload shape would be a worse failure mode than caller forgetfulness. Plans 01-07 (TradeProposal qty) and 01-08 (fill price) MUST surface this in their SUMMARYs.
+- _`normalize_decimals` uses `+payload.normalize()` (unary plus on the normalized value) so `Decimal('0').normalize()` collapses `0E+0` back to `0` in the canonical JSON output (rather than the visually surprising scientific-notation form Python's `Decimal.normalize()` produces for zero).
+- _`GENESIS_PREV_HASH = '0' * 64` (lowercase)._ Matches `hashlib.sha256(...).hexdigest()` output so equality comparisons against future row_hashes don't need `.lower()` coercion. Locked per CONTEXT.md Claude's Discretion A11.
+- _`walk_chain` advances `expected_prev = row.row_hash` even on a break, surfacing ALL inconsistent rows for forensic analysis (not just the first)._ Useful for detecting forge-then-reseal attacks where a tampered middle row is rehashed by an attacker — the seal would hide that row's break but downstream rows' prev_hash checks would still surface.
+- _`append_event` never raises `AuditChainBroken`._ Write/verify separation: `AuditChainBroken` (from `gekko.core.errors`) is for `walk_chain` callers and the `gekko audit verify` CLI to raise. The write path is intentionally tolerant so a single corrupted row doesn't block all future audit writes.
+
 ---
 *State initialized: 2026-06-08 after roadmap creation*
 *Updated: 2026-06-08 after Phase 1 context gathered*
 *Updated: 2026-06-08 after Plan 01-02 complete*
+*Updated: 2026-06-08 after Plan 01-03 complete*
+*Updated: 2026-06-08 after Plan 01-04 complete*
