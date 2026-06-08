@@ -49,7 +49,17 @@ This roadmap reflects the **safety-first sequencing** that all four research dim
   3. User can manually trigger a research+propose run and receive a Slack DM with ticker, company, action, size, rationale, and approve/reject buttons within 2 minutes
   4. User approving a paper-trade proposal sees the order execute against Alpaca paper, with the fill confirmed via Slack and the full chain (decision → proposal → approval → order → fill) recorded in the append-only audit log
   5. Every record in the database carries a `user_id` field — the data model is multi-user-ready even though only one user is configured; per-user encrypted credentials (SQLCipher) work end-to-end with no plaintext on disk
-**Plans**: TBD
+**Plans:** 9 plans (3 waves; planned 2026-06-08)
+Plans:
+- [ ] 01-01-PLAN.md — Project scaffold (pyproject.toml + uv + ruff/mypy/pytest configs + CLI stub + `gekko doctor` env audit) — Wave 0
+- [ ] 01-02-PLAN.md — Pydantic Settings + structlog credential redaction (AUTH-04) + tests/conftest.py fixtures — Wave 0
+- [ ] 01-03-PLAN.md — SQLCipher engine (AUTH-03) + SQLAlchemy models for 6 P1 tables + Alembic 0001_initial migration — Wave 1
+- [ ] 01-04-PLAN.md — Audit chain: canonical_json + append_event + walk_chain with SHA-256 hash chain (AUDT-01, AUDT-02) — Wave 1
+- [ ] 01-05-PLAN.md — Core types + Brokerage ABC + AlpacaBroker paper-only + TradingStream + paper round-trip integration test (EXEC-01, EXEC-02, EXEC-07, BROK-A-01/03/04/05/06) — Wave 1
+- [ ] 01-06-PLAN.md — Pydantic schemas: Strategy + ResearchBrief + TradeProposal/NoActionProposal + EventPayload + plain-English diff (STRAT-04/05/06, REPT-04, RES-08) — Wave 1
+- [ ] 01-07-PLAN.md — Agent runtime: Researcher + Decision subagents, BudgetTracker, 6 tools, ProposalWriter, trigger_strategy_run, compile_strategy_from_chat (STRAT-01, STRAT-03, RES-01..05) — Wave 2
+- [ ] 01-08-PLAN.md — Slack Block Kit card + slash command + Approve/Reject handlers + market-hours guard + Executor (HITL-01, HITL-04, EXEC-10) — Wave 2
+- [ ] 01-09-PLAN.md — Real CLI (init/serve/run/audit/strategy) + APScheduler + FastAPI dashboard with vendored HTMX + SRI lint gate + end-to-end demo test (STRAT-02, CADENCE-02, REG-01..04) — Wave 3
 **UI hint**: yes
 
 ### Phase 2: OrderGuard & Real-Money Alpaca Live (Safety Floor)
@@ -164,7 +174,7 @@ This roadmap reflects the **safety-first sequencing** that all four research dim
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation & Vertical Slice | 0/0 | Not started | - |
+| 1. Foundation & Vertical Slice | 0/9 | Plans drafted (3 waves) | - |
 | 2. OrderGuard & Real-Money Alpaca Live | 0/0 | Not started | - |
 | 3. Production HITL UX | 0/0 | Not started | - |
 | 4. Agent Architecture & Cost Bounds | 0/0 | Not started | - |
@@ -182,3 +192,4 @@ This roadmap reflects the **safety-first sequencing** that all four research dim
 
 ---
 *Roadmap created: 2026-06-08*
+*Phase 1 plans drafted: 2026-06-08 — 9 plans in 3 waves; see `.planning/phases/01-foundation-vertical-slice-alpaca-paper-slack-hitl/01-{01..09}-PLAN.md`*
