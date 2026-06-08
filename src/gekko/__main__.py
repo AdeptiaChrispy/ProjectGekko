@@ -6,6 +6,5 @@ entry declared in pyproject.toml ([project.scripts] gekko = "gekko.cli:app").
 
 from gekko.cli import app
 
-
 if __name__ == "__main__":
     app()
