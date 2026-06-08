@@ -29,7 +29,6 @@ from gekko.audit.canonical import (
     normalize_decimals,
 )
 
-
 # ---------------------------------------------------------------------------
 # Behavior 1 — sorted keys, no whitespace, ASCII-safe
 # ---------------------------------------------------------------------------
