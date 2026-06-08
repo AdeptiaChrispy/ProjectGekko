@@ -1,0 +1,73 @@
+{
+  "_README": [
+    "Plan 01-05 Task 4 — Alpaca paper round-trip cassette.",
+    "",
+    "Recorded responses that emulate alpaca-py 0.43's return shapes for the",
+    "AlpacaBroker integration round-trip test. The test by default replays",
+    "from this file via unittest.mock.patch on the broker's underlying",
+    "TradingClient + StockHistoricalDataClient + TradingStream methods.",
+    "",
+    "Setting GEKKO_TEST_LIVE_ALPACA=1 (with real ALPACA_PAPER_* env vars)",
+    "switches the test into LIVE PAPER mode, which talks to the real",
+    "Alpaca paper API. Live mode is gated additionally on market hours",
+    "for the fill-stream test (off-hours filling cannot be observed).",
+    "",
+    "The cassette ONLY contains paper-account-shaped responses — no live",
+    "data and no credentials. The 'paper-acct-CASSETTE' id is a placeholder."
+  ],
+  "account": {
+    "id": "paper-acct-CASSETTE",
+    "account_number": "PA12345CASSETTE",
+    "buying_power": "100000.00",
+    "status": "ACTIVE",
+    "cash": "100000.00",
+    "equity": "100000.00",
+    "currency": "USD"
+  },
+  "positions": [],
+  "quote_AAPL": {
+    "symbol": "AAPL",
+    "ask_price": "200.50",
+    "bid_price": "200.45",
+    "ask_size": 100,
+    "bid_size": 100,
+    "timestamp": "2026-06-08T15:00:00Z"
+  },
+  "limit_order_AAPL": {
+    "id": "broker-order-LIMIT-CASSETTE",
+    "client_order_id": "WILL_BE_REPLACED_AT_RUNTIME",
+    "symbol": "AAPL",
+    "qty": "1",
+    "side": "buy",
+    "type": "limit",
+    "limit_price": "180.45",
+    "time_in_force": "day",
+    "status": "accepted",
+    "filled_qty": "0",
+    "filled_avg_price": null
+  },
+  "market_order_AAPL_filled": {
+    "id": "broker-order-MARKET-CASSETTE",
+    "client_order_id": "WILL_BE_REPLACED_AT_RUNTIME",
+    "symbol": "AAPL",
+    "qty": "1",
+    "side": "buy",
+    "type": "market",
+    "time_in_force": "day",
+    "status": "filled",
+    "filled_qty": "1",
+    "filled_avg_price": "200.50"
+  },
+  "cancel_response": true,
+  "fill_event": {
+    "event": "fill",
+    "order": {
+      "id": "broker-order-MARKET-CASSETTE",
+      "client_order_id": "WILL_BE_REPLACED_AT_RUNTIME",
+      "symbol": "AAPL",
+      "filled_qty": "1",
+      "filled_avg_price": "200.50",
+      "status": "filled"
+    }
+  }
+}
