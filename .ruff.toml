@@ -37,8 +37,13 @@ ignore = [
 
 [lint.per-file-ignores]
 # Tests and __init__.py are allowed light touches.
-"tests/**/*.py" = ["E501"]
+"tests/**/*.py" = ["E501", "TRY003"]
 "**/__init__.py" = ["F401"]
+# Alembic env.py — boundary error messages with operator-facing context
+# (explaining which env var is missing) are far more useful than a
+# stack-traced 3-word exception subclass; ignore tryceratops "no long
+# messages outside the exception class".
+"migrations/env.py" = ["TRY003"]
 
 [format]
 quote-style = "double"

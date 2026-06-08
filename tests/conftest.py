@@ -1,4 +1,4 @@
-"""Shared pytest fixtures — Plan 01-02 Task 3.
+"""Shared pytest fixtures — Plan 01-02 Task 3 (deepened by Plan 01-03 Task 3).
 
 Per VALIDATION.md §"Wave 0 Requirements" item 3: this conftest provides the
 fixtures every downstream Phase 1 plan depends on. Most are SCAFFOLD stubs in
@@ -6,7 +6,8 @@ Wave 0 (one-line MagicMock or path stubs) and get deepened by later plans:
 
 | Fixture              | Wave 0 shape                          | Refined by   |
 | -------------------- | ------------------------------------- | ------------ |
-| temp_sqlcipher_db    | tmp_path / "test.db" path stub        | Plan 01-03   |
+| temp_sqlcipher_db    | real AsyncEngine + Base.metadata schema | Plan 01-03 ✓ |
+| migrated_sqlcipher_db | tuple[AsyncEngine, Path] via alembic | Plan 01-03 ✓ |
 | sample_strategy      | dict matching D-01 minimal shape      | Plan 01-06   |
 | frozen_time          | freezegun context @ 2026-06-08 15:00Z | (final here) |
 | cassette_dir         | tests/fixtures/cassettes path         | (final here) |
@@ -26,28 +27,100 @@ References:
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+import pytest_asyncio
 
 # ---------------------------------------------------------------------------
-# Database
+# Database — Plan 01-03 Task 3 refinement
 # ---------------------------------------------------------------------------
 
+#: Test passphrase used by ``temp_sqlcipher_db`` and ``migrated_sqlcipher_db``.
+#: Tests can override via ``monkeypatch.setenv("GEKKO_DB_PASSPHRASE", ...)``
+#: before invoking the migrated fixture.
+_TEST_PASSPHRASE = "test-passphrase"  # nosec: test-only literal
 
-@pytest.fixture
-def temp_sqlcipher_db(tmp_path: Path) -> Path:
-    """Return a per-test SQLCipher DB path.
 
-    **P1 Wave 0 stub.** Plan 01-03 replaces this with a real SQLCipher engine
-    + migrated schema (alembic upgrade head). For now, callers receive a
-    `Path` that does NOT point at a real DB file — they're expected to be
-    in scaffolding tests that only need *a* path, not a working engine.
+@pytest_asyncio.fixture
+async def temp_sqlcipher_db(tmp_path: Path) -> AsyncIterator[Any]:
+    """Yield a SQLCipher-encrypted ``AsyncEngine`` with the 6 P1 tables.
+
+    Uses ``Base.metadata.create_all`` (NOT Alembic) because unit tests want
+    fast setup. Tests that need real Alembic migration history use
+    ``migrated_sqlcipher_db`` instead.
     """
-    return tmp_path / "test.db"
+    from gekko.db.engine import get_async_engine
+    from gekko.db.models import Base
+
+    engine = get_async_engine(tmp_path / "test.db", _TEST_PASSPHRASE)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    try:
+        yield engine
+    finally:
+        await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def migrated_sqlcipher_db(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> AsyncIterator[tuple[Any, Path]]:
+    """Yield ``(engine, db_path)`` after running ``alembic upgrade head``.
+
+    Used by integration tests that need real Alembic migration history (vs.
+    ``Base.metadata.create_all`` which bypasses Alembic). The migration is
+    run via subprocess so it sees the same env (including
+    ``GEKKO_DB_PASSPHRASE`` and the per-user DB location) the operator
+    would.
+    """
+    import subprocess
+    import sys
+
+    from gekko.db.engine import get_async_engine
+
+    db_dir = tmp_path / "gekko-data"
+    db_dir.mkdir(parents=True, exist_ok=True)
+    user = "test-user"
+    db_path = db_dir / f"{user}.db"
+
+    env_overrides = {
+        "GEKKO_DB_PASSPHRASE": _TEST_PASSPHRASE,
+        "GEKKO_USER_ID": user,
+        "GEKKO_DATA_DIR": str(db_dir),
+        # Minimal Settings env so get_settings() constructs cleanly.
+        "ANTHROPIC_API_KEY": "test-anthropic",
+        "ALPACA_PAPER_API_KEY": "test-alpaca-key",
+        "ALPACA_PAPER_SECRET_KEY": "test-alpaca-secret",
+        "SLACK_BOT_TOKEN": "xoxb-test-bot",
+        "SLACK_SIGNING_SECRET": "test-signing",
+        "SLACK_USER_ID": "U_TEST_USER",
+    }
+    for k, v in env_overrides.items():
+        monkeypatch.setenv(k, v)
+
+    # Run alembic upgrade head in a subprocess — emulates `gekko init` flow.
+    result = subprocess.run(  # nosec
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        env={**__import__("os").environ},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"alembic upgrade head failed (exit {result.returncode}):\n"
+            f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+        )
+
+    engine = get_async_engine(db_path, _TEST_PASSPHRASE)
+    try:
+        yield engine, db_path
+    finally:
+        await engine.dispose()
 
 
 # ---------------------------------------------------------------------------
