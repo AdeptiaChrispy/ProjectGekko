@@ -27,7 +27,6 @@ from gekko.db.engine import (
     verify_passphrase,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -241,8 +240,7 @@ def test_sync_engine_wrong_passphrase_raises(tmp_path: Path) -> None:
 
     e2 = get_sync_engine(db_path, WRONG_PASSPHRASE)
     try:
-        with pytest.raises(WrongPassphraseError):
-            with e2.connect() as conn:
-                conn.execute(text("SELECT 1")).scalar_one()
+        with pytest.raises(WrongPassphraseError), e2.connect() as conn:
+            conn.execute(text("SELECT 1")).scalar_one()
     finally:
         e2.dispose()
