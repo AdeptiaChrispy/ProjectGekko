@@ -122,7 +122,7 @@ Requirements for initial release. Each maps to roadmap phases (see Traceability)
 
 - [ ] **AUTH-01**: User signs into the dashboard via magic-link email (`fastapi-users` + custom magic-link strategy)
 - [ ] **AUTH-02**: Sessions persist across browser refresh; configurable timeout (default 7 days)
-- [ ] **AUTH-03**: All broker credentials encrypted in SQLCipher; passphrase-on-start unlocks the DB (no env-var fallback)
+- [x] **AUTH-03**: All broker credentials encrypted in SQLCipher; passphrase-on-start unlocks the DB (no env-var fallback) (Plan 01-03)
 - [x] **AUTH-04**: Credentials never appear in logs, never enter LLM context (Plan 01-02)
 
 ### Cost Management
@@ -299,7 +299,7 @@ Mapping of every v1 requirement to exactly one phase. Updated at roadmap creatio
 | BROK-F-06 | Phase 9 | Pending |
 | AUTH-01 | Phase 6 | Pending |
 | AUTH-02 | Phase 6 | Pending |
-| AUTH-03 | Phase 1 | Pending |
+| AUTH-03 | Phase 1 | Completed (Plan 01-03, 2026-06-08) |
 | AUTH-04 | Phase 1 | Completed (Plan 01-02, 2026-06-08) |
 | COST-01 | Phase 4 | Pending |
 | COST-02 | Phase 4 | Pending |

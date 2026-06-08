@@ -3,18 +3,18 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-06-08T17:00:41.857Z"
+last_updated: "2026-06-08T18:35:00.000Z"
 progress:
   total_phases: 9
   completed_phases: 0
   total_plans: 9
-  completed_plans: 2
-  percent: 2
+  completed_plans: 3
+  percent: 3
 ---
 
 # Project State: Project Gekko
 
-**Last updated:** 2026-06-08 (Plan 01-02 complete — Settings + structlog redaction + conftest fixtures)
+**Last updated:** 2026-06-08 (Plan 01-03 complete — SQLCipher engine + 6-table data model + alembic 0001_initial)
 
 ## Project Reference
 
@@ -25,16 +25,16 @@ progress:
 ## Current Position
 
 Phase: 1 (Foundation & Vertical Slice) — EXECUTING
-Plan: 3 of 9 (01-01 + 01-02 complete)
+Plan: 4 of 9 (01-01 + 01-02 + 01-03 complete)
 
 - **Phase:** 1 (Foundation & Vertical Slice)
-- **Plan:** 01-03 (SQLCipher engine + data model) — next
+- **Plan:** 01-04 (Audit chain: canonical_json + append_event + walk_chain) — next
 - **Status:** Executing Phase 1, Wave 1
-- **Progress:** Phase 0 / 9 phases complete; Plan 2 / 9 of Phase 1 complete (~22%)
-- **Resume from:** `.planning/phases/01-foundation-vertical-slice-alpaca-paper-slack-hitl/01-03-PLAN.md`
+- **Progress:** Phase 0 / 9 phases complete; Plan 3 / 9 of Phase 1 complete (~33%)
+- **Resume from:** `.planning/phases/01-foundation-vertical-slice-alpaca-paper-slack-hitl/01-04-PLAN.md`
 
 ```
-[####..............] 22%
+[######............] 33%
 ```
 
 ## Performance Metrics
@@ -85,7 +85,8 @@ Plan: 3 of 9 (01-01 + 01-02 complete)
 - [x] Run `/gsd-plan-phase 1` to decompose Phase 1 into executable plans
 - [x] Plan 01-01 executed — uv scaffold + Typer CLI + `gekko doctor` (2026-06-08)
 - [x] Plan 01-02 executed — Pydantic Settings + structlog credential redaction (AUTH-04) + conftest fixtures (2026-06-08)
-- [ ] Plan 01-03 — SQLCipher engine + data model + alembic 0001_initial (Wave 1 — next)
+- [x] Plan 01-03 executed — SQLCipher engine (AUTH-03) + 6-table data model + alembic 0001_initial (2026-06-08)
+- [ ] Plan 01-04 — Audit chain: canonical_json + append_event + walk_chain (Wave 1 — next)
 - [x] Resolve "wash-sale default" decision before Phase 2 plan-phase — flag-only chosen 2026-06-08
 - [ ] Resolve "default LLM cost ceiling" value before Phase 4 plan-phase
 - [ ] Resolve "trust ladder promotion criteria" placeholder before Phase 5 plan-phase
@@ -106,9 +107,9 @@ None.
 
 ## Session Continuity
 
-**Next action:** Execute Plan 01-03 — SQLCipher engine + 6-table SQLAlchemy data model + alembic 0001_initial migration (AUTH-03). Uses Settings.db_path_for() from Plan 01-02; will replace the `temp_sqlcipher_db` stub fixture with a real engine fixture.
+**Next action:** Execute Plan 01-04 — Audit chain (canonical_json + append_event + walk_chain) with SHA-256 hash chain over the `events` table (AUDT-01, AUDT-02). Uses Event from gekko.db.models (just shipped in 01-03) and AuditChainBroken from gekko.core.errors.
 
-**Resumable from:** `.planning/phases/01-foundation-vertical-slice-alpaca-paper-slack-hitl/01-03-PLAN.md`. STATE.md + ROADMAP.md + REQUIREMENTS.md + the Plan 01-01 and 01-02 SUMMARYs provide full context for any agent to pick up the work.
+**Resumable from:** `.planning/phases/01-foundation-vertical-slice-alpaca-paper-slack-hitl/01-04-PLAN.md`. STATE.md + ROADMAP.md + REQUIREMENTS.md + the Plan 01-01, 01-02, and 01-03 SUMMARYs provide full context for any agent to pick up the work.
 
 ### Decisions from Plan 01-02 (added 2026-06-08)
 
@@ -117,6 +118,18 @@ None.
 - _Recursive value scrub one level deep into dict/list/tuple._ Broker/Slack response payloads are nested dicts; flat-only scrub would miss embedded credentials.
 - `get_settings()` _uses `@lru_cache(maxsize=1)` (NOT a module-level singleton)._ Avoids import-time crashes on missing env (gekko doctor handles that with a friendly message) and lets tests swap env via `clean_settings_env.cache_clear()`.
 - `Settings.db_url_for()` _is a scaffold URL with literal PLACEHOLDER passphrase._ Plan 01-03 will build the real engine via PRAGMA key in a connect-event hook (passphrase never embedded in URL).
+
+### Decisions from Plan 01-03 (added 2026-06-08)
+
+- _SQLCipher engine uses `creator=` / `async_creator_fn=` callbacks instead of the stock `sqlite+pysqlcipher://` URL form._ The stock dialect reads `url.password` and emits `PRAGMA key=<quoted>`, leaking the passphrase via `str(engine.url)`. Our callback path returns a freshly opened `sqlcipher3.dbapi2` connection (sync) or an `aiosqlite.Connection` wrapping a sqlcipher3 connector (async). URL is `:memory:` placeholder; passphrase lives in handler closure only (T-01-03-05).
+- _Added `aiosqlite>=0.22.1` as a direct dependency (Rule 3 — auto-fix blocker)._ The plan's chosen `sqlite+aiosqlite:///` URL form requires it; it was missing from the 01-01 pyproject scaffold. omnilib's standard async-sqlite library; established, not a slopsquat risk.
+- _DBAPI exception classes patched on the dialect post-construction._ Without it, raw `sqlcipher3.dbapi2.IntegrityError` escapes SQLAlchemy's wrapping machinery (sqlcipher3 does NOT inherit from sqlite3). Patch overrides `dialect.loaded_dbapi.IntegrityError` etc. to point at sqlcipher3's classes; keeps the standard `sqlalchemy.exc.*` contract intact for downstream code.
+- _Sync engine factory `get_sync_engine` mirrors `get_async_engine`._ Plan 01-09's APScheduler `SQLAlchemyJobStore` accepts a pre-built `Engine` — passing `get_sync_engine(...)` keeps the passphrase out of any URL string that APScheduler might serialize. Sync-engine tests cover passphrase-not-in-repr/url specifically (VALIDATION row 01-09-T2).
+- _Alembic `sqlalchemy.url` is LEFT BLANK in alembic.ini._ env.py reads `GEKKO_DB_PASSPHRASE` from env at runtime and constructs the engine via `gekko.db.engine.get_async_engine`. Passphrase NEVER persisted in any config file (T-01-03-04).
+- _Removed `version_locations = %(here)s/migrations/versions` from alembic.ini._ Alembic splits the setting on whitespace; `%(here)s` expanded to a path with a space ("Project Gekko"), making alembic discover ZERO revisions. Defaulting to `{script_location}/versions` handles spaces correctly.
+- _CheckConstraint vocabularies (guidance.scope, proposals.status, events.event_type) are declared once at the top of models.py and copied into 0001_initial.py._ Alembic migrations are frozen historical artifacts; the migration MUST work against any future models.py state, so it cannot import the live vocabulary. The local duplication is intentional and obvious.
+- _`BrokerCredential.paper` has `server_default='1'` (TRUE)._ Belt-and-braces over AlpacaBroker's constructor guard (Plan 01-05) — Phase 1 paper-only invariant enforced at both the DB and Python layers.
+- _Defense-in-depth `__repr__` excludes payload_json + key_blob + secret_blob._ Defends against accidental `log.info(model_instance)` (AUTH-04 belt-and-braces).
 
 ---
 *State initialized: 2026-06-08 after roadmap creation*
