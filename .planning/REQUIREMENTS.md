@@ -218,17 +218,135 @@ Explicitly excluded. Documented to prevent scope creep.
 
 ## Traceability
 
-Which phases cover which requirements. Updated during roadmap creation.
+Mapping of every v1 requirement to exactly one phase. Updated at roadmap creation; status updated as phases complete.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| (Populated by roadmapper) | — | Pending |
+| STRAT-01 | Phase 1 | Pending |
+| STRAT-02 | Phase 1 | Pending |
+| STRAT-03 | Phase 1 | Pending |
+| STRAT-04 | Phase 1 | Pending |
+| STRAT-05 | Phase 1 | Pending |
+| STRAT-06 | Phase 1 | Pending |
+| RES-01 | Phase 1 | Pending |
+| RES-02 | Phase 1 | Pending |
+| RES-03 | Phase 1 | Pending |
+| RES-04 | Phase 1 | Pending |
+| RES-05 | Phase 1 | Pending |
+| RES-06 | Phase 2 | Pending |
+| RES-07 | Phase 2 | Pending |
+| RES-08 | Phase 1 | Pending |
+| EXEC-01 | Phase 1 | Pending |
+| EXEC-02 | Phase 1 | Pending |
+| EXEC-03 | Phase 2 | Pending |
+| EXEC-04 | Phase 2 | Pending |
+| EXEC-05 | Phase 2 | Pending |
+| EXEC-06 | Phase 2 | Pending |
+| EXEC-07 | Phase 1 | Pending |
+| EXEC-08 | Phase 2 | Pending |
+| EXEC-09 | Phase 2 | Pending |
+| EXEC-10 | Phase 1 | Pending |
+| EXEC-11 | Phase 2 | Pending |
+| HITL-01 | Phase 1 | Pending |
+| HITL-02 | Phase 3 | Pending |
+| HITL-03 | Phase 3 | Pending |
+| HITL-04 | Phase 1 | Pending |
+| HITL-05 | Phase 3 | Pending |
+| HITL-06 | Phase 2 | Pending |
+| TRUST-01 | Phase 5 | Pending |
+| TRUST-02 | Phase 5 | Pending |
+| TRUST-03 | Phase 5 | Pending |
+| TRUST-04 | Phase 5 | Pending |
+| TRUST-05 | Phase 5 | Pending |
+| TRUST-06 | Phase 5 | Pending |
+| REPT-01 | Phase 3 | Pending |
+| REPT-02 | Phase 6 | Pending |
+| REPT-03 | Phase 6 | Pending |
+| REPT-04 | Phase 1 | Pending |
+| REPT-05 | Phase 6 | Pending |
+| DASH-01 | Phase 6 | Pending |
+| DASH-02 | Phase 6 | Pending |
+| DASH-03 | Phase 6 | Pending |
+| DASH-04 | Phase 3 | Pending |
+| DASH-05 | Phase 6 | Pending |
+| DASH-06 | Phase 6 | Pending |
+| BROK-A-01 | Phase 1 | Pending |
+| BROK-A-02 | Phase 2 | Pending |
+| BROK-A-03 | Phase 1 | Pending |
+| BROK-A-04 | Phase 1 | Pending |
+| BROK-A-05 | Phase 1 | Pending |
+| BROK-A-06 | Phase 1 | Pending |
+| BROK-I-01 | Phase 8 | Pending |
+| BROK-I-02 | Phase 8 | Pending |
+| BROK-I-03 | Phase 8 | Pending |
+| BROK-I-04 | Phase 8 | Pending |
+| BROK-S-01 | Phase 8 | Pending |
+| BROK-S-02 | Phase 8 | Pending |
+| BROK-S-03 | Phase 8 | Pending |
+| BROK-S-04 | Phase 8 | Pending |
+| BROK-R-01 | Phase 9 | Pending |
+| BROK-R-02 | Phase 9 | Pending |
+| BROK-R-03 | Phase 9 | Pending |
+| BROK-R-04 | Phase 9 | Pending |
+| BROK-R-05 | Phase 9 | Pending |
+| BROK-R-06 | Phase 9 | Pending |
+| BROK-R-07 | Phase 9 | Pending |
+| BROK-F-01 | Phase 9 | Pending |
+| BROK-F-02 | Phase 9 | Pending |
+| BROK-F-03 | Phase 9 | Pending |
+| BROK-F-04 | Phase 9 | Pending |
+| BROK-F-05 | Phase 9 | Pending |
+| BROK-F-06 | Phase 9 | Pending |
+| AUTH-01 | Phase 6 | Pending |
+| AUTH-02 | Phase 6 | Pending |
+| AUTH-03 | Phase 1 | Pending |
+| AUTH-04 | Phase 1 | Pending |
+| COST-01 | Phase 4 | Pending |
+| COST-02 | Phase 4 | Pending |
+| COST-03 | Phase 4 | Pending |
+| COST-04 | Phase 4 | Pending |
+| COST-05 | Phase 4 | Pending |
+| AUDT-01 | Phase 1 | Pending |
+| AUDT-02 | Phase 1 | Pending |
+| AUDT-03 | Phase 6 | Pending |
+| AUDT-04 | Phase 6 | Pending |
+| OPS-01 | Phase 7 | Pending |
+| OPS-02 | Phase 7 | Pending |
+| OPS-03 | Phase 7 | Pending |
+| OPS-04 | Phase 7 | Pending |
+| OPS-05 | Phase 7 | Pending |
+| OPS-06 | Phase 7 | Pending |
+| OPS-07 | Phase 7 | Pending |
+| OPS-08 | Phase 7 | Pending |
+| CADENCE-01 | Phase 7 | Pending |
+| CADENCE-02 | Phase 1 | Pending |
+| CADENCE-03 | Phase 7 | Pending |
+| CADENCE-04 | Phase 7 | Pending |
+| REG-01 | Phase 1 | Pending |
+| REG-02 | Phase 1 | Pending |
+| REG-03 | Phase 1 | Pending |
+| REG-04 | Phase 1 | Pending |
+| DEPLOY-01 | Phase 9 | Pending |
+| DEPLOY-02 | Phase 9 | Pending |
+| DEPLOY-03 | Phase 9 | Pending |
+| DEPLOY-04 | Phase 9 | Pending |
 
 **Coverage:**
-- v1 requirements: 78 total
-- Mapped to phases: 0 (pending roadmap)
-- Unmapped: 78 ⚠️ (will be resolved by roadmapper)
+- v1 requirements: 108 total (note: original header count of 78 was incorrect — actual category-by-category count is 108)
+- Mapped to phases: 108 (100%)
+- Unmapped: 0
+
+**Per-phase requirement counts:**
+- Phase 1 (Foundation & Vertical Slice): 33
+- Phase 2 (OrderGuard & Real-Money Alpaca Live): 11
+- Phase 3 (Production HITL UX): 5
+- Phase 4 (Agent Architecture & Cost Bounds): 5
+- Phase 5 (Trust Ladder): 6
+- Phase 6 (Web Dashboard & Multi-User Auth): 12
+- Phase 7 (Operations & Observability): 11
+- Phase 8 (Additional API Brokers): 8
+- Phase 9 (Browser-Fallback Brokers & Deployment): 17
 
 ---
 *Requirements defined: 2026-06-08*
-*Last updated: 2026-06-08 after initial definition*
+*Last updated: 2026-06-08 after roadmap creation (traceability table populated; coverage 100%)*
