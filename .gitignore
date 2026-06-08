@@ -31,6 +31,7 @@ ENV/
 env.bak/
 venv.bak/
 .python-version
+.uv/
 
 # Testing & coverage
 .tox/
@@ -75,6 +76,10 @@ secrets/
 gekko.db*
 data/
 backups/
+# Runtime per-user DB root (per RESEARCH A13 — `~/.gekko/{user_id}.db`).
+# This path expands to a literal `~/.gekko/` directory if someone accidentally
+# `mkdir`s it inside the repo; keep it ignored explicitly.
+.gekko/
 
 # Browser-fallback session state (Robinhood / Fidelity)
 browser-sessions/

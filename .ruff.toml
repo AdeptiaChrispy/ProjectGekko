@@ -1,0 +1,46 @@
+line-length = 100
+target-version = "py312"
+
+# Per EXEC-01 / D-20 (Decimal-only money math): float usage in
+#   src/gekko/brokers/**
+#   src/gekko/execution/**
+#   src/gekko/core/money.py
+# is enforced by a grep-based static test at tests/unit/test_money_math.py
+# (created in Plan 01-05). Ruff has no native rule for "ban a builtin name
+# in a path subset"; rather than hand-rolling a custom checker, the project
+# chose the proven approach of a single deterministic pytest gate.
+#
+# See: RESEARCH.md §"Don't Hand-Roll" and §"Pitfall 3 — float in money paths".
+# See: VALIDATION.md row 01-05-T1 — test_money_math.py::test_float_banned_in_money_paths.
+
+[lint]
+# Sane modern Python rule set per RESEARCH §Dev Tools.
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # bugbear
+    "UP",  # pyupgrade
+    "SIM", # simplify
+]
+# A few rules to opt in over time (kept off the scaffold so the empty tree is
+# clean; later plans can flip these on as the surface area justifies):
+extend-select = [
+    "FLY",  # f-string conversions
+    "PERF", # micro-perf lints
+    "TRY",  # tryceratops (better exception patterns)
+]
+ignore = [
+    # D-series (pydocstyle) is intentionally NOT enabled phase 1 — the scaffold
+    # is mostly empty __init__.py files; enforcing docstrings here would be noise.
+]
+
+[lint.per-file-ignores]
+# Tests and __init__.py are allowed light touches.
+"tests/**/*.py" = ["E501"]
+"**/__init__.py" = ["F401"]
+
+[format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
