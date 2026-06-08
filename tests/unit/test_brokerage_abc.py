@@ -23,7 +23,6 @@ from typing import Any
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Minimal concrete subclass for instantiability tests
 # ---------------------------------------------------------------------------
