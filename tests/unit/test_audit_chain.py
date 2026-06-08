@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from gekko.audit.canonical import GENESIS_PREV_HASH, canonical_json
 from gekko.audit.log import append_event
 from gekko.db.engine import get_async_engine
-from gekko.db.models import Base, Event, User
+from gekko.db.models import Base, Event, Strategy, User
 from gekko.db.session import AsyncSessionLocal, make_session_factory
 
 PASSPHRASE = "test-audit-chain-passphrase"  # nosec: test-only literal
@@ -65,11 +65,29 @@ async def session(
     """A single async session for sequential tests.
 
     Concurrency tests open their own per-task sessions and skip this fixture.
+    Pre-seeds the alice/bob users and an ``alice``-owned strategy
+    (``strat-abc``) so FK constraints on ``Event.user_id`` and
+    ``Event.strategy_id`` don't fire.
     """
     async with session_factory() as s:
-        # Seed users so FK constraints don't fire.
-        s.add(User(user_id="alice", created_at=datetime.now(UTC).isoformat()))
-        s.add(User(user_id="bob", created_at=datetime.now(UTC).isoformat()))
+        now = datetime.now(UTC).isoformat()
+        s.add_all(
+            [
+                User(user_id="alice", created_at=now),
+                User(user_id="bob", created_at=now),
+            ]
+        )
+        await s.flush()  # ensure users exist before strategy FK is checked
+        s.add(
+            Strategy(
+                strategy_id="strat-abc",
+                user_id="alice",
+                strategy_name="ai-infra-bull",
+                version=1,
+                payload_json="{}",
+                created_at=now,
+            )
+        )
         await s.commit()
         yield s
 
@@ -77,8 +95,9 @@ async def session(
 async def _seed_users(factory: AsyncSessionLocal) -> None:
     """Used by concurrency test which doesn't share the `session` fixture."""
     async with factory() as s:
-        s.add(User(user_id="alice", created_at=datetime.now(UTC).isoformat()))
-        s.add(User(user_id="bob", created_at=datetime.now(UTC).isoformat()))
+        now = datetime.now(UTC).isoformat()
+        s.add(User(user_id="alice", created_at=now))
+        s.add(User(user_id="bob", created_at=now))
         await s.commit()
 
 

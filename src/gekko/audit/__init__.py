@@ -23,9 +23,11 @@ from gekko.audit.canonical import (
     canonical_json,
     normalize_decimals,
 )
+from gekko.audit.log import append_event
 
 __all__: tuple[str, ...] = (
     "GENESIS_PREV_HASH",
+    "append_event",
     "canonical_json",
     "normalize_decimals",
 )
