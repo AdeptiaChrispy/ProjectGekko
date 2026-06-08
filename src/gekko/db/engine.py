@@ -118,6 +118,51 @@ def _escape_passphrase_for_pragma(passphrase: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+#: DBAPI exception class names that SQLAlchemy uses to translate driver
+#: errors into its own ``sqlalchemy.exc.*`` hierarchy. We patch these on the
+#: dialect to point at ``sqlcipher3.dbapi2.*`` instead of the default
+#: ``sqlite3.*`` — without this, ``sqlcipher3.dbapi2.IntegrityError`` leaks
+#: through as a raw DBAPI error instead of being wrapped in
+#: ``sqlalchemy.exc.IntegrityError``.
+_DBAPI_EXCEPTION_NAMES: Final[tuple[str, ...]] = (
+    "Error",
+    "Warning",
+    "InterfaceError",
+    "DatabaseError",
+    "DataError",
+    "OperationalError",
+    "IntegrityError",
+    "InternalError",
+    "ProgrammingError",
+    "NotSupportedError",
+)
+
+
+def _patch_dialect_dbapi_exceptions(sync_engine: Engine) -> None:
+    """Point the dialect's DBAPI exception attrs at sqlcipher3's classes.
+
+    SQLAlchemy's aiosqlite / pysqlite dialects bind their DBAPI exception
+    classes (``self.dbapi.IntegrityError`` etc.) to ``sqlite3.*`` at
+    dialect-init time. The actual connection objects we hand back via
+    ``creator=`` / ``async_creator_fn=`` are sqlcipher3 connections, so
+    the exceptions raised by them are ``sqlcipher3.dbapi2.IntegrityError``
+    — a different class hierarchy. Without this patch, raw sqlcipher3
+    exceptions escape SQLAlchemy's wrapping machinery and tests catching
+    ``sqlalchemy.exc.IntegrityError`` (the standard contract) silently
+    fail.
+
+    We overwrite each exception name on the loaded DBAPI module/adapter
+    to point at the sqlcipher3 class. This keeps the standard
+    ``sqlalchemy.exc.IntegrityError`` contract working for downstream
+    code.
+    """
+    dbapi = sync_engine.dialect.loaded_dbapi
+    for name in _DBAPI_EXCEPTION_NAMES:
+        sqlcipher_exc = getattr(sqlcipher_dbapi, name, None)
+        if sqlcipher_exc is not None:
+            setattr(dbapi, name, sqlcipher_exc)
+
+
 def _install_sqlcipher_connect_handler(
     sync_engine: Engine, passphrase: str
 ) -> None:
@@ -253,6 +298,7 @@ def get_async_engine(db_path: Path | str, passphrase: str) -> AsyncEngine:
     )
 
     _install_sqlcipher_connect_handler(engine.sync_engine, passphrase)
+    _patch_dialect_dbapi_exceptions(engine.sync_engine)
     return engine
 
 
@@ -289,6 +335,7 @@ def get_sync_engine(db_path: Path | str, passphrase: str) -> Engine:
     )
 
     _install_sqlcipher_connect_handler(engine, passphrase)
+    _patch_dialect_dbapi_exceptions(engine)
     return engine
 
 

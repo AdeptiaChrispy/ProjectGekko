@@ -14,7 +14,7 @@ APScheduler 3.x's ``SQLAlchemyJobStore`` creates it at runtime in Plan 01-09.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -44,7 +44,7 @@ PASSPHRASE = "test-models-passphrase"  # nosec: test-only literal
 
 
 def _iso_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 @pytest_asyncio.fixture
