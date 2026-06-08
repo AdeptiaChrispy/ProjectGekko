@@ -29,7 +29,6 @@ import pytest
 
 from gekko.logging_config import configure_logging, get_logger
 
-
 # ---------------------------------------------------------------------------
 # Helpers — capture rendered JSON output
 # ---------------------------------------------------------------------------
