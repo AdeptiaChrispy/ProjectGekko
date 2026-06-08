@@ -8,13 +8,13 @@ progress:
   total_phases: 9
   completed_phases: 0
   total_plans: 9
-  completed_plans: 0
-  percent: 0
+  completed_plans: 2
+  percent: 2
 ---
 
 # Project State: Project Gekko
 
-**Last updated:** 2026-06-08 (Phase 1 context gathered)
+**Last updated:** 2026-06-08 (Plan 01-02 complete — Settings + structlog redaction + conftest fixtures)
 
 ## Project Reference
 
@@ -25,16 +25,16 @@ progress:
 ## Current Position
 
 Phase: 1 (Foundation & Vertical Slice) — EXECUTING
-Plan: 1 of 9
+Plan: 3 of 9 (01-01 + 01-02 complete)
 
 - **Phase:** 1 (Foundation & Vertical Slice)
-- **Plan:** Not yet planned
-- **Status:** Executing Phase 1
-- **Progress:** Phase 0 / 9 phases complete (0%)
-- **Resume from:** `.planning/phases/01-foundation-vertical-slice-alpaca-paper-slack-hitl/01-CONTEXT.md`
+- **Plan:** 01-03 (SQLCipher engine + data model) — next
+- **Status:** Executing Phase 1, Wave 1
+- **Progress:** Phase 0 / 9 phases complete; Plan 2 / 9 of Phase 1 complete (~22%)
+- **Resume from:** `.planning/phases/01-foundation-vertical-slice-alpaca-paper-slack-hitl/01-03-PLAN.md`
 
 ```
-[..................] 0%
+[####..............] 22%
 ```
 
 ## Performance Metrics
@@ -82,7 +82,10 @@ Plan: 1 of 9
 
 - [x] User to approve roadmap — approved 2026-06-08
 - [x] Phase 1 context gathered (`/gsd-discuss-phase 1`) — committed 2026-06-08 (`4a6d4b1`)
-- [ ] Run `/gsd-plan-phase 1` to decompose Phase 1 into executable plans
+- [x] Run `/gsd-plan-phase 1` to decompose Phase 1 into executable plans
+- [x] Plan 01-01 executed — uv scaffold + Typer CLI + `gekko doctor` (2026-06-08)
+- [x] Plan 01-02 executed — Pydantic Settings + structlog credential redaction (AUTH-04) + conftest fixtures (2026-06-08)
+- [ ] Plan 01-03 — SQLCipher engine + data model + alembic 0001_initial (Wave 1 — next)
 - [x] Resolve "wash-sale default" decision before Phase 2 plan-phase — flag-only chosen 2026-06-08
 - [ ] Resolve "default LLM cost ceiling" value before Phase 4 plan-phase
 - [ ] Resolve "trust ladder promotion criteria" placeholder before Phase 5 plan-phase
@@ -103,10 +106,19 @@ None.
 
 ## Session Continuity
 
-**Next action:** `/gsd-plan-phase 1` to decompose Foundation & Vertical Slice into executable plans using the locked context.
+**Next action:** Execute Plan 01-03 — SQLCipher engine + 6-table SQLAlchemy data model + alembic 0001_initial migration (AUTH-03). Uses Settings.db_path_for() from Plan 01-02; will replace the `temp_sqlcipher_db` stub fixture with a real engine fixture.
 
-**Resumable from:** `.planning/phases/01-foundation-vertical-slice-alpaca-paper-slack-hitl/01-CONTEXT.md` (locked decisions), plus STATE.md + ROADMAP.md + REQUIREMENTS.md + research/ provide full context for any agent to pick up the work.
+**Resumable from:** `.planning/phases/01-foundation-vertical-slice-alpaca-paper-slack-hitl/01-03-PLAN.md`. STATE.md + ROADMAP.md + REQUIREMENTS.md + the Plan 01-01 and 01-02 SUMMARYs provide full context for any agent to pick up the work.
+
+### Decisions from Plan 01-02 (added 2026-06-08)
+
+- _Anthropic + Slack user OAuth shapes added to the redaction regex set._ `_ANTHROPIC` (sk-ant-*) matched before generic `_SK` for clearer audit labels; `_XOXA` added for Slack user OAuth.
+- `_REDACT_KEYS` _extends the RESEARCH baseline with Phase 1 env-var names._ Defence in depth against `log.info(**settings.model_dump())` patterns.
+- _Recursive value scrub one level deep into dict/list/tuple._ Broker/Slack response payloads are nested dicts; flat-only scrub would miss embedded credentials.
+- `get_settings()` _uses `@lru_cache(maxsize=1)` (NOT a module-level singleton)._ Avoids import-time crashes on missing env (gekko doctor handles that with a friendly message) and lets tests swap env via `clean_settings_env.cache_clear()`.
+- `Settings.db_url_for()` _is a scaffold URL with literal PLACEHOLDER passphrase._ Plan 01-03 will build the real engine via PRAGMA key in a connect-event hook (passphrase never embedded in URL).
 
 ---
 *State initialized: 2026-06-08 after roadmap creation*
 *Updated: 2026-06-08 after Phase 1 context gathered*
+*Updated: 2026-06-08 after Plan 01-02 complete*
