@@ -14,7 +14,7 @@ progress:
 
 # Project State: Project Gekko
 
-**Last updated:** 2026-06-08
+**Last updated:** 2026-06-08 (Phase 1 context gathered)
 
 ## Project Reference
 
@@ -26,8 +26,9 @@ progress:
 
 - **Phase:** 1 (Foundation & Vertical Slice)
 - **Plan:** Not yet planned
-- **Status:** Roadmap complete; awaiting `/gsd-plan-phase 1`
+- **Status:** Context gathered — `01-CONTEXT.md` ready for `/gsd-plan-phase 1`
 - **Progress:** Phase 0 / 9 phases complete (0%)
+- **Resume from:** `.planning/phases/01-foundation-vertical-slice-alpaca-paper-slack-hitl/01-CONTEXT.md`
 
 ```
 [..................] 0%
@@ -39,7 +40,7 @@ progress:
 |--------|-------|
 | Phases planned | 9 |
 | Phases complete | 0 |
-| v1 requirements mapped | 78 / 78 |
+| v1 requirements mapped | 108 / 108 |
 | v1 requirements unmapped | 0 |
 | Research summaries | 4 (STACK, FEATURES, ARCHITECTURE, PITFALLS) + consolidated SUMMARY |
 | Granularity | standard |
@@ -76,11 +77,22 @@ progress:
 
 ### TODOs
 
-- [ ] User to approve roadmap (or provide revision feedback)
+- [x] User to approve roadmap — approved 2026-06-08
+- [x] Phase 1 context gathered (`/gsd-discuss-phase 1`) — committed 2026-06-08 (`4a6d4b1`)
 - [ ] Run `/gsd-plan-phase 1` to decompose Phase 1 into executable plans
-- [ ] Resolve "wash-sale default" decision before Phase 2 plan-phase
+- [x] Resolve "wash-sale default" decision before Phase 2 plan-phase — flag-only chosen 2026-06-08
 - [ ] Resolve "default LLM cost ceiling" value before Phase 4 plan-phase
 - [ ] Resolve "trust ladder promotion criteria" placeholder before Phase 5 plan-phase
+- [ ] Re-evaluate per-cycle research budget (soft + 2x grace) during Phase 4 — tighten to hard caps if daily ceilings routinely hit
+
+### Phase 1 Context Highlights (locked decisions for downstream agents)
+
+- **Strategy:** minimal v1 fields (name, thesis, watchlist, hard caps); plain-English diff; explicit save; chat supports both new & refine
+- **Trigger UX:** Slack + CLI + Dashboard (all three from day one); name-based selection; daily fixed-time schedule supported alongside manual; verbose `no_action`
+- **Agent architecture:** Researcher + Decision split from day one via Claude SDK subagents; structured tool calls with `propose_trade(...)` / `propose_no_action(...)`; full evidence + confidence + alternatives per proposal
+- **Audit log:** single `events` table + JSON payload; full structured rationale in payload; SHA-256 hash chain enforced in app code; brokerage-standard tax-export CSV columns
+
+Full detail: `.planning/phases/01-foundation-vertical-slice-alpaca-paper-slack-hitl/01-CONTEXT.md`
 
 ### Blockers
 
@@ -88,9 +100,10 @@ None.
 
 ## Session Continuity
 
-**Next action:** `/gsd-plan-phase 1` to decompose Foundation & Vertical Slice into executable plans.
+**Next action:** `/gsd-plan-phase 1` to decompose Foundation & Vertical Slice into executable plans using the locked context.
 
-**Resumable from:** This document + ROADMAP.md + REQUIREMENTS.md + research/ provide full context for any agent to pick up the work.
+**Resumable from:** `.planning/phases/01-foundation-vertical-slice-alpaca-paper-slack-hitl/01-CONTEXT.md` (locked decisions), plus STATE.md + ROADMAP.md + REQUIREMENTS.md + research/ provide full context for any agent to pick up the work.
 
 ---
 *State initialized: 2026-06-08 after roadmap creation*
+*Updated: 2026-06-08 after Phase 1 context gathered*
