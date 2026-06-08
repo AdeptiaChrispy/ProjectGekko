@@ -1,0 +1,84 @@
+# Dependabot configuration for Project Gekko
+# https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+#
+# Project Gekko handles real money. Dependency updates are reviewed weekly,
+# minor/patch updates grouped together, security updates routed separately.
+
+version: 2
+updates:
+  # Python dependencies (activates once pyproject.toml / requirements*.txt exist)
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "python"
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+      include: "scope"
+    groups:
+      python-minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+      python-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+    # Reviewers / assignees can be added once the team beyond Chris exists
+    ignore:
+      # Pin major LLM SDK upgrades for manual review — breaking changes
+      # in claude-agent-sdk and broker SDKs can have safety implications.
+      - dependency-name: "claude-agent-sdk"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "alpaca-py"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "ib_async"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "schwab-py"
+        update-types: ["version-update:semver-major"]
+
+  # GitHub Actions used in workflows
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "chore(ci)"
+      include: "scope"
+    groups:
+      actions-minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Docker (activates if/when we ship container images for the dashboard/agent)
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "chore(docker)"
+      include: "scope"
