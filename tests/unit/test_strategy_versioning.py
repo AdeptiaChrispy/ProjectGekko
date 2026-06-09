@@ -7,11 +7,11 @@ strategy CRUD to compute the version of the NEXT inserted row.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 
 @pytest.mark.asyncio
@@ -24,7 +24,7 @@ async def test_next_version_first_save_returns_one(temp_sqlcipher_db: Any) -> No
         session.add(
             User(
                 user_id="alice",
-                created_at=datetime.now(timezone.utc).isoformat(),
+                created_at=datetime.now(UTC).isoformat(),
             )
         )
         await session.flush()
@@ -43,7 +43,7 @@ async def test_next_version_increments_after_each_save(temp_sqlcipher_db: Any) -
         session.add(
             User(
                 user_id="alice",
-                created_at=datetime.now(timezone.utc).isoformat(),
+                created_at=datetime.now(UTC).isoformat(),
             )
         )
         await session.flush()
@@ -61,7 +61,7 @@ async def test_next_version_increments_after_each_save(temp_sqlcipher_db: Any) -
                     strategy_name="ai-infra",
                     version=v,
                     payload_json="{}",
-                    created_at=datetime.now(timezone.utc).isoformat(),
+                    created_at=datetime.now(UTC).isoformat(),
                 )
             )
             await session.flush()
@@ -80,11 +80,11 @@ async def test_next_version_scoped_by_user_and_strategy(temp_sqlcipher_db: Any) 
             [
                 User(
                     user_id="alice",
-                    created_at=datetime.now(timezone.utc).isoformat(),
+                    created_at=datetime.now(UTC).isoformat(),
                 ),
                 User(
                     user_id="bob",
-                    created_at=datetime.now(timezone.utc).isoformat(),
+                    created_at=datetime.now(UTC).isoformat(),
                 ),
             ]
         )
@@ -99,7 +99,7 @@ async def test_next_version_scoped_by_user_and_strategy(temp_sqlcipher_db: Any) 
                     strategy_name="ai-infra",
                     version=v,
                     payload_json="{}",
-                    created_at=datetime.now(timezone.utc).isoformat(),
+                    created_at=datetime.now(UTC).isoformat(),
                 )
             )
         await session.flush()
@@ -133,7 +133,7 @@ async def test_payload_json_roundtrips_via_model_validate_json(
         session.add(
             User(
                 user_id="alice",
-                created_at=datetime.now(timezone.utc).isoformat(),
+                created_at=datetime.now(UTC).isoformat(),
             )
         )
         await session.flush()
@@ -157,7 +157,7 @@ async def test_payload_json_roundtrips_via_model_validate_json(
                 ),
                 schedule_time=None,
                 mode="paper",
-                created_at=datetime.now(timezone.utc).isoformat(),
+                created_at=datetime.now(UTC).isoformat(),
             )
             session.add(
                 StrategyRow(
