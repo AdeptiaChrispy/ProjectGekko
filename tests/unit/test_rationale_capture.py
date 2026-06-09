@@ -57,6 +57,7 @@ async def test_proposal_event_contains_full_rationale(
         session.add(
             User(user_id=user_id, created_at=datetime.now(UTC).isoformat())
         )
+        await session.flush()
         session.add(
             StrategyRow(
                 strategy_id=strategy.strategy_id,
@@ -184,6 +185,7 @@ async def test_no_action_event_contains_factors_considered(
         session.add(
             User(user_id=user_id, created_at=datetime.now(UTC).isoformat())
         )
+        await session.flush()
         session.add(
             StrategyRow(
                 strategy_id=strategy.strategy_id,
