@@ -3,18 +3,18 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-06-08T19:30:00.000Z"
+last_updated: "2026-06-09T14:00:00.000Z"
 progress:
   total_phases: 9
   completed_phases: 0
   total_plans: 9
-  completed_plans: 4
-  percent: 4
+  completed_plans: 6
+  percent: 67
 ---
 
 # Project State: Project Gekko
 
-**Last updated:** 2026-06-08 (Plan 01-04 complete — audit chain: canonical_json + append_event + walk_chain, SHA-256 over canonical-subset, per-user asyncio.Lock; AUDT-01 + AUDT-02 closed)
+**Last updated:** 2026-06-09 (Plan 01-06 complete — Pydantic schema contracts: Strategy + HardCaps + Guidance + ResearchBrief + EvidenceSnippet + TickerSnapshot + TradeProposal + NoActionProposal + AlternativeConsidered + EventPayload discriminated union + plain-English diff + next_version helper; STRAT-04 + STRAT-05 + STRAT-06 + REPT-04 + RES-08 closed)
 
 ## Project Reference
 
@@ -25,16 +25,16 @@ progress:
 ## Current Position
 
 Phase: 1 (Foundation & Vertical Slice) — EXECUTING
-Plan: 5 of 9 (01-01 + 01-02 + 01-03 + 01-04 complete)
+Plan: 7 of 9 (01-01 + 01-02 + 01-03 + 01-04 + 01-05 + 01-06 complete)
 
 - **Phase:** 1 (Foundation & Vertical Slice)
-- **Plan:** 01-05 (Core types + Brokerage ABC + AlpacaBroker paper-only + TradingStream) — next
-- **Status:** Executing Phase 1, Wave 1
-- **Progress:** Phase 0 / 9 phases complete; Plan 4 / 9 of Phase 1 complete (~44%)
-- **Resume from:** `.planning/phases/01-foundation-vertical-slice-alpaca-paper-slack-hitl/01-05-PLAN.md`
+- **Plan:** 01-07 (Agent runtime: Researcher + Decision subagents, BudgetTracker, ProposalWriter, trigger_strategy_run) — next
+- **Status:** Executing Phase 1, Wave 2
+- **Progress:** [███████░░░] 67%
+- **Resume from:** `.planning/phases/01-foundation-vertical-slice-alpaca-paper-slack-hitl/01-07-PLAN.md`
 
 ```
-[########..........] 44%
+[#############.....] 67%
 ```
 
 ## Performance Metrics
@@ -87,7 +87,9 @@ Plan: 5 of 9 (01-01 + 01-02 + 01-03 + 01-04 complete)
 - [x] Plan 01-02 executed — Pydantic Settings + structlog credential redaction (AUTH-04) + conftest fixtures (2026-06-08)
 - [x] Plan 01-03 executed — SQLCipher engine (AUTH-03) + 6-table data model + alembic 0001_initial (2026-06-08)
 - [x] Plan 01-04 executed — Audit chain: canonical_json + append_event + walk_chain (AUDT-01, AUDT-02) (2026-06-08)
-- [ ] Plan 01-05 — Core types + Brokerage ABC + AlpacaBroker paper-only + TradingStream (Wave 1 — next)
+- [x] Plan 01-05 executed — Brokerage ABC + AlpacaBroker paper-only + TradingStream + cassette round-trip (EXEC-01, EXEC-02, EXEC-07, BROK-A-01/03/04/05/06) (2026-06-08)
+- [x] Plan 01-06 executed — Pydantic schema contracts: Strategy + HardCaps + Guidance + ResearchBrief + EvidenceSnippet + TradeProposal + NoActionProposal + EventPayload + plain-English diff + next_version (STRAT-04, STRAT-05, STRAT-06, REPT-04, RES-08) (2026-06-09)
+- [ ] Plan 01-07 — Agent runtime: Researcher + Decision subagents, BudgetTracker, ProposalWriter (Wave 2 — next)
 - [x] Resolve "wash-sale default" decision before Phase 2 plan-phase — flag-only chosen 2026-06-08
 - [ ] Resolve "default LLM cost ceiling" value before Phase 4 plan-phase
 - [ ] Resolve "trust ladder promotion criteria" placeholder before Phase 5 plan-phase
@@ -108,9 +110,9 @@ None.
 
 ## Session Continuity
 
-**Next action:** Execute Plan 01-05 — Core types + Brokerage ABC + AlpacaBroker paper-only + TradingStream + paper round-trip integration test (EXEC-01, EXEC-02, EXEC-07, BROK-A-01/03/04/05/06). Will import `gekko.core.errors.BrokerConfigError` / `BrokerOrderError` (shipped in 01-03) and the `broker_credentials` table model. Money-handling code uses `Decimal` per D-20; deterministic `client_order_id = sha256(f"{strategy_id}|{decision_id}|{side}|{qty}|{ticker}")[:32]` lands in this plan.
+**Next action:** Execute Plan 01-07 — Agent runtime (Researcher + Decision subagents using Claude Agent SDK, BudgetTracker, in-process tools alpaca_data + finnhub_news + edgar + web_fetch + propose_trade + propose_no_action, ProposalWriter, trigger_strategy_run, compile_strategy_from_chat). Will import `gekko.schemas.{ResearchBrief, EvidenceSnippet, TradeProposal, NoActionProposal, EventPayload}` (Plan 01-06) and `gekko.core.ids.compute_client_order_id` (Plan 01-05). ProposalWriter MUST call `normalize_decimals(payload)` BEFORE `append_event` (Plan 01-04 caller-side normalization invariant).
 
-**Resumable from:** `.planning/phases/01-foundation-vertical-slice-alpaca-paper-slack-hitl/01-05-PLAN.md`. STATE.md + ROADMAP.md + REQUIREMENTS.md + the Plan 01-01, 01-02, 01-03, and 01-04 SUMMARYs provide full context for any agent to pick up the work.
+**Resumable from:** `.planning/phases/01-foundation-vertical-slice-alpaca-paper-slack-hitl/01-07-PLAN.md`. STATE.md + ROADMAP.md + REQUIREMENTS.md + the Plan 01-01..01-06 SUMMARYs provide full context for any agent to pick up the work.
 
 ### Decisions from Plan 01-02 (added 2026-06-08)
 
@@ -143,9 +145,23 @@ None.
 - _`walk_chain` advances `expected_prev = row.row_hash` even on a break, surfacing ALL inconsistent rows for forensic analysis (not just the first)._ Useful for detecting forge-then-reseal attacks where a tampered middle row is rehashed by an attacker — the seal would hide that row's break but downstream rows' prev_hash checks would still surface.
 - _`append_event` never raises `AuditChainBroken`._ Write/verify separation: `AuditChainBroken` (from `gekko.core.errors`) is for `walk_chain` callers and the `gekko audit verify` CLI to raise. The write path is intentionally tolerant so a single corrupted row doesn't block all future audit writes.
 
+### Decisions from Plan 01-06 (added 2026-06-09)
+
+- _`Strategy.mode` is `Literal["paper", "live"]` with default `"paper"` per D-24 / STRAT-06._ The schema accepts both modes; UI confirmation for the paper→live flip is enforced by Plan 01-09's dashboard, NOT the schema. Schema-layer rejection of `mode="live"` would have forced a coupling between Pydantic and UI logic.
+- _`HardCaps.max_position_pct` carries a defensive ceiling of `le=Decimal("0.20")` (20%)._ Per RESEARCH §"Code Examples", concentrating more than 20% in a single position is an architectural smell — schema rejection catches it at validation time before it reaches OrderGuard (P2). The other caps use Pydantic's `gt`/`ge` bounds without defensive ceilings (callers know their own risk profile).
+- _`ResearchBrief` uses `model_config = ConfigDict(extra="allow")` for forward-compat to P4._ This is the load-bearing forward-compatibility mechanism per RESEARCH §"Pattern 2": P4 hardening will add `injected_content_flags` / `source_allowlist_violations` / `sanitization_applied` as additional optional fields. The `extra="allow"` keeps `model_extra` populated rather than rejecting unknown keys. `research_budget_used: dict[str, Any]` (not a sub-model) lets P4 extend its keys without re-versioning the brief schema.
+- _`TradeProposal` uses `extra="ignore"` (NOT "allow")._ Different from ResearchBrief: TradeProposal sits ATTHE audit-log write boundary (D-15 says payload_json IS this model_dump). Allowing unknown extras into the persisted JSON would make the audit-log payload shape less predictable; ignoring keeps the schema clean while still tolerating older deserialized rows.
+- _`generate_strategy_diff` is deterministic Python, NOT LLM-generated for P1._ Per RESEARCH §"Don't Hand-Roll", the LLM-generated diff path is acceptable but the deterministic implementation is simpler for P1. P6 may replace with LLM-generated prose if Chris wants richer narratives.
+- _`EvidenceSnippet.quote_text` is the UNTRUSTED-content channel; `summary` and `source_type` are trusted._ P4 prompt-injection defense will wrap `quote_text` in `<UNTRUSTED>...</UNTRUSTED>` markers at the Decision-agent prompt boundary. The schema preserves the bytes verbatim — sanitization is a prompt-layer concern, not a schema concern.
+- _`EventPayload` is a Pydantic v2 discriminated union via `Discriminator(callable)` + `Annotated[..., Tag(value)]`._ NOT enforced at `append_event`'s write site in Plan 01-04 (that handler still accepts plain dict per its contract). EventPayload is the CALLER-side type validator: Plans 01-07 and 01-08 construct typed payloads, call `model_dump()`, and pass the dict to `append_event`. Recommendation captured in 01-06-SUMMARY's plan-output block: enforce typed validation at the write site even though `append_event` is dict-tolerant.
+- _`TradeProposal.client_order_id` is `Field(min_length=32, max_length=32)`._ Exactly the 32-char hex output of `compute_client_order_id` (Plan 01-05). The schema strictness is the load-bearing match: Plan 01-07's ProposalWriter computes `compute_client_order_id(...)`, stores it on the row, AND embeds it in the proposal model; any drift between the two would be caught at TradeProposal validation time.
+- _`TradeProposal.evidence` is `Field(min_length=3, max_length=5)` — the D-12 differentiator._ This is the one-shot architectural decision per CONTEXT.md §"specifics" — cannot be retrofitted from free-form prose. Once Plan 01-07's Decision agent emits a TradeProposal, the schema rejection is the LAST gate before persistence; if the agent supplied fewer than 3 or more than 5 evidence snippets, it's a re-prompt loop, not a silent acceptance.
+
 ---
 *State initialized: 2026-06-08 after roadmap creation*
 *Updated: 2026-06-08 after Phase 1 context gathered*
 *Updated: 2026-06-08 after Plan 01-02 complete*
 *Updated: 2026-06-08 after Plan 01-03 complete*
 *Updated: 2026-06-08 after Plan 01-04 complete*
+*Updated: 2026-06-08 after Plan 01-05 complete*
+*Updated: 2026-06-09 after Plan 01-06 complete*

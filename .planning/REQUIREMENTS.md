@@ -12,9 +12,9 @@ Requirements for initial release. Each maps to roadmap phases (see Traceability)
 - [ ] **STRAT-01**: User can author a strategy via natural-language chat ("I'm bullish on AI infra, max 5% per position, prefer dividend payers"), which the agent compiles into a structured strategy document
 - [ ] **STRAT-02**: User can view and edit the resulting structured strategy via a form UI (risk tolerance, position sizing, sector preferences, watchlist tickers)
 - [ ] **STRAT-03**: User can drop ad-hoc guidance during a run ("focus on energy this week", "avoid Chinese stocks for now") which the agent persists and injects into future research/decision cycles
-- [ ] **STRAT-04**: User can version strategies — every change creates a new version with diff visible
-- [ ] **STRAT-05**: User can run multiple named strategies in parallel (each with its own portfolio, caps, trust level)
-- [ ] **STRAT-06**: User can mark a strategy paper-mode-only or live-mode-eligible; flipping live requires an explicit confirmation step
+- [x] **STRAT-04**: User can version strategies — every change creates a new version with diff visible
+- [x] **STRAT-05**: User can run multiple named strategies in parallel (each with its own portfolio, caps, trust level)
+- [x] **STRAT-06**: User can mark a strategy paper-mode-only or live-mode-eligible; flipping live requires an explicit confirmation step
 
 ### Research & Analysis
 
@@ -25,7 +25,7 @@ Requirements for initial release. Each maps to roadmap phases (see Traceability)
 - [ ] **RES-05**: Agent's research turns are bounded per cycle (max ~12 tool calls / ~8K tokens) to prevent autoregressive drift
 - [ ] **RES-06**: Research agent and decision agent have separated context (research output is summarized and passed to decision agent, never shared raw context)
 - [ ] **RES-07**: All untrusted external content (news, SEC filings, web) is wrapped in delimiters and the source is allowlisted
-- [ ] **RES-08**: User-supplied guidance is stored as a structured record (timestamp, scope, expiry) and injected into the decision context, not lost in chat history
+- [x] **RES-08**: User-supplied guidance is stored as a structured record (timestamp, scope, expiry) and injected into the decision context, not lost in chat history
 
 ### Trade Execution & Safety (OrderGuard)
 
@@ -64,7 +64,7 @@ Requirements for initial release. Each maps to roadmap phases (see Traceability)
 - [ ] **REPT-01**: Slack DM for: trade proposals (HITL), trade executions, daily P&L summary, errors and operational alerts
 - [ ] **REPT-02**: Daily email digest — portfolio snapshot, day's trades with rationale, P&L, anomalies
 - [ ] **REPT-03**: Weekly email digest — multi-day P&L, strategy attribution, rationale themes
-- [ ] **REPT-04**: Every trade execution generates a structured rationale record (thesis category, supporting evidence, confidence level, alternatives considered) persisted to the audit log
+- [x] **REPT-04**: Every trade execution generates a structured rationale record (thesis category, supporting evidence, confidence level, alternatives considered) persisted to the audit log
 - [ ] **REPT-05**: User can export trade history as CSV (for tax software)
 
 ### Web Dashboard
@@ -225,9 +225,9 @@ Mapping of every v1 requirement to exactly one phase. Updated at roadmap creatio
 | STRAT-01 | Phase 1 | Pending |
 | STRAT-02 | Phase 1 | Pending |
 | STRAT-03 | Phase 1 | Pending |
-| STRAT-04 | Phase 1 | Pending |
-| STRAT-05 | Phase 1 | Pending |
-| STRAT-06 | Phase 1 | Pending |
+| STRAT-04 | Phase 1 | Complete |
+| STRAT-05 | Phase 1 | Complete |
+| STRAT-06 | Phase 1 | Complete |
 | RES-01 | Phase 1 | Pending |
 | RES-02 | Phase 1 | Pending |
 | RES-03 | Phase 1 | Pending |
@@ -235,7 +235,7 @@ Mapping of every v1 requirement to exactly one phase. Updated at roadmap creatio
 | RES-05 | Phase 1 | Pending |
 | RES-06 | Phase 2 | Pending |
 | RES-07 | Phase 2 | Pending |
-| RES-08 | Phase 1 | Pending |
+| RES-08 | Phase 1 | Complete |
 | EXEC-01 | Phase 1 | Pending |
 | EXEC-02 | Phase 1 | Pending |
 | EXEC-03 | Phase 2 | Pending |
@@ -262,7 +262,7 @@ Mapping of every v1 requirement to exactly one phase. Updated at roadmap creatio
 | REPT-01 | Phase 3 | Pending |
 | REPT-02 | Phase 6 | Pending |
 | REPT-03 | Phase 6 | Pending |
-| REPT-04 | Phase 1 | Pending |
+| REPT-04 | Phase 1 | Complete |
 | REPT-05 | Phase 6 | Pending |
 | DASH-01 | Phase 6 | Pending |
 | DASH-02 | Phase 6 | Pending |
