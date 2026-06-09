@@ -17,7 +17,6 @@ from decimal import Decimal
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
