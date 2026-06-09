@@ -9,20 +9,20 @@ Requirements for initial release. Each maps to roadmap phases (see Traceability)
 
 ### Strategy Definition & Management
 
-- [ ] **STRAT-01**: User can author a strategy via natural-language chat ("I'm bullish on AI infra, max 5% per position, prefer dividend payers"), which the agent compiles into a structured strategy document
+- [x] **STRAT-01**: User can author a strategy via natural-language chat ("I'm bullish on AI infra, max 5% per position, prefer dividend payers"), which the agent compiles into a structured strategy document
 - [ ] **STRAT-02**: User can view and edit the resulting structured strategy via a form UI (risk tolerance, position sizing, sector preferences, watchlist tickers)
-- [ ] **STRAT-03**: User can drop ad-hoc guidance during a run ("focus on energy this week", "avoid Chinese stocks for now") which the agent persists and injects into future research/decision cycles
+- [x] **STRAT-03**: User can drop ad-hoc guidance during a run ("focus on energy this week", "avoid Chinese stocks for now") which the agent persists and injects into future research/decision cycles
 - [x] **STRAT-04**: User can version strategies — every change creates a new version with diff visible
 - [x] **STRAT-05**: User can run multiple named strategies in parallel (each with its own portfolio, caps, trust level)
 - [x] **STRAT-06**: User can mark a strategy paper-mode-only or live-mode-eligible; flipping live requires an explicit confirmation step
 
 ### Research & Analysis
 
-- [ ] **RES-01**: Agent can fetch price and quote data (Alpaca free IEX feed primary, `yahooquery` fallback)
-- [ ] **RES-02**: Agent can fetch recent news for a ticker (Finnhub + Alpha Vantage free tiers)
-- [ ] **RES-03**: Agent can fetch fundamentals from SEC EDGAR (10-K, 10-Q, 8-K filings)
-- [ ] **RES-04**: Agent can perform open-ended web research using a sandboxed browser tool (Claude-for-Chrome / browser-use)
-- [ ] **RES-05**: Agent's research turns are bounded per cycle (max ~12 tool calls / ~8K tokens) to prevent autoregressive drift
+- [x] **RES-01**: Agent can fetch price and quote data (Alpaca free IEX feed primary, `yahooquery` fallback)
+- [x] **RES-02**: Agent can fetch recent news for a ticker (Finnhub + Alpha Vantage free tiers)
+- [x] **RES-03**: Agent can fetch fundamentals from SEC EDGAR (10-K, 10-Q, 8-K filings)
+- [x] **RES-04**: Agent can perform open-ended web research using a sandboxed browser tool (Claude-for-Chrome / browser-use)
+- [x] **RES-05**: Agent's research turns are bounded per cycle (max ~12 tool calls / ~8K tokens) to prevent autoregressive drift
 - [ ] **RES-06**: Research agent and decision agent have separated context (research output is summarized and passed to decision agent, never shared raw context)
 - [ ] **RES-07**: All untrusted external content (news, SEC filings, web) is wrapped in delimiters and the source is allowlisted
 - [x] **RES-08**: User-supplied guidance is stored as a structured record (timestamp, scope, expiry) and injected into the decision context, not lost in chat history
@@ -222,17 +222,17 @@ Mapping of every v1 requirement to exactly one phase. Updated at roadmap creatio
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| STRAT-01 | Phase 1 | Pending |
+| STRAT-01 | Phase 1 | Complete |
 | STRAT-02 | Phase 1 | Pending |
-| STRAT-03 | Phase 1 | Pending |
+| STRAT-03 | Phase 1 | Complete |
 | STRAT-04 | Phase 1 | Complete |
 | STRAT-05 | Phase 1 | Complete |
 | STRAT-06 | Phase 1 | Complete |
-| RES-01 | Phase 1 | Pending |
-| RES-02 | Phase 1 | Pending |
-| RES-03 | Phase 1 | Pending |
-| RES-04 | Phase 1 | Pending |
-| RES-05 | Phase 1 | Pending |
+| RES-01 | Phase 1 | Complete |
+| RES-02 | Phase 1 | Complete |
+| RES-03 | Phase 1 | Complete |
+| RES-04 | Phase 1 | Complete |
+| RES-05 | Phase 1 | Complete |
 | RES-06 | Phase 2 | Pending |
 | RES-07 | Phase 2 | Pending |
 | RES-08 | Phase 1 | Complete |

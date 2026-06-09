@@ -3,18 +3,18 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-06-09T14:00:00.000Z"
+last_updated: "2026-06-09T20:25:00.000Z"
 progress:
   total_phases: 9
   completed_phases: 0
   total_plans: 9
-  completed_plans: 6
-  percent: 67
+  completed_plans: 7
+  percent: 78
 ---
 
 # Project State: Project Gekko
 
-**Last updated:** 2026-06-09 (Plan 01-06 complete — Pydantic schema contracts: Strategy + HardCaps + Guidance + ResearchBrief + EvidenceSnippet + TickerSnapshot + TradeProposal + NoActionProposal + AlternativeConsidered + EventPayload discriminated union + plain-English diff + next_version helper; STRAT-04 + STRAT-05 + STRAT-06 + REPT-04 + RES-08 closed)
+**Last updated:** 2026-06-09 (Plan 01-07 complete — Agent runtime: BudgetTracker (D-13) + four Researcher tools (RES-01..04) + propose_trade/no_action sentinel tools + RESEARCHER/DECISION AgentDefinitions (D-10, D-11) + ProposalWriter (D-15, D-20, hallucinated-ticker mitigation) + trigger_strategy_run orchestrator (D-06) + compile_strategy_from_chat (STRAT-01); STRAT-01 + STRAT-03 + RES-01 + RES-02 + RES-03 + RES-04 + RES-05 closed)
 
 ## Project Reference
 
@@ -25,16 +25,16 @@ progress:
 ## Current Position
 
 Phase: 1 (Foundation & Vertical Slice) — EXECUTING
-Plan: 7 of 9 (01-01 + 01-02 + 01-03 + 01-04 + 01-05 + 01-06 complete)
+Plan: 8 of 9 (01-01 + 01-02 + 01-03 + 01-04 + 01-05 + 01-06 + 01-07 complete)
 
 - **Phase:** 1 (Foundation & Vertical Slice)
-- **Plan:** 01-07 (Agent runtime: Researcher + Decision subagents, BudgetTracker, ProposalWriter, trigger_strategy_run) — next
-- **Status:** Executing Phase 1, Wave 2
-- **Progress:** [███████░░░] 67%
-- **Resume from:** `.planning/phases/01-foundation-vertical-slice-alpaca-paper-slack-hitl/01-07-PLAN.md`
+- **Plan:** 01-08 (Slack + Executor: Block Kit HITL card, /gekko run slash command, Executor wiring AlpacaBroker.place_order, websocket fill stream) — next
+- **Status:** Executing Phase 1, Wave 2 (continuing)
+- **Progress:** [████████░░] 78%
+- **Resume from:** `.planning/phases/01-foundation-vertical-slice-alpaca-paper-slack-hitl/01-08-PLAN.md`
 
 ```
-[#############.....] 67%
+[##############....] 78%
 ```
 
 ## Performance Metrics
@@ -89,7 +89,8 @@ Plan: 7 of 9 (01-01 + 01-02 + 01-03 + 01-04 + 01-05 + 01-06 complete)
 - [x] Plan 01-04 executed — Audit chain: canonical_json + append_event + walk_chain (AUDT-01, AUDT-02) (2026-06-08)
 - [x] Plan 01-05 executed — Brokerage ABC + AlpacaBroker paper-only + TradingStream + cassette round-trip (EXEC-01, EXEC-02, EXEC-07, BROK-A-01/03/04/05/06) (2026-06-08)
 - [x] Plan 01-06 executed — Pydantic schema contracts: Strategy + HardCaps + Guidance + ResearchBrief + EvidenceSnippet + TradeProposal + NoActionProposal + EventPayload + plain-English diff + next_version (STRAT-04, STRAT-05, STRAT-06, REPT-04, RES-08) (2026-06-09)
-- [ ] Plan 01-07 — Agent runtime: Researcher + Decision subagents, BudgetTracker, ProposalWriter (Wave 2 — next)
+- [x] Plan 01-07 executed — Agent runtime: BudgetTracker + 4 Researcher tools + propose_trade/no_action + RESEARCHER/DECISION AgentDefinitions + ProposalWriter + trigger_strategy_run + compile_strategy_from_chat (STRAT-01, STRAT-03, RES-01, RES-02, RES-03, RES-04, RES-05) (2026-06-09)
+- [ ] Plan 01-08 — Slack + Executor: Block Kit HITL card, /gekko run slash command, Executor wiring AlpacaBroker.place_order, websocket fill stream (Wave 2 — next)
 - [x] Resolve "wash-sale default" decision before Phase 2 plan-phase — flag-only chosen 2026-06-08
 - [ ] Resolve "default LLM cost ceiling" value before Phase 4 plan-phase
 - [ ] Resolve "trust ladder promotion criteria" placeholder before Phase 5 plan-phase
@@ -110,9 +111,9 @@ None.
 
 ## Session Continuity
 
-**Next action:** Execute Plan 01-07 — Agent runtime (Researcher + Decision subagents using Claude Agent SDK, BudgetTracker, in-process tools alpaca_data + finnhub_news + edgar + web_fetch + propose_trade + propose_no_action, ProposalWriter, trigger_strategy_run, compile_strategy_from_chat). Will import `gekko.schemas.{ResearchBrief, EvidenceSnippet, TradeProposal, NoActionProposal, EventPayload}` (Plan 01-06) and `gekko.core.ids.compute_client_order_id` (Plan 01-05). ProposalWriter MUST call `normalize_decimals(payload)` BEFORE `append_event` (Plan 01-04 caller-side normalization invariant).
+**Next action:** Execute Plan 01-08 — Slack + Executor (Block Kit HITL approval card, `/gekko run` slash command, Executor wiring `AlpacaBroker.place_order(OrderRequest)` from approved TradeProposal, websocket fill stream → fill audit events). Will import `gekko.agent.runtime.trigger_strategy_run` (Plan 01-07) as the single orchestrator entry point. Plan 01-08 builds the Block Kit card from the `TradeProposal` returned by `trigger_strategy_run`; handles approval/rejection interactivity; constructs `OrderRequest(client_order_id=proposal.client_order_id, ...)` for the broker; writes `approval`/`rejection`/`order_submitted`/`fill` events via Plan 01-04's `append_event` with Plan 01-06's typed `EventPayload` shapes.
 
-**Resumable from:** `.planning/phases/01-foundation-vertical-slice-alpaca-paper-slack-hitl/01-07-PLAN.md`. STATE.md + ROADMAP.md + REQUIREMENTS.md + the Plan 01-01..01-06 SUMMARYs provide full context for any agent to pick up the work.
+**Resumable from:** `.planning/phases/01-foundation-vertical-slice-alpaca-paper-slack-hitl/01-08-PLAN.md`. STATE.md + ROADMAP.md + REQUIREMENTS.md + the Plan 01-01..01-07 SUMMARYs + docs/sdk-shape.md provide full context for any agent to pick up the work.
 
 ### Decisions from Plan 01-02 (added 2026-06-08)
 
@@ -157,6 +158,20 @@ None.
 - _`TradeProposal.client_order_id` is `Field(min_length=32, max_length=32)`._ Exactly the 32-char hex output of `compute_client_order_id` (Plan 01-05). The schema strictness is the load-bearing match: Plan 01-07's ProposalWriter computes `compute_client_order_id(...)`, stores it on the row, AND embeds it in the proposal model; any drift between the two would be caught at TradeProposal validation time.
 - _`TradeProposal.evidence` is `Field(min_length=3, max_length=5)` — the D-12 differentiator._ This is the one-shot architectural decision per CONTEXT.md §"specifics" — cannot be retrofitted from free-form prose. Once Plan 01-07's Decision agent emits a TradeProposal, the schema rejection is the LAST gate before persistence; if the agent supplied fewer than 3 or more than 5 evidence snippets, it's a re-prompt loop, not a silent acceptance.
 
+### Decisions from Plan 01-07 (added 2026-06-09)
+
+- _docs/sdk-shape.md is the authoritative claude-agent-sdk 0.2.93 reference; RESEARCH §Code Examples is SUPERSEDED for SDK-shape concerns._ Task 1 was the blocking-human re-verification checkpoint that produced 8 deltas: positional `@tool(name, desc, schema)` decorator; `async def fn(args: dict) -> dict` returning MCP content shape; module-global tool context for DI (no kwargs injection); `create_sdk_mcp_server(name='gekko', ...)` with `mcp__gekko__*` fully-qualified names; two `query()` calls (Option A) instead of nonexistent `client.delegate(...)`; `<RESEARCH_BRIEF>` regex extraction (no `result.structured_output`); model alias `"sonnet"`; SDK mocked entirely in tests (no `claude` CLI binary).
+- _BudgetTracker uses flat per-tool token estimates (100/200/300/500) in P1._ Real `ResultMessage.usage` from the SDK is available but plumbing requires hooking the message stream — P4 scope per docs/sdk-shape.md delta #6. The per-cycle 2x hard halt at the call-count and elapsed-seconds dimensions is the safety net P1 needs.
+- _Module-global tool context (gekko.agent.tools.context) is the DI pattern for SDK tools._ The Claude Agent SDK's `@tool` decorator requires `async def fn(args: dict) -> dict` — no kwargs injection. Module-globals are safe under D-18's single-event-loop / single-process modular monolith assumption. `trigger_strategy_run` calls `set_tool_context(budget=..., broker=...)` BEFORE the first `query()` call; the four Researcher tools read via `get_tool_context()`.
+- _Two query() calls instead of subagent delegation (Option A)._ The SDK has no `client.delegate(subagent_name, prompt)` method. Orchestrator drives both subagents explicitly: Phase A `query()` with Researcher system_prompt + `allowed_tools=RESEARCHER_TOOLS`; Phase B `query()` with Decision system_prompt + `allowed_tools=DECISION_TOOLS`. The Researcher's transcript NEVER crosses to Decision — only the parsed `ResearchBrief` JSON does (D-10 trust boundary held at the orchestrator layer).
+- _Researcher emits `<RESEARCH_BRIEF>{json}</RESEARCH_BRIEF>` in TextBlock; orchestrator regex-parses it._ Alternative was `ClaudeAgentOptions.output_format`, but it's session-level so both subagents would get the same schema (we have two different shapes). P1's text-block parsing is brittle by design — predictable for a constrained system_prompt; P4 can swap to per-call output_format if needed.
+- _Decision tool input_schemas are derived from TradeProposal/NoActionProposal JSON Schema with runtime fields stripped._ The LLM does NOT supply `user_id`, `strategy_name`, `decision_id`, `client_order_id` — ProposalWriter fills them per D-20. The schema-strip keeps the model's tool-use prompt focused on the fields it actually picks.
+- _ProposalWriter uses `model_dump(mode='python')` then `normalize_decimals(...)` BEFORE append_event._ `mode='json'` converts Decimals to strings before normalize_decimals can collapse trailing-zero variants — defeating Pitfall 6. mode='python' preserves Decimals; canonical_json downstream renders via str(). Decimal('100.0') and Decimal('100') now produce the same audit-chain canonical bytes.
+- _ProposalWriter handles concurrent-insert race via IntegrityError handler._ Catch IntegrityError on `session.flush()`, rollback, open fresh transaction, SELECT the winning row, return its TradeProposal. The combination of (a) SELECT-before-INSERT short-circuit, (b) IntegrityError race handler, and (c) deterministic `compute_client_order_id` satisfies the EXEC-02 / Knight-Capital prevention contract end-to-end at the writer layer.
+- _Watchlist-violation error event is re-emitted from the orchestrator after rollback._ ProposalWriter queues the error event inside the rejection branch then raises ProposalRejected — which rolls back the queued event. `trigger_strategy_run` catches the exception, opens a fresh transaction, and re-emits the event with a `trigger_strategy_run.proposal_rejected` context marker. Audit-event persistence failure is swallowed (logged but not re-raised) so the original ProposalRejected remains the surface error.
+- _`runtime.set_passphrase` / `_get_passphrase` is the SQLCipher passphrase indirection — Plan 01-09 owns the bootstrap._ Production: `gekko serve` / `gekko run` CLI prompts the operator, verifies via `gekko.db.engine.verify_passphrase`, then calls `runtime.set_passphrase(...)` BEFORE any APScheduler / FastAPI route fires. Tests bypass entirely by passing `session_factory=` to `trigger_strategy_run`.
+- _`compile_strategy_from_chat` follows the same `<STRATEGY>{json}</STRATEGY>` regex pattern as the Researcher._ Single `query()` call with the Strategy Compiler system_prompt; parses the block; runtime fills `strategy_id` (uuid), `user_id`, `version=1`, `created_at`, `created_by_chat=True`. LLM only authors the user-visible fields (name, thesis, watchlist, hard_caps, mode, schedule_time).
+
 ---
 *State initialized: 2026-06-08 after roadmap creation*
 *Updated: 2026-06-08 after Phase 1 context gathered*
@@ -165,3 +180,4 @@ None.
 *Updated: 2026-06-08 after Plan 01-04 complete*
 *Updated: 2026-06-08 after Plan 01-05 complete*
 *Updated: 2026-06-09 after Plan 01-06 complete*
+*Updated: 2026-06-09 after Plan 01-07 complete*
