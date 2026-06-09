@@ -62,6 +62,17 @@ class AuditChainBroken(GekkoError):
     """
 
 
+class ProposalRejected(GekkoError):
+    """Raised when ``ProposalWriter`` rejects an LLM-emitted proposal.
+
+    Phase 1 hallucinated-ticker mitigation: if the Decision agent calls
+    ``propose_trade`` with a ticker outside the strategy's watchlist, the
+    writer rejects the proposal, emits an ``error`` audit event, and
+    raises this typed exception. The writer never persists a hallucinated
+    ticker (Plan 01-07 Task 5; RESEARCH §Security Domain).
+    """
+
+
 __all__: tuple[str, ...] = (
     "GekkoError",
     "WrongPassphraseError",
@@ -69,4 +80,5 @@ __all__: tuple[str, ...] = (
     "BrokerOrderError",
     "BudgetExceeded",
     "AuditChainBroken",
+    "ProposalRejected",
 )
