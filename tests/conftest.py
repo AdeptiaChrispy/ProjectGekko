@@ -227,6 +227,143 @@ def mock_claude_sdk(mocker: Any) -> MagicMock:
 
 
 # ---------------------------------------------------------------------------
+# Configurable Claude Agent SDK query() mock — Plan 01-07 Task 6
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def fake_sdk_query(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Patch ``gekko.agent.runtime.query`` with a configurable fake.
+
+    The Claude Agent SDK's ``query()`` is an async generator that yields a
+    stream of messages. For integration tests we need to:
+
+      * Replace it entirely so the `claude` CLI binary isn't required
+        (docs/sdk-shape.md delta #8 — CI mocks the SDK).
+      * Return DIFFERENT canned message streams for the Researcher call
+        and the Decision call (different system_prompts identify them).
+
+    The fixture returns a ``set_responses(researcher=..., decision=...)``
+    callable plus a ``calls`` list capturing every invocation's
+    ``(prompt, options_signature)`` for assertion. The runtime is
+    expected to call ``query()`` exactly twice per ``trigger_strategy_run``
+    (Researcher then Decision) plus once for ``compile_strategy_from_chat``.
+    """
+    from claude_agent_sdk.types import (
+        AssistantMessage,
+        ResultMessage,
+        TextBlock,
+        ToolUseBlock,
+    )
+
+    calls: list[dict[str, Any]] = []
+    responses: dict[str, list[Any]] = {}
+
+    def make_text_message(text: str) -> Any:
+        return AssistantMessage(
+            content=[TextBlock(text=text)],
+            model="sonnet",
+            parent_tool_use_id=None,
+            error=None,
+            usage=None,
+        )
+
+    def make_tool_use_message(tool_name: str, tool_input: dict[str, Any]) -> Any:
+        return AssistantMessage(
+            content=[
+                ToolUseBlock(
+                    id="t1",
+                    name=tool_name,
+                    input=tool_input,
+                )
+            ],
+            model="sonnet",
+            parent_tool_use_id=None,
+            error=None,
+            usage=None,
+        )
+
+    def make_result_message() -> Any:
+        return ResultMessage(
+            subtype="success",
+            duration_ms=100,
+            duration_api_ms=80,
+            is_error=False,
+            num_turns=1,
+            session_id="test-session",
+            stop_reason="end_turn",
+            total_cost_usd=0.0,
+            usage=None,
+            result=None,
+            structured_output=None,
+            model_usage=None,
+            permission_denials=None,
+            deferred_tool_use=None,
+            errors=None,
+            api_error_status=None,
+            uuid=None,
+        )
+
+    def set_responses(**kwargs: list[Any]) -> None:
+        responses.clear()
+        responses.update(kwargs)
+
+    async def fake_query(
+        *, prompt: Any, options: Any = None, transport: Any = None
+    ) -> Any:
+        """Async generator producing the configured response stream.
+
+        Selects which response stream to yield based on a marker in the
+        ``options.system_prompt`` (Researcher prompts contain
+        "Researcher subagent"; Decision prompts contain "Decision subagent";
+        Compiler prompts contain "Strategy Compiler").
+        """
+        sys_prompt = getattr(options, "system_prompt", "") or ""
+        key: str
+        if "Researcher subagent" in sys_prompt:
+            key = "researcher"
+        elif "Decision subagent" in sys_prompt:
+            key = "decision"
+        elif "Strategy Compiler" in sys_prompt:
+            key = "compiler"
+        else:
+            key = "default"
+
+        calls.append(
+            {
+                "key": key,
+                "prompt": prompt,
+                "system_prompt": sys_prompt,
+                "allowed_tools": list(getattr(options, "allowed_tools", []) or []),
+                "max_turns": getattr(options, "max_turns", None),
+                "model": getattr(options, "model", None),
+            }
+        )
+
+        stream = list(responses.get(key, []))
+        # Always cap each stream with a ResultMessage so the runtime can
+        # break out cleanly.
+        if not stream or not isinstance(stream[-1], ResultMessage):
+            stream.append(make_result_message())
+        for msg in stream:
+            yield msg
+
+    # Patch the symbol the runtime module imports.
+    monkeypatch.setattr(
+        "gekko.agent.runtime.query", fake_query, raising=False
+    )
+
+    # Expose helpers on a small namespace.
+    ns = type("FakeSdkQueryNS", (), {})()
+    ns.calls = calls
+    ns.set_responses = set_responses
+    ns.make_text_message = make_text_message
+    ns.make_tool_use_message = make_tool_use_message
+    ns.make_result_message = make_result_message
+    return ns
+
+
+# ---------------------------------------------------------------------------
 # Logging + Settings infrastructure
 # ---------------------------------------------------------------------------
 
