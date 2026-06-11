@@ -336,6 +336,107 @@ def test_build_no_action_message_without_cost() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_mrkdwn_metacharacters_in_llm_fields_are_escaped() -> None:
+    """Prompt-injected mrkdwn in LLM-authored fields must not spoof card structure.
+
+    A malicious ``rationale`` / ``summary`` / ``why_rejected`` containing
+    newlines + mrkdwn metacharacters (``< > * _ ~ | ``) must be escaped so it
+    renders as inert text, not as new fields, bold headings, or fake links.
+    """
+    nasty = "FAKE\n*Approved by Chris*: <https://evil.test|click> _|_"
+    p = TradeProposal(
+        user_id="U_TEST",
+        strategy_name="ai-infra-bull",
+        decision_id=uuid4().hex,
+        ticker="NVDA",
+        side="buy",
+        qty=Decimal("5"),
+        order_type="limit",
+        limit_price=Decimal("1234.56"),
+        stop_price=None,
+        rationale=nasty,
+        confidence=Decimal("0.78"),
+        evidence=[
+            EvidenceSnippet(
+                source_type="finnhub_news",
+                source_url="https://finnhub.io/news/nvda",
+                fetched_at="2026-06-08T11:30:00+00:00",
+                summary=nasty,
+            ),
+            EvidenceSnippet(
+                source_type="alpaca_quote",
+                source_url="https://alpaca.markets/quotes/NVDA",
+                fetched_at="2026-06-08T12:00:00+00:00",
+                summary="benign summary",
+            ),
+            EvidenceSnippet(
+                source_type="edgar_filing",
+                source_url="https://www.sec.gov/Archives/edgar/data/0001045810/x/",
+                fetched_at="2026-06-08T10:00:00+00:00",
+                summary="another benign summary",
+            ),
+        ],
+        alternatives_considered=[
+            AlternativeConsidered(description=nasty, why_rejected=nasty),
+        ],
+        client_order_id="a" * 32,
+    )
+    blocks = build_proposal_card(p)
+    # Walk the raw Python strings (not the JSON-encoded payload — JSON adds
+    # its own backslash-escaping layer that would obscure the assertions).
+    # Only "section" blocks built with a single text body have b["text"]; the
+    # primary-fields section uses "fields" instead, so guard with a presence check.
+    def _section_text(label: str) -> str:
+        for b in blocks:
+            if b.get("type") != "section":
+                continue
+            text_obj = b.get("text")
+            if isinstance(text_obj, dict) and label in text_obj.get("text", ""):
+                return text_obj["text"]
+        raise AssertionError(f"section with label {label!r} not found")
+
+    rationale_block_text = _section_text("Rationale:")
+    evidence_block_text = _section_text("Evidence:")
+    alternatives_block_text = _section_text("Alternatives considered:")
+
+    for text in (rationale_block_text, evidence_block_text, alternatives_block_text):
+        # Newlines in LLM content are collapsed to a single space — multiline
+        # content can't break out of its row.
+        assert "FAKE\n" not in text
+        # Mrkdwn metacharacters in LLM-authored text are backslash-escaped.
+        # The literal "*Approved by Chris*" (no backslashes) must not appear
+        # in any block carrying LLM content.
+        assert "*Approved by Chris*" not in text
+        assert "\\*Approved by Chris\\*" in text
+    # The malicious link form is neutered: < > | are all escaped so Slack
+    # renders inert text, not a clickable link.
+    assert "<https://evil.test|click>" not in rationale_block_text
+    assert "\\<https://evil.test\\|click\\>" in rationale_block_text
+    # The legitimate evidence link (built by us, not from LLM content) is intact.
+    assert "<https://alpaca.markets/quotes/NVDA|alpaca_quote>" in evidence_block_text
+
+
+def test_no_action_message_escapes_mrkdwn_metacharacters() -> None:
+    """``build_no_action_message`` applies the same escaping to LLM-authored
+    rationale, strategy name, and factor labels."""
+    nap = NoActionProposal(
+        user_id="U_TEST",
+        strategy_name="ai-infra-bull",
+        decision_id=uuid4().hex,
+        rationale="thin evidence\n*BUY NOW* <https://evil.test|click>",
+        factors_considered=["price_vs_*thesis*", "macro_risk"],
+        confidence=Decimal("0.55"),
+    )
+    msg = build_no_action_message(nap, cost_usd=Decimal("0.05"))
+    # Newlines collapsed; metacharacters (including underscores in factor
+    # labels) backslash-escaped.
+    assert "\n*BUY NOW*" not in msg
+    assert "\\*BUY NOW\\*" in msg
+    assert "<https://evil.test|click>" not in msg
+    # Underscores are mrkdwn italic markers and get escaped along with the *s.
+    assert "price\\_vs\\_\\*thesis\\*" in msg
+
+
 def test_build_fill_confirmation_returns_short_dm_text() -> None:
     """build_fill_confirmation returns a short single-line message with all required fields."""
     msg = build_fill_confirmation(

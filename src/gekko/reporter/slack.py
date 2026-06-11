@@ -40,6 +40,7 @@ References:
 
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 from typing import Any
 
@@ -54,6 +55,29 @@ from gekko.schemas.proposal import NoActionProposal, TradeProposal
 # ---------------------------------------------------------------------------
 # Block builders — internal helpers
 # ---------------------------------------------------------------------------
+
+_MRKDWN_META = re.compile(r"([<>*_~|`])")
+_WS_RUN = re.compile(r"\s+")
+
+
+def _escape_mrkdwn(text: str | None) -> str:
+    """Escape Slack mrkdwn metacharacters in LLM- or user-supplied free-form text.
+
+    Prevents prompt-injected content from spoofing card structure: a malicious
+    summary like ``"FAKE\\n*Approved by Chris*: confirmed"`` could otherwise
+    impersonate a new field row inside an mrkdwn block. We backslash-escape
+    ``< > * _ ~ | `` ` `` per Slack's mrkdwn escape rules and collapse any
+    whitespace runs (including newlines) to a single space so multiline
+    content can't break out of its row.
+
+    Trusted fields (``HttpUrl``, ``Literal``, ``Decimal``, schema-validated
+    ids/tickers) are NOT routed through this — only free-form text the LLM
+    or user can author.
+    """
+    if text is None:
+        return ""
+    collapsed = _WS_RUN.sub(" ", str(text)).strip()
+    return _MRKDWN_META.sub(r"\\\1", collapsed)
 
 
 def _banner(account_mode: str) -> str:
@@ -91,11 +115,15 @@ def _evidence_mrkdwn(proposal: TradeProposal) -> str:
     """
     lines: list[str] = []
     for e in proposal.evidence:
+        # source_type is a schema Literal and source_url is HttpUrl — both
+        # structurally validated, no escape needed. e.summary is LLM-authored
+        # free-form text → escape mrkdwn metacharacters.
+        summary = _escape_mrkdwn(e.summary)
         if e.source_url is not None:
             # str() on HttpUrl gives the canonical URL form
-            lines.append(f"• <{e.source_url!s}|{e.source_type}>: {e.summary}")
+            lines.append(f"• <{e.source_url!s}|{e.source_type}>: {summary}")
         else:
-            lines.append(f"• _{e.source_type}_: {e.summary}")
+            lines.append(f"• _{e.source_type}_: {summary}")
     return "\n".join(lines)
 
 
@@ -108,7 +136,10 @@ def _alternatives_mrkdwn(proposal: TradeProposal) -> str:
     """
     lines: list[str] = []
     for a in proposal.alternatives_considered:
-        lines.append(f"• {a.description} — _{a.why_rejected}_")
+        # Both fields are LLM-authored free-form text.
+        description = _escape_mrkdwn(a.description)
+        why_rejected = _escape_mrkdwn(a.why_rejected)
+        lines.append(f"• {description} — _{why_rejected}_")
     return "\n".join(lines)
 
 
@@ -149,11 +180,19 @@ def build_proposal_card(
     """
     banner = _banner(account_mode)
     side_upper = str(proposal.side).upper()
-    company_display = _field_value_or_unknown(company_name)
-    sector_display = _field_value_or_unknown(sector)
+    # Best-effort fields come from broker / data feed strings — escape as
+    # defense-in-depth since the placeholder branch returns trusted constants.
+    company_display = (
+        _escape_mrkdwn(company_name) if company_name is not None else UNKNOWN_FIELD_PLACEHOLDER
+    )
+    sector_display = (
+        _escape_mrkdwn(sector) if sector is not None else UNKNOWN_FIELD_PLACEHOLDER
+    )
     price_display = _price_field(proposal)
     evidence_md = _evidence_mrkdwn(proposal)
     alternatives_md = _alternatives_mrkdwn(proposal)
+    rationale_md = _escape_mrkdwn(proposal.rationale)
+    strategy_md = _escape_mrkdwn(proposal.strategy_name)
     decision_id_value = proposal.decision_id
 
     return [
@@ -178,7 +217,7 @@ def build_proposal_card(
                 {"type": "mrkdwn", "text": f"*Qty:* {proposal.qty}"},
                 {"type": "mrkdwn", "text": f"*Type:* {price_display}"},
                 {"type": "mrkdwn", "text": f"*Confidence:* {proposal.confidence}"},
-                {"type": "mrkdwn", "text": f"*Strategy:* {proposal.strategy_name}"},
+                {"type": "mrkdwn", "text": f"*Strategy:* {strategy_md}"},
             ],
         },
         # 3. Rationale
@@ -186,7 +225,7 @@ def build_proposal_card(
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": f"*Rationale:* {proposal.rationale}",
+                "text": f"*Rationale:* {rationale_md}",
             },
         },
         # 4. Evidence (3-5 bullets with mrkdwn links)
@@ -262,14 +301,19 @@ def build_no_action_message(
     :param cost_usd: Optional per-cycle research cost. Omitted from the
         message when ``None``.
     """
+    # Strategy name, rationale, and factor labels are user / LLM-authored —
+    # escape mrkdwn metacharacters so injected content can't impersonate
+    # additional message rows.
+    strategy_safe = _escape_mrkdwn(no_action.strategy_name)
+    rationale_safe = _escape_mrkdwn(no_action.rationale)
     factors_line = ""
     if no_action.factors_considered:
-        joined = ", ".join(no_action.factors_considered)
+        joined = ", ".join(_escape_mrkdwn(f) for f in no_action.factors_considered)
         factors_line = f" Factors considered: {joined}."
     cost_line = f" Spent ~${cost_usd}." if cost_usd is not None else ""
     return (
-        f"Reviewed {no_action.strategy_name}, no action — "
-        f"{no_action.rationale}.{factors_line}{cost_line} "
+        f"Reviewed {strategy_safe}, no action — "
+        f"{rationale_safe}.{factors_line}{cost_line} "
         f"{REG_01_DISCLOSURE}"
     )
 
