@@ -3,18 +3,18 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-06-09T20:25:00.000Z"
+last_updated: "2026-06-11T12:35:00.000Z"
 progress:
   total_phases: 9
   completed_phases: 0
   total_plans: 9
-  completed_plans: 7
-  percent: 78
+  completed_plans: 8
+  percent: 89
 ---
 
 # Project State: Project Gekko
 
-**Last updated:** 2026-06-09 (Plan 01-07 complete — Agent runtime: BudgetTracker (D-13) + four Researcher tools (RES-01..04) + propose_trade/no_action sentinel tools + RESEARCHER/DECISION AgentDefinitions (D-10, D-11) + ProposalWriter (D-15, D-20, hallucinated-ticker mitigation) + trigger_strategy_run orchestrator (D-06) + compile_strategy_from_chat (STRAT-01); STRAT-01 + STRAT-03 + RES-01 + RES-02 + RES-03 + RES-04 + RES-05 closed)
+**Last updated:** 2026-06-11 (Plan 01-08 complete — Slack Block Kit HITL card (HITL-01), pandas_market_calendars NYSE guard (EXEC-10), /gekko run slash command (D-06), proposals state machine + Approve/Reject handlers w/ cross-user defense (HITL-04, T-01-08-01), deterministic Executor + on_fill_event (Anti-Pattern 1 firewall verified), prompt-injected-mrkdwn escape defense; HITL-01 + HITL-04 + EXEC-10 closed)
 
 ## Project Reference
 
@@ -25,16 +25,16 @@ progress:
 ## Current Position
 
 Phase: 1 (Foundation & Vertical Slice) — EXECUTING
-Plan: 8 of 9 (01-01 + 01-02 + 01-03 + 01-04 + 01-05 + 01-06 + 01-07 complete)
+Plan: 9 of 9 (01-01 + 01-02 + 01-03 + 01-04 + 01-05 + 01-06 + 01-07 + 01-08 complete)
 
 - **Phase:** 1 (Foundation & Vertical Slice)
-- **Plan:** 01-08 (Slack + Executor: Block Kit HITL card, /gekko run slash command, Executor wiring AlpacaBroker.place_order, websocket fill stream) — next
-- **Status:** Executing Phase 1, Wave 2 (continuing)
-- **Progress:** [████████░░] 78%
-- **Resume from:** `.planning/phases/01-foundation-vertical-slice-alpaca-paper-slack-hitl/01-08-PLAN.md`
+- **Plan:** 01-09 (CLI + dashboard + scheduler — `gekko serve` FastAPI app + APScheduler cadence + FastAPI lifespan that wires `runtime.set_passphrase` + Slack route mount + AlpacaFillStream construction) — next
+- **Status:** Executing Phase 1, Wave 2 (final plan)
+- **Progress:** [█████████░] 89%
+- **Resume from:** `.planning/phases/01-foundation-vertical-slice-alpaca-paper-slack-hitl/01-09-PLAN.md`
 
 ```
-[##############....] 78%
+[################..] 89%
 ```
 
 ## Performance Metrics
@@ -90,7 +90,8 @@ Plan: 8 of 9 (01-01 + 01-02 + 01-03 + 01-04 + 01-05 + 01-06 + 01-07 complete)
 - [x] Plan 01-05 executed — Brokerage ABC + AlpacaBroker paper-only + TradingStream + cassette round-trip (EXEC-01, EXEC-02, EXEC-07, BROK-A-01/03/04/05/06) (2026-06-08)
 - [x] Plan 01-06 executed — Pydantic schema contracts: Strategy + HardCaps + Guidance + ResearchBrief + EvidenceSnippet + TradeProposal + NoActionProposal + EventPayload + plain-English diff + next_version (STRAT-04, STRAT-05, STRAT-06, REPT-04, RES-08) (2026-06-09)
 - [x] Plan 01-07 executed — Agent runtime: BudgetTracker + 4 Researcher tools + propose_trade/no_action + RESEARCHER/DECISION AgentDefinitions + ProposalWriter + trigger_strategy_run + compile_strategy_from_chat (STRAT-01, STRAT-03, RES-01, RES-02, RES-03, RES-04, RES-05) (2026-06-09)
-- [ ] Plan 01-08 — Slack + Executor: Block Kit HITL card, /gekko run slash command, Executor wiring AlpacaBroker.place_order, websocket fill stream (Wave 2 — next)
+- [x] Plan 01-08 executed — Slack Block Kit HITL card (HITL-01) + pandas_market_calendars guard (EXEC-10) + /gekko run slash command + proposals state machine + Approve/Reject handlers w/ cross-user defense (HITL-04) + deterministic Executor + on_fill_event + mrkdwn-escape prompt-injection defense (2026-06-11)
+- [ ] Plan 01-09 — CLI + dashboard + scheduler: `gekko serve` FastAPI app w/ lifespan that wires runtime.set_passphrase + mounts Slack route + constructs AlpacaFillStream w/ on_fill_event callback; APScheduler cadence; dashboard "Run now" button; manual smoke of HITL-01 + BROK-A-06 (Wave 2 — final)
 - [x] Resolve "wash-sale default" decision before Phase 2 plan-phase — flag-only chosen 2026-06-08
 - [ ] Resolve "default LLM cost ceiling" value before Phase 4 plan-phase
 - [ ] Resolve "trust ladder promotion criteria" placeholder before Phase 5 plan-phase
@@ -111,9 +112,9 @@ None.
 
 ## Session Continuity
 
-**Next action:** Execute Plan 01-08 — Slack + Executor (Block Kit HITL approval card, `/gekko run` slash command, Executor wiring `AlpacaBroker.place_order(OrderRequest)` from approved TradeProposal, websocket fill stream → fill audit events). Will import `gekko.agent.runtime.trigger_strategy_run` (Plan 01-07) as the single orchestrator entry point. Plan 01-08 builds the Block Kit card from the `TradeProposal` returned by `trigger_strategy_run`; handles approval/rejection interactivity; constructs `OrderRequest(client_order_id=proposal.client_order_id, ...)` for the broker; writes `approval`/`rejection`/`order_submitted`/`fill` events via Plan 01-04's `append_event` with Plan 01-06's typed `EventPayload` shapes.
+**Next action:** Execute Plan 01-09 — CLI + dashboard + scheduler. The FastAPI `gekko serve` app + APScheduler cadence + dashboard "Run now" button + the FastAPI lifespan that wires three load-bearing startup steps: (a) prompt operator for SQLCipher passphrase, verify via `gekko.db.engine.verify_passphrase`, call `runtime.set_passphrase(...)` BEFORE any route serves a Slack request; (b) import `gekko.slack.interactivity` and mount `gekko.slack.app.slack_handler` at `POST /slack/events`; (c) construct `AlpacaFillStream(api_key=..., secret_key=..., user_id=..., on_fill=on_fill_event)` and call `stream.start()`. Manual smoke covers VALIDATION.md §Manual-Only Verifications row 1 (HITL-01) + row 2 (BROK-A-06).
 
-**Resumable from:** `.planning/phases/01-foundation-vertical-slice-alpaca-paper-slack-hitl/01-08-PLAN.md`. STATE.md + ROADMAP.md + REQUIREMENTS.md + the Plan 01-01..01-07 SUMMARYs + docs/sdk-shape.md provide full context for any agent to pick up the work.
+**Resumable from:** `.planning/phases/01-foundation-vertical-slice-alpaca-paper-slack-hitl/01-09-PLAN.md`. STATE.md + ROADMAP.md + REQUIREMENTS.md + the Plan 01-01..01-08 SUMMARYs + docs/sdk-shape.md provide full context for any agent to pick up the work.
 
 ### Decisions from Plan 01-02 (added 2026-06-08)
 
@@ -158,6 +159,20 @@ None.
 - _`TradeProposal.client_order_id` is `Field(min_length=32, max_length=32)`._ Exactly the 32-char hex output of `compute_client_order_id` (Plan 01-05). The schema strictness is the load-bearing match: Plan 01-07's ProposalWriter computes `compute_client_order_id(...)`, stores it on the row, AND embeds it in the proposal model; any drift between the two would be caught at TradeProposal validation time.
 - _`TradeProposal.evidence` is `Field(min_length=3, max_length=5)` — the D-12 differentiator._ This is the one-shot architectural decision per CONTEXT.md §"specifics" — cannot be retrofitted from free-form prose. Once Plan 01-07's Decision agent emits a TradeProposal, the schema rejection is the LAST gate before persistence; if the agent supplied fewer than 3 or more than 5 evidence snippets, it's a re-prompt loop, not a silent acceptance.
 
+### Decisions from Plan 01-08 (added 2026-06-11)
+
+- _Slack signing-secret verification is automatic via slack-bolt._ `AsyncSlackRequestHandler` runs HMAC verification on every inbound request — no custom HMAC code (RESEARCH §Don't Hand-Roll). Plan 01-09 mounts the handler on `POST /slack/events`.
+- _Block Kit cards escape mrkdwn metacharacters in LLM-authored free-form text._ `_escape_mrkdwn` backslash-escapes `< > * _ ~ | `` and collapses whitespace runs in rationale, evidence.summary, alternatives, NoActionProposal.rationale, factors_considered, company_name, sector, strategy_name. Trusted fields (HttpUrl, Literal source_type, Decimal, schema ids/tickers) bypass the escape. Defends against a malicious rationale spoofing card structure (`\n*Approved by Chris*`).
+- _is_market_open uses pandas_market_calendars; calendar instance is `lru_cache`'d._ Half-day awareness (Black Friday 1pm close) comes for free. tz-naive datetimes treated as UTC (documented).
+- _Per-user `_append_locks` is cleared at integration-test start._ Side-band fix for stale `asyncio.Lock` instances from a prior pytest-asyncio loop. The underlying audit-log hardening (lazy-per-loop locks) is out of scope for Plan 01-08; tracked in 01-08-SUMMARY's "Reminders Carried Forward".
+- _Background-task drain via `asyncio.create_task` monkeypatch in the chain integration test._ Polling for `EXECUTING` was flaky on Windows + SQLCipher cold starts. The deterministic alternative: intercept `create_task`, collect every spawned task, drain the tree until no new tasks spawn. The Slack approve -> Executor -> Fill chain is two levels of `create_task` (handle_approve -> _approve_workflow; _approve_workflow -> execute_proposal); the drain loop catches both.
+- _At-least-once double-execute risk accepted per SKELETON.md (T-01-08-05)._ Two safety layers: state machine rejects backward transitions (APPROVED -> PENDING is invalid); broker dedups by deterministic `client_order_id` (Pitfall 4). Plan 01-03 adds `idempotency_key` on proposals as the third layer.
+- _`_get_session_factory(user_id) -> (sf, engine_or_None)` is the SQLCipher engine indirection seam._ Same pattern as Plan 01-07's `_get_passphrase`. Tests monkeypatch the symbol with `(pre_built_factory, None)`. Production builds the engine via `gekko.db.engine.get_async_engine(settings.db_path_for(user_id), _get_passphrase())`.
+- _Executor persists `broker_order_id` on the proposals row in the same transaction as the order_submitted event + APPROVED -> EXECUTING transition._ The row's broker_order_id is the dashboard's "trade timeline" correlation key. Failing to persist it would force the dashboard to JOIN events -> proposals through client_order_id.
+- _Executor module-level grep gate (no `claude_agent_sdk` substring in `src/gekko/execution/executor.py`)._ Asserted by `tests/unit/test_executor.py::test_executor_module_does_not_import_claude_agent_sdk` reading the source bytes. A future refactor that transitively pulled in the SDK would trip this test. The Decision agent's only side-effect-capable tools are `propose_trade` / `propose_no_action`; once those write a Proposal row, the LLM has no further reach into the broker path.
+- _Added `aiohttp>=3.9` to `pyproject.toml`._ `slack-bolt`'s `AsyncApp` imports `aiohttp` at module-load even when only the FastAPI adapter is in use — without the explicit pin `gekko.slack.app` fails to import on a fresh venv.
+- _Fixed FK-ordering bug in `test_approval_proposals.py::_seed_user_and_strategy`._ SQLAlchemy 2.x does not auto-order INSERTs by FK dependency unless a `relationship()` is declared on the parent (it isn't on `gekko.db.models` — D-21 keeps the model layer flat). The helper now does `await session.flush()` between the `User` and `Strategy` adds so SQLCipher's `PRAGMA foreign_keys=ON` sees the User row before the Strategy INSERT.
+
 ### Decisions from Plan 01-07 (added 2026-06-09)
 
 - _docs/sdk-shape.md is the authoritative claude-agent-sdk 0.2.93 reference; RESEARCH §Code Examples is SUPERSEDED for SDK-shape concerns._ Task 1 was the blocking-human re-verification checkpoint that produced 8 deltas: positional `@tool(name, desc, schema)` decorator; `async def fn(args: dict) -> dict` returning MCP content shape; module-global tool context for DI (no kwargs injection); `create_sdk_mcp_server(name='gekko', ...)` with `mcp__gekko__*` fully-qualified names; two `query()` calls (Option A) instead of nonexistent `client.delegate(...)`; `<RESEARCH_BRIEF>` regex extraction (no `result.structured_output`); model alias `"sonnet"`; SDK mocked entirely in tests (no `claude` CLI binary).
@@ -181,3 +196,4 @@ None.
 *Updated: 2026-06-08 after Plan 01-05 complete*
 *Updated: 2026-06-09 after Plan 01-06 complete*
 *Updated: 2026-06-09 after Plan 01-07 complete*
+*Updated: 2026-06-11 after Plan 01-08 complete*
