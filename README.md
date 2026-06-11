@@ -2,7 +2,7 @@
 
 > An autonomous stock trading agent powered by Claude — turns a plain-English investment thesis into researched, monitored trades on your own brokerage account.
 
-**Status:** 🚧 Planning complete, implementation starting. Phase 1 (Foundation & Vertical Slice) up next.
+**Status:** Phase 1 (Foundation & Vertical Slice) — implementation complete. The walking skeleton runs end-to-end against Alpaca paper + Slack + Claude on the operator's own hardware. See [Phase 1 walking-skeleton demo](#phase-1--walking-skeleton-demo) below.
 
 ---
 
@@ -114,6 +114,116 @@ In most US states the SEC investment-adviser de-minimis threshold is "fewer than
 ## Disclaimer
 
 **This software is provided as a personal-use tool, not investment advice.** Trading securities involves substantial risk of loss. You are responsible for every trade your instance of Gekko proposes or executes, the tax consequences of those trades, and the operational reliability of the machine you run it on. The authors make no representation that any strategy authored or executed by Gekko will be profitable. Use paper trading until you trust both the agent and your own strategy. Read your brokerage's terms of service — automated trading is prohibited by some brokerages (notably Robinhood), and your account may be subject to closure if you violate those terms.
+
+---
+
+## Phase 1 — Walking-skeleton demo
+
+This is the SKELETON Demo Script: a 5-minute end-to-end run that proves the Phase 1 capability is alive on the operator's own machine.
+
+### Prerequisites
+
+- Python **3.12** (pinned per D-18 — `gekko doctor` confirms)
+- [`uv`](https://docs.astral.sh/uv/) for Python tooling
+- An [Alpaca paper-trading](https://alpaca.markets/) account (API key + secret)
+- A Slack app with bot token + signing secret + the operator's user ID
+- An Anthropic API key (Claude Agent SDK)
+- Optional: [Finnhub](https://finnhub.io/) free-tier key for news evidence
+- On Windows: ensure `tzdata` is installed (already pinned in `pyproject.toml`)
+
+### Environment variables
+
+```bash
+export ANTHROPIC_API_KEY=...
+export ALPACA_PAPER_API_KEY=...
+export ALPACA_PAPER_SECRET_KEY=...
+export SLACK_BOT_TOKEN=xoxb-...
+export SLACK_SIGNING_SECRET=...
+export SLACK_USER_ID=U...          # your Slack member id
+export GEKKO_USER_ID=alice         # your local Gekko user (per-user isolated DB)
+export FINNHUB_API_KEY=...         # optional; degrades gracefully when absent
+```
+
+### One-time setup
+
+```bash
+uv sync                            # installs all dependencies
+uv run gekko doctor                # env audit — confirms all required vars present
+uv run gekko init                  # first-run wizard: passphrase + REG-02 agreement
+                                   # → creates encrypted ~/.gekko/<user_id>.db
+```
+
+### Author a strategy
+
+Flag mode:
+
+```bash
+uv run gekko strategy create \
+  --name ai-infra-bull \
+  --thesis "I'm bullish on AI infrastructure providers" \
+  --watchlist NVDA,AMD,AVGO \
+  --max-position-pct 0.05 \
+  --max-daily-loss-usd 200 \
+  --max-trades-per-day 3 \
+  --max-sector-exposure-pct 0.25
+```
+
+Or chat mode (STRAT-01):
+
+```bash
+echo "I'm bullish on AI infra leaders — NVDA, AMD, AVGO. Conservative caps." \
+  | uv run gekko strategy create --from-chat
+```
+
+### Run the agent
+
+Terminal 1:
+
+```bash
+uv run gekko serve                 # FastAPI dashboard + Slack adapter + APScheduler
+                                   # binds to 127.0.0.1:8000 by default
+```
+
+Terminal 2 — expose the dashboard to Slack:
+
+```bash
+cloudflared tunnel run gekko-dev   # or ngrok / etc — any HTTPS tunnel works
+                                   # update your Slack app's Interactivity Request URL
+                                   # to <tunnel-url>/slack/events
+```
+
+Terminal 3 — trigger a run:
+
+```bash
+uv run gekko run ai-infra-bull
+```
+
+Within ~60 seconds you should receive a Slack DM with the HITL-01 Block Kit card:
+PAPER banner, ticker, action, qty, rationale, 3-5 evidence snippets with links, alternatives considered, confidence, Approve/Reject/Edit-Size/Escalate buttons, and the "Not investment advice" footer.
+
+Click **Approve**. Within seconds (assuming market is open) you'll see:
+
+> *Approved {decision_id}. Placing order…*
+> *Paper order filled: BUY 5 NVDA @ $1,234.56 — strategy=ai-infra-bull*
+
+### Inspect the audit log
+
+```bash
+uv run gekko audit verify          # walk_chain over the SHA-256 hash chain
+# → Chain intact across 5 events for user alice
+
+uv run gekko audit dump --limit 5  # line-delimited JSON of the 5 most recent events
+```
+
+The 5 events: `decision` -> `proposal` -> `approval` -> `order_submitted` -> `fill`. Every row links to its predecessor via `prev_hash`/`row_hash` — tampering with any payload breaks the chain.
+
+### Run the automated wave-gate test
+
+```bash
+uv run pytest tests/integration/test_trigger_run_end_to_end.py -m integration
+```
+
+This runs the same flow in cassette mode (no Slack, no Alpaca, no Claude) — the chain-integrity proof without leaving the dev machine.
 
 ---
 
