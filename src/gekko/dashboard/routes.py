@@ -242,21 +242,51 @@ async def strategy_save(
 
 @router.post("/trigger/{name}", response_class=HTMLResponse)
 async def trigger(request: Request, name: str) -> HTMLResponse:
-    """Fire :func:`trigger_strategy_run` as a background task (D-06 dashboard surface)."""
-    from gekko.agent.runtime import trigger_strategy_run
+    """Fire :func:`trigger_strategy_run` + post the proposal card (D-06).
 
+    Fire-and-forget — the route returns the partial template immediately
+    so HTMX swaps it in; the background task awaits the agent run
+    (30+ seconds) and then posts the HITL-01 card to the user's DM
+    via :func:`gekko.reporter.slack.post_run_result`.
+    """
     settings = get_settings()
-    asyncio.create_task(
-        trigger_strategy_run(
-            user_id=settings.gekko_user_id,
-            strategy_name=name,
-            source="dashboard",
-        )
-    )
+    asyncio.create_task(_run_and_post_dashboard(settings.gekko_user_id, name))
     return templates.TemplateResponse(
         "trigger_button.html.j2",
         {"request": request, "name": name, "triggered": True},
     )
+
+
+async def _run_and_post_dashboard(user_id: str, strategy_name: str) -> None:
+    """Background wrapper for the dashboard trigger button.
+
+    Mirrors the slash-command wrapper in :mod:`gekko.slack.commands` —
+    catches errors so the create_task doesn't drop them silently.
+    """
+    from gekko.agent.runtime import trigger_strategy_run
+    from gekko.logging_config import get_logger
+    from gekko.reporter.slack import post_run_result
+
+    log = get_logger(__name__)
+    try:
+        result = await trigger_strategy_run(
+            user_id=user_id, strategy_name=strategy_name, source="dashboard"
+        )
+    except Exception:
+        log.exception(
+            "dashboard.run.trigger_failed",
+            user_id=user_id,
+            strategy_name=strategy_name,
+        )
+        return
+    try:
+        await post_run_result(user_id, result)
+    except Exception:
+        log.exception(
+            "dashboard.run.post_failed",
+            user_id=user_id,
+            strategy_name=strategy_name,
+        )
 
 
 __all__: tuple[str, ...] = ("router",)

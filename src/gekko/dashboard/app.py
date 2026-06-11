@@ -100,10 +100,43 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     app.state.fill_stream.start()
 
+    # 4. Slack Socket Mode (when SLACK_APP_TOKEN is set).
+    #
+    # Opens an outbound WebSocket to Slack so interactivity events flow
+    # WITHOUT a public Request URL / tunnel. The HTTP `POST /slack/events`
+    # route stays mounted for the tunnel-based deployment path, but it
+    # goes unused when socket mode is active.
+    app.state.slack_socket_handler = None
+    # Treat empty `SLACK_APP_TOKEN=` env value as "not configured" — pydantic
+    # constructs a SecretStr("") for an empty assignment, which would
+    # otherwise look truthy via `is not None`.
+    slack_app_token_value = (
+        settings.slack_app_token.get_secret_value().strip()
+        if settings.slack_app_token is not None
+        else ""
+    )
+    if slack_app_token_value:
+        from slack_bolt.adapter.socket_mode.async_handler import (
+            AsyncSocketModeHandler,
+        )
+
+        from gekko.slack.app import slack_app
+
+        app.state.slack_socket_handler = AsyncSocketModeHandler(
+            slack_app, slack_app_token_value
+        )
+        await app.state.slack_socket_handler.connect_async()
+        log.info("dashboard.slack.socket_mode_connected")
+
     try:
         yield
     finally:
         log.info("dashboard.lifespan.shutdown", user_id=user_id)
+        if app.state.slack_socket_handler is not None:
+            try:
+                await app.state.slack_socket_handler.close_async()
+            except Exception:  # noqa: BLE001
+                log.exception("dashboard.slack.socket_mode_close_failed")
         try:
             app.state.scheduler.shutdown(wait=False)
         except Exception:  # noqa: BLE001

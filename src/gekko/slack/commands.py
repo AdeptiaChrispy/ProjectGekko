@@ -78,7 +78,27 @@ async def handle_gekko_command(
     await ack()
 
     text = (command.get("text") or "").strip()
-    user_id = command.get("user_id") or ""
+    slack_user_id = command.get("user_id") or ""
+
+    # Cross-user defense (V4): only the configured operator (the one
+    # whose Slack id is in SLACK_USER_ID) can trigger runs. Slack
+    # delivers the slash-command sender's id in `command["user_id"]`;
+    # we compare it to `settings.slack_user_id`. Per-process per-user-
+    # isolated runtime (REG-03) means there's exactly one valid operator.
+    from gekko.config import get_settings
+
+    settings = get_settings()
+    if slack_user_id and slack_user_id != settings.slack_user_id:
+        log.warning(
+            "slack.slash_command.cross_user_refused",
+            slack_user_id=slack_user_id,
+            configured_user_id=settings.slack_user_id,
+        )
+        await respond(
+            "This Gekko instance is bound to a different operator's "
+            "Slack id. Sender refused."
+        )
+        return
 
     if not text:
         await respond(_HELP_TEXT)
@@ -103,22 +123,84 @@ async def handle_gekko_command(
         "agent finishes."
     )
 
-    # Fire-and-forget the actual orchestrator. The runtime emits its own
-    # audit events; we don't await the result here.
+    # Fire-and-forget the orchestrator + the proposal-card post.
+    #
+    # `gekko_user_id` is the INTERNAL identity (DB / audit-log scoping).
+    # `slack_user_id` is the EXTERNAL identity (Slack channel + DM
+    # recipient). For the Slack trigger surface they're often two
+    # different strings even though they refer to the same person —
+    # the strategy was saved with `gekko_user_id`, so the agent must
+    # look it up by that key.
     asyncio.create_task(
-        trigger_strategy_run(
-            user_id=user_id,
+        _run_and_post(
+            gekko_user_id=settings.gekko_user_id,
+            slack_user_id=slack_user_id or settings.slack_user_id,
             strategy_name=strategy_name,
-            source="slack",
         )
     )
 
     log.info(
         "slack.slash_command.triggered",
-        user_id=user_id,
+        gekko_user_id=settings.gekko_user_id,
+        slack_user_id=slack_user_id,
         strategy_name=strategy_name,
         source="slack",
     )
+
+
+async def _run_and_post(
+    *,
+    gekko_user_id: str,
+    slack_user_id: str,
+    strategy_name: str,
+) -> None:
+    """Background wrapper: run the agent + post the resulting card.
+
+    ``gekko_user_id`` keys DB / audit-log operations. ``slack_user_id``
+    is the DM channel where the resulting card / error notification
+    lands. Errors at either step are logged but never re-raised (we're
+    inside ``asyncio.create_task``).
+    """
+    try:
+        result = await trigger_strategy_run(
+            user_id=gekko_user_id,
+            strategy_name=strategy_name,
+            source="slack",
+        )
+    except Exception:
+        log.exception(
+            "slack.run.trigger_failed",
+            gekko_user_id=gekko_user_id,
+            strategy_name=strategy_name,
+        )
+        await _post_error_dm(slack_user_id, strategy_name)
+        return
+    try:
+        from gekko.reporter.slack import post_run_result
+
+        await post_run_result(slack_user_id, result)
+    except Exception:
+        log.exception(
+            "slack.run.post_failed",
+            gekko_user_id=gekko_user_id,
+            strategy_name=strategy_name,
+        )
+
+
+async def _post_error_dm(slack_user_id: str, strategy_name: str) -> None:
+    """Best-effort 'run failed' DM. Swallows its own errors."""
+    try:
+        from gekko.slack.app import slack_app
+
+        await slack_app.client.chat_postMessage(
+            channel=slack_user_id,
+            text=(
+                f"Run for `{strategy_name}` failed. Check `gekko serve` "
+                "logs for the traceback."
+            ),
+        )
+    except Exception:  # noqa: BLE001
+        log.exception("slack.error_dm.failed", slack_user_id=slack_user_id)
 
 
 __all__: tuple[str, ...] = ("handle_gekko_command", "trigger_strategy_run")

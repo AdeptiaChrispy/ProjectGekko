@@ -48,7 +48,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 import typer
@@ -178,7 +178,15 @@ def doctor() -> None:
 
     Exits 0 if all REQUIRED checks pass, exits 1 otherwise. NEVER echoes
     env-var values (AUTH-04).
+
+    Loads ``.env`` (if present in cwd) BEFORE checking — pydantic-settings
+    does the same when constructing the live Settings object, so this
+    keeps doctor's diagnostic view consistent with what the rest of the
+    process sees.
     """
+    from dotenv import load_dotenv
+
+    load_dotenv(override=False)
     results = _run_doctor_checks()
 
     typer.echo("gekko doctor — environment audit")
@@ -333,27 +341,44 @@ def serve(
 
 @app.command("run")
 def run(strategy_name: str = typer.Argument(..., help="Strategy slug to run.")) -> None:
-    """Trigger a one-shot strategy run (D-06 CLI surface)."""
+    """Trigger a one-shot strategy run (D-06 CLI surface).
+
+    Awaits the agent run AND posts the HITL-01 Block Kit card to the
+    operator's Slack DM before returning. (The slash command + dashboard
+    route fire-and-forget; the CLI is interactive and exits when the
+    chain is at the user-approval boundary.)
+    """
     from gekko.agent.runtime import trigger_strategy_run
     from gekko.config import get_settings
     from gekko.logging_config import configure_logging
+    from gekko.reporter.slack import post_run_result
     from gekko.vault.passphrase import prompt_passphrase
 
     configure_logging()
     prompt_passphrase()
     settings = get_settings()
 
-    result = asyncio.run(
-        trigger_strategy_run(
+    async def _run_and_post() -> dict[str, Any]:
+        r = await trigger_strategy_run(
             user_id=settings.gekko_user_id,
             strategy_name=strategy_name,
             source="cli",
         )
-    )
+        try:
+            await post_run_result(settings.gekko_user_id, r)
+        except Exception as exc:
+            typer.echo(
+                f"WARN: agent run completed but posting the Slack card "
+                f"failed: {exc}",
+                err=True,
+            )
+        return r
+
+    result = asyncio.run(_run_and_post())
     typer.echo(
         f"Triggered {strategy_name} "
         f"(run_id={result['run_id']}, outcome={result['outcome']}) "
-        "— watch Slack for the proposal."
+        "— check Slack for the proposal card."
     )
 
 

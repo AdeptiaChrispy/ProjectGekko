@@ -353,8 +353,66 @@ def build_fill_confirmation(
     )
 
 
+async def post_run_result(
+    user_id: str,
+    result: dict[str, Any],
+    *,
+    account_mode: str = "PAPER",
+) -> None:
+    """Post the Block Kit proposal card (or the no_action DM) to the user.
+
+    The bridge between :func:`gekko.agent.runtime.trigger_strategy_run`
+    and Slack. Without this, the agent run persists a Proposal row +
+    audit events but the user never sees the HITL-01 card.
+
+    Routes by ``result['outcome']``:
+
+      * ``"propose_trade"`` -> :func:`build_proposal_card` -> Block Kit
+        DM with Approve / Reject / Edit / Escalate buttons.
+      * ``"propose_no_action"`` -> :func:`build_no_action_message` ->
+        plain-text DM (verbose D-09 line).
+
+    Any other outcome value (e.g. test fixtures passing ``"trade"``) is
+    treated as a no-op so legacy callers that only check
+    ``trigger_strategy_run`` invocation aren't surprised.
+
+    The Slack singleton is lazy-imported so unit tests that don't need
+    a live token can still load this module.
+    """
+    # Lazy imports — slack_app construction requires env vars, and the
+    # schemas pull in heavy validation logic we don't need at module
+    # load time.
+    from gekko.schemas.proposal import NoActionProposal, TradeProposal
+    from gekko.slack.app import slack_app
+
+    outcome = result.get("outcome")
+    payload = result.get("proposal")
+    if not payload:
+        return
+
+    if outcome == "propose_trade":
+        tp = TradeProposal.model_validate(payload)
+        blocks = build_proposal_card(tp, account_mode=account_mode)
+        # ``text=`` is required when ``blocks=`` is set — it's the
+        # fallback for screen readers and the notification preview.
+        fallback = (
+            f"{account_mode}: {tp.side.upper()} {tp.qty} {tp.ticker} "
+            f"(strategy={tp.strategy_name})"
+        )
+        await slack_app.client.chat_postMessage(
+            channel=user_id, blocks=blocks, text=fallback
+        )
+    elif outcome == "propose_no_action":
+        na = NoActionProposal.model_validate(payload)
+        await slack_app.client.chat_postMessage(
+            channel=user_id, text=build_no_action_message(na)
+        )
+    # else: unknown outcome -> no-op (defensive; tests use sentinel values).
+
+
 __all__: tuple[str, ...] = (
     "build_fill_confirmation",
     "build_no_action_message",
     "build_proposal_card",
+    "post_run_result",
 )

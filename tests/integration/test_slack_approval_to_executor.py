@@ -159,6 +159,17 @@ async def test_full_approval_to_fill_chain(
 
     sf = make_session_factory(temp_sqlcipher_db)
     user_id = "test-user"
+
+    # Plan 01-09 user_id split: the slack_handler now uses
+    # settings.slack_user_id for the cross-user check and
+    # settings.gekko_user_id for DB ops. Make both point at the test
+    # user_id so the chain stays consistent under one identity.
+    monkeypatch.setenv("GEKKO_USER_ID", user_id)
+    monkeypatch.setenv("SLACK_USER_ID", user_id)
+    from gekko.config import get_settings as _gs
+
+    _gs.cache_clear()
+
     proposal_id, strategy_id, _, tp = await _seed_chain_start(
         sf, user_id=user_id
     )
@@ -222,6 +233,8 @@ async def test_full_approval_to_fill_chain(
 
     monkeypatch.setattr(asyncio, "create_task", _tracked_create_task)
 
+    # Plan 01-09 user_id fix: body.user.id is the Slack identity; we set
+    # SLACK_USER_ID to match user_id above so the cross-user check passes.
     body = {
         "actions": [{"value": proposal_id}],
         "user": {"id": user_id},

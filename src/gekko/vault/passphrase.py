@@ -32,6 +32,7 @@ Test isolation:
 from __future__ import annotations
 
 import getpass
+import os
 
 # ---------------------------------------------------------------------------
 # Module-global cache
@@ -41,24 +42,44 @@ import getpass
 #: :func:`get_passphrase` (raises if ``None``) — never read directly.
 _passphrase: str | None = None
 
+#: Env-var fallback for non-interactive bootstrap paths (CI runs,
+#: Windows TTY where ``getpass`` can't read piped stdin, the walking-
+#: skeleton manual-demo flow). When set, :func:`prompt_passphrase` uses
+#: its value WITHOUT prompting. The env-var is also the same name
+#: ``gekko init`` already passes to the alembic subprocess, so the two
+#: code paths stay consistent.
+#:
+#: Operator caveat: an env-var-stored passphrase is readable by any
+#: process in the same env tree (child processes, debuggers, `ps`
+#: visibility on some platforms). Prefer the interactive prompt for
+#: long-running production processes; only use the env-var path for
+#: deliberate non-interactive scenarios.
+_ENV_VAR: str = "GEKKO_DB_PASSPHRASE"
+
 
 def prompt_passphrase(
     prompt_text: str = "SQLCipher passphrase: ",
 ) -> str:
-    """Read the passphrase from stdin (interactive ``getpass``) and cache it.
+    """Read the passphrase and cache it for the process lifetime.
 
-    Subsequent calls return the cached value without re-prompting (so
-    ``gekko serve`` followed by background jobs all see the same
-    passphrase). To force a re-prompt, call :func:`clear` first.
+    Resolution order:
 
-    :param prompt_text: The prompt shown to the operator. Defaults to a
-        generic "SQLCipher passphrase: " — callers can supply more
-        specific wording (e.g., "Enter passphrase to unlock DB: ").
-    :returns: The cached passphrase (either freshly prompted or from a
-        prior call). NEVER logged.
+      1. If the cache is already populated (a prior call set it), return
+         that value — no prompt, no env read.
+      2. If the :data:`_ENV_VAR` environment variable is set to a
+         non-empty value, cache + return it (no prompt).
+      3. Otherwise call :func:`getpass.getpass` interactively.
+
+    :param prompt_text: The prompt shown to the operator when falling
+        through to the interactive branch.
+    :returns: The cached passphrase. NEVER logged.
     """
     global _passphrase
     if _passphrase is not None:
+        return _passphrase
+    env_value = os.environ.get(_ENV_VAR, "").strip()
+    if env_value:
+        _passphrase = env_value
         return _passphrase
     _passphrase = getpass.getpass(prompt_text)
     return _passphrase

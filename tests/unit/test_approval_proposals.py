@@ -300,6 +300,7 @@ async def test_reject_proposal_transitions_and_emits_event(
 @pytest.mark.asyncio
 async def test_slash_command_run_invokes_trigger_strategy_run(
     monkeypatch: pytest.MonkeyPatch,
+    clean_settings_env: pytest.MonkeyPatch,
 ) -> None:
     """`/gekko run ai-infra-bull` calls trigger_strategy_run via create_task."""
     from gekko.slack import commands
@@ -314,7 +315,7 @@ async def test_slash_command_run_invokes_trigger_strategy_run(
 
     ack = AsyncMock()
     respond = AsyncMock()
-    command = {"text": "run ai-infra-bull", "user_id": "U_SLACK_USER"}
+    command = {"text": "run ai-infra-bull", "user_id": "U_TEST_USER"}
 
     await commands.handle_gekko_command(ack=ack, command=command, respond=respond)
 
@@ -329,13 +330,17 @@ async def test_slash_command_run_invokes_trigger_strategy_run(
 
     assert len(captured) == 1
     assert captured[0]["strategy_name"] == "ai-infra-bull"
-    assert captured[0]["user_id"] == "U_SLACK_USER"
+    # Plan 01-09 user_id fix: the slash command now passes settings.gekko_user_id
+    # (internal identity for DB lookups), not the Slack id (used only as the
+    # DM recipient). The clean_settings_env fixture sets gekko_user_id="test-user".
+    assert captured[0]["user_id"] == "test-user"
     assert captured[0]["source"] == "slack"
 
 
 @pytest.mark.asyncio
 async def test_slash_command_run_with_no_name_responds_usage(
     monkeypatch: pytest.MonkeyPatch,
+    clean_settings_env: pytest.MonkeyPatch,
 ) -> None:
     """`/gekko run` with no name responds with usage and does NOT trigger."""
     from gekko.slack import commands
@@ -350,7 +355,7 @@ async def test_slash_command_run_with_no_name_responds_usage(
 
     ack = AsyncMock()
     respond = AsyncMock()
-    command = {"text": "run", "user_id": "U_SLACK_USER"}
+    command = {"text": "run", "user_id": "U_TEST_USER"}
     await commands.handle_gekko_command(ack=ack, command=command, respond=respond)
 
     ack.assert_awaited()
@@ -367,6 +372,7 @@ async def test_slash_command_run_with_no_name_responds_usage(
 @pytest.mark.asyncio
 async def test_slash_command_with_no_subcommand_responds_help(
     monkeypatch: pytest.MonkeyPatch,
+    clean_settings_env: pytest.MonkeyPatch,
 ) -> None:
     """`/gekko` with empty text responds with help (no trigger)."""
     from gekko.slack import commands
@@ -381,7 +387,7 @@ async def test_slash_command_with_no_subcommand_responds_help(
 
     ack = AsyncMock()
     respond = AsyncMock()
-    command = {"text": "", "user_id": "U_SLACK_USER"}
+    command = {"text": "", "user_id": "U_TEST_USER"}
     await commands.handle_gekko_command(ack=ack, command=command, respond=respond)
 
     ack.assert_awaited()
@@ -393,6 +399,7 @@ async def test_slash_command_with_no_subcommand_responds_help(
 @pytest.mark.asyncio
 async def test_slash_command_acks_before_starting_background_work(
     monkeypatch: pytest.MonkeyPatch,
+    clean_settings_env: pytest.MonkeyPatch,
 ) -> None:
     """ack() is awaited before trigger_strategy_run is scheduled (Pitfall 3)."""
     from gekko.slack import commands
@@ -408,7 +415,7 @@ async def test_slash_command_acks_before_starting_background_work(
 
     monkeypatch.setattr(commands, "trigger_strategy_run", fake_trigger)
 
-    command = {"text": "run ai-infra-bull", "user_id": "U_SLACK_USER"}
+    command = {"text": "run ai-infra-bull", "user_id": "U_TEST_USER"}
     await commands.handle_gekko_command(ack=ack, command=command, respond=respond)
     # ack first
     assert events[0] == "ack"
@@ -459,7 +466,9 @@ async def test_handle_approve_acks_first_and_invokes_executor(
 
     body = {
         "actions": [{"value": proposal_id}],
-        "user": {"id": "test-user"},
+        # Plan 01-09 user_id fix: body.user.id is the Slack id; must equal
+        # settings.slack_user_id (set by clean_settings_env to "U_TEST_USER").
+        "user": {"id": "U_TEST_USER"},
     }
     await slack_handler.handle_approve(ack=ack, body=body, client=client)
     assert events[0] == "ack"
@@ -499,7 +508,9 @@ async def test_handle_reject_does_not_invoke_executor(
     client.chat_postMessage = AsyncMock()
     body = {
         "actions": [{"value": proposal_id}],
-        "user": {"id": "test-user"},
+        # Plan 01-09 user_id fix: body.user.id is the Slack id; must equal
+        # settings.slack_user_id (set by clean_settings_env to "U_TEST_USER").
+        "user": {"id": "U_TEST_USER"},
     }
     await slack_handler.handle_reject(ack=ack, body=body, client=client)
     ack.assert_awaited()

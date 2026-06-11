@@ -198,6 +198,12 @@ def configure_logging(level: str | int = "INFO") -> None:
             structlog.processors.add_log_level,
             structlog.processors.TimeStamper(fmt="iso", utc=True),
             structlog.stdlib.add_logger_name,
+            # format_exc_info converts `exc_info=True` (set by log.exception)
+            # into a string traceback. Without this, the JSONRenderer drops
+            # the exception entirely — leaving `"exc_info": true` in the JSON
+            # but no actual traceback. Discovered during Plan 01-09 manual
+            # demo when slack.run.trigger_failed lost its traceback.
+            structlog.processors.format_exc_info,
             _redact,  # MUST run before JSONRenderer (AUTH-04)
             structlog.processors.JSONRenderer(),
         ],

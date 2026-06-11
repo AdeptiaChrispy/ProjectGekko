@@ -118,12 +118,34 @@ async def _approve_workflow(
 ) -> None:
     """Background half of the approve handler.
 
-    Separated from :func:`handle_approve` so the bolt handler returns
-    after ``ack()`` while the DB/Executor work proceeds in the
-    background. Errors are logged but do not propagate (we're inside
-    ``asyncio.create_task`` — there's no caller to raise to).
+    ``slack_user_id`` is the Slack id of the clicker (used for the
+    cross-user check + DM channel). ``gekko_user_id`` is the INTERNAL
+    identity (from settings.gekko_user_id) used for DB / engine /
+    executor calls. The two are usually different even for the same
+    human — REG-03 + REG-04.
     """
-    sf, engine = _get_session_factory(slack_user_id)
+    from gekko.config import get_settings
+
+    settings = get_settings()
+    gekko_user_id = settings.gekko_user_id
+
+    # V4 access control — refuse any Slack id other than the configured
+    # operator. Per-process per-user-isolated runtime means there's
+    # exactly one valid clicker.
+    if slack_user_id != settings.slack_user_id:
+        log.warning(
+            "slack.approval.cross_user_refused",
+            decision_id=decision_id,
+            slack_user_id=slack_user_id,
+            configured_user_id=settings.slack_user_id,
+        )
+        await client.chat_postMessage(
+            channel=slack_user_id,
+            text="You are not the owner of this proposal.",
+        )
+        return
+
+    sf, engine = _get_session_factory(gekko_user_id)
     try:
         async with sf() as session, session.begin():
             row = await session.get(ProposalRow, decision_id)
@@ -133,25 +155,14 @@ async def _approve_workflow(
                     text=f"Proposal `{decision_id}` not found.",
                 )
                 return
-            # V4 access control — T-01-08-01.
-            if row.user_id != slack_user_id:
-                log.warning(
-                    "slack.approval.cross_user_refused",
-                    decision_id=decision_id,
-                    proposal_owner=row.user_id,
-                    slack_user_id=slack_user_id,
-                )
-                await client.chat_postMessage(
-                    channel=slack_user_id,
-                    text="You are not the owner of this proposal.",
-                )
-                return
             await approve_proposal(
                 session, decision_id, actor=slack_user_id
             )
         # Outside the approval transaction — the Executor opens its own.
+        # Note: pass gekko_user_id (internal id), NOT slack_user_id, so
+        # the executor opens the per-user DB at the right path.
         asyncio.create_task(
-            execute_proposal(decision_id, slack_user_id)
+            execute_proposal(decision_id, gekko_user_id)
         )
         await client.chat_postMessage(
             channel=slack_user_id,
@@ -161,6 +172,7 @@ async def _approve_workflow(
         log.exception(
             "slack.approval.workflow_failed",
             decision_id=decision_id,
+            gekko_user_id=gekko_user_id,
             slack_user_id=slack_user_id,
         )
     finally:
@@ -192,8 +204,26 @@ async def handle_reject(
 async def _reject_workflow(
     *, decision_id: str, slack_user_id: str, client: Any
 ) -> None:
-    """Background half of the reject handler."""
-    sf, engine = _get_session_factory(slack_user_id)
+    """Background half of the reject handler. Same identity model as approve."""
+    from gekko.config import get_settings
+
+    settings = get_settings()
+    gekko_user_id = settings.gekko_user_id
+
+    if slack_user_id != settings.slack_user_id:
+        log.warning(
+            "slack.rejection.cross_user_refused",
+            decision_id=decision_id,
+            slack_user_id=slack_user_id,
+            configured_user_id=settings.slack_user_id,
+        )
+        await client.chat_postMessage(
+            channel=slack_user_id,
+            text="You are not the owner of this proposal.",
+        )
+        return
+
+    sf, engine = _get_session_factory(gekko_user_id)
     try:
         async with sf() as session, session.begin():
             row = await session.get(ProposalRow, decision_id)
@@ -201,18 +231,6 @@ async def _reject_workflow(
                 await client.chat_postMessage(
                     channel=slack_user_id,
                     text=f"Proposal `{decision_id}` not found.",
-                )
-                return
-            if row.user_id != slack_user_id:
-                log.warning(
-                    "slack.rejection.cross_user_refused",
-                    decision_id=decision_id,
-                    proposal_owner=row.user_id,
-                    slack_user_id=slack_user_id,
-                )
-                await client.chat_postMessage(
-                    channel=slack_user_id,
-                    text="You are not the owner of this proposal.",
                 )
                 return
             await reject_proposal(
@@ -226,6 +244,7 @@ async def _reject_workflow(
         log.exception(
             "slack.rejection.workflow_failed",
             decision_id=decision_id,
+            gekko_user_id=gekko_user_id,
             slack_user_id=slack_user_id,
         )
     finally:

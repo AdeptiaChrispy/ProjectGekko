@@ -78,6 +78,17 @@ class Settings(BaseSettings):
     slack_user_id: str = Field(
         description="Slack user ID (e.g., U12345ABC) that receives HITL DMs. Required.",
     )
+    slack_app_token: SecretStr | None = Field(
+        default=None,
+        description=(
+            "Optional Slack App-Level Token (xapp-...) used to enable Socket "
+            "Mode. When set, the dashboard's lifespan starts an "
+            "AsyncSocketModeHandler — bot interactivity flows over an outbound "
+            "WebSocket and NO public Request URL / tunnel is required. "
+            "Needs the `connections:write` app-level scope. Leave unset to "
+            "use the HTTP `POST /slack/events` adapter (requires a tunnel)."
+        ),
+    )
 
     # ---- Optional data providers (graceful-degrade per RES-02) --------------
     finnhub_api_key: SecretStr | None = Field(
