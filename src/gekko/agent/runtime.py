@@ -110,36 +110,27 @@ _MODEL_ALIAS: str = "sonnet"
 #: Default buying power for P1 Decision-prompt context (per Task 4 plan).
 _P1_BUYING_POWER_USD: int = 10000
 
-#: SQLCipher passphrase cache — populated by Plan 01-09's CLI bootstrap
-#: (``gekko serve`` / ``gekko init``). Tests bypass the indirection by
-#: passing ``session_factory=`` directly.
-_PASSPHRASE_CACHE: dict[str, str] = {}
+#: SQLCipher passphrase indirection — Plan 01-09 closed this loop by
+#: making :mod:`gekko.vault.passphrase` the single source of truth. The
+#: two names below are thin shims that delegate to the vault module so
+#: existing callers (and Plan 01-07/01-08 tests that patched these names
+#: directly) keep working without churn.
+#:
+#: New code should import from :mod:`gekko.vault.passphrase` directly.
 
 
 def set_passphrase(passphrase: str) -> None:
-    """Set the SQLCipher passphrase for downstream ``trigger_strategy_run`` calls.
+    """Deprecated shim — delegates to :func:`gekko.vault.passphrase.set_passphrase`."""
+    from gekko.vault.passphrase import set_passphrase as _vault_set
 
-    Plan 01-09 owns the CLI bootstrap that calls this with the user-supplied
-    passphrase. The runtime reads it via :func:`_get_passphrase`.
-    """
-    _PASSPHRASE_CACHE["passphrase"] = passphrase
+    _vault_set(passphrase)
 
 
 def _get_passphrase() -> str:
-    """Return the cached SQLCipher passphrase.
+    """Deprecated shim — delegates to :func:`gekko.vault.passphrase.get_passphrase`."""
+    from gekko.vault.passphrase import get_passphrase as _vault_get
 
-    :raises RuntimeError: When :func:`set_passphrase` has not been called.
-        Plan 01-09's CLI bootstrap is responsible for populating this
-        before any trigger surface fires.
-    """
-    pw = _PASSPHRASE_CACHE.get("passphrase")
-    if pw is None:
-        msg = (
-            "SQLCipher passphrase not set — call gekko.agent.runtime."
-            "set_passphrase(...) during process bootstrap (Plan 01-09)"
-        )
-        raise RuntimeError(msg)
-    return pw
+    return _vault_get()
 
 
 # ---------------------------------------------------------------------------

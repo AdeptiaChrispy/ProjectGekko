@@ -41,7 +41,6 @@ from typing import Any, Awaitable, Callable
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from gekko.agent.runtime import _get_passphrase
 from gekko.approval.proposals import approve_proposal, reject_proposal
 from gekko.config import get_settings
 from gekko.db.engine import get_async_engine
@@ -49,6 +48,7 @@ from gekko.db.models import Proposal as ProposalRow
 from gekko.db.session import AsyncSessionLocal, make_session_factory
 from gekko.execution.executor import execute_proposal
 from gekko.logging_config import get_logger
+from gekko.vault.passphrase import get_passphrase as _get_passphrase
 
 log = get_logger(__name__)
 

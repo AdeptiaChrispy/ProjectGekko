@@ -60,7 +60,6 @@ from typing import Any
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from gekko.agent.runtime import _get_passphrase
 from gekko.approval.proposals import transition_status
 from gekko.audit.canonical import normalize_decimals
 from gekko.audit.log import append_event
@@ -75,6 +74,7 @@ from gekko.db.session import AsyncSessionLocal, make_session_factory
 from gekko.execution.market_hours import is_market_open
 from gekko.logging_config import get_logger
 from gekko.schemas.proposal import TradeProposal
+from gekko.vault.passphrase import get_passphrase as _get_passphrase
 
 log = get_logger(__name__)
 
