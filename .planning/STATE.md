@@ -3,18 +3,18 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-06-11T12:35:00.000Z"
+last_updated: "2026-06-11T14:00:00.000Z"
 progress:
   total_phases: 9
   completed_phases: 0
   total_plans: 9
-  completed_plans: 8
-  percent: 89
+  completed_plans: 9
+  percent: 100
 ---
 
 # Project State: Project Gekko
 
-**Last updated:** 2026-06-11 (Plan 01-08 complete — Slack Block Kit HITL card (HITL-01), pandas_market_calendars NYSE guard (EXEC-10), /gekko run slash command (D-06), proposals state machine + Approve/Reject handlers w/ cross-user defense (HITL-04, T-01-08-01), deterministic Executor + on_fill_event (Anti-Pattern 1 firewall verified), prompt-injected-mrkdwn escape defense; HITL-01 + HITL-04 + EXEC-10 closed)
+**Last updated:** 2026-06-11 (Plan 01-09 complete — passphrase vault (D-19), real CLI (init/serve/run/strategy create [flag+chat]/audit verify+dump), APScheduler 3.x AsyncIOScheduler+SQLAlchemyJobStore over a pre-built sync engine (CADENCE-02 + AUTH-03/T-01-03-05), FastAPI dashboard w/ HTMX (vendored 2.0.4 + SRI gate) + Tailwind subset + STRAT-02 form, walking-skeleton e2e test (5-event chain intact); STRAT-01 + STRAT-02 + CADENCE-02 + REG-01..04 closed. **Phase 1 automated-only closure: 100%. Manual demo (Task 5) deferred to operator.**)
 
 ## Project Reference
 
@@ -24,17 +24,16 @@ progress:
 
 ## Current Position
 
-Phase: 1 (Foundation & Vertical Slice) — EXECUTING
-Plan: 9 of 9 (01-01 + 01-02 + 01-03 + 01-04 + 01-05 + 01-06 + 01-07 + 01-08 complete)
+Phase: 1 (Foundation & Vertical Slice) — **ALL PLANS COMPLETE (9 of 9)**. Manual demo checkpoint (Task 5 of Plan 01-09) deferred to operator per VALIDATION.md §Manual-Only Verifications.
 
 - **Phase:** 1 (Foundation & Vertical Slice)
-- **Plan:** 01-09 (CLI + dashboard + scheduler — `gekko serve` FastAPI app + APScheduler cadence + FastAPI lifespan that wires `runtime.set_passphrase` + Slack route mount + AlpacaFillStream construction) — next
-- **Status:** Executing Phase 1, Wave 2 (final plan)
-- **Progress:** [█████████░] 89%
-- **Resume from:** `.planning/phases/01-foundation-vertical-slice-alpaca-paper-slack-hitl/01-09-PLAN.md`
+- **Plan:** 9 of 9 complete
+- **Status:** Phase 1 automated coverage complete; awaiting operator manual smoke for full closeout
+- **Progress:** [██████████] 100%
+- **Resume from:** Operator runs README §"Phase 1 — Walking-skeleton demo" and types `demo_passed` to close Task 5. Then `/gsd-new-milestone v2.0` or `/gsd-complete-milestone` opens Phase 2 (OrderGuard + Real-Money Alpaca Live).
 
 ```
-[################..] 89%
+[##################] 100%
 ```
 
 ## Performance Metrics
@@ -91,7 +90,8 @@ Plan: 9 of 9 (01-01 + 01-02 + 01-03 + 01-04 + 01-05 + 01-06 + 01-07 + 01-08 comp
 - [x] Plan 01-06 executed — Pydantic schema contracts: Strategy + HardCaps + Guidance + ResearchBrief + EvidenceSnippet + TradeProposal + NoActionProposal + EventPayload + plain-English diff + next_version (STRAT-04, STRAT-05, STRAT-06, REPT-04, RES-08) (2026-06-09)
 - [x] Plan 01-07 executed — Agent runtime: BudgetTracker + 4 Researcher tools + propose_trade/no_action + RESEARCHER/DECISION AgentDefinitions + ProposalWriter + trigger_strategy_run + compile_strategy_from_chat (STRAT-01, STRAT-03, RES-01, RES-02, RES-03, RES-04, RES-05) (2026-06-09)
 - [x] Plan 01-08 executed — Slack Block Kit HITL card (HITL-01) + pandas_market_calendars guard (EXEC-10) + /gekko run slash command + proposals state machine + Approve/Reject handlers w/ cross-user defense (HITL-04) + deterministic Executor + on_fill_event + mrkdwn-escape prompt-injection defense (2026-06-11)
-- [ ] Plan 01-09 — CLI + dashboard + scheduler: `gekko serve` FastAPI app w/ lifespan that wires runtime.set_passphrase + mounts Slack route + constructs AlpacaFillStream w/ on_fill_event callback; APScheduler cadence; dashboard "Run now" button; manual smoke of HITL-01 + BROK-A-06 (Wave 2 — final)
+- [x] Plan 01-09 executed (automated tasks 1-4) — passphrase vault (D-19); real CLI (init+REG-02, serve, run, strategy create flag+chat/STRAT-01, audit verify+dump); APScheduler 3.x AsyncIOScheduler+SQLAlchemyJobStore w/ pre-built sync engine (CADENCE-02, AUTH-03/T-01-03-05); FastAPI dashboard (lifespan wiring engines+scheduler+fill_stream+slack route; routes for STRAT-02 form, /trigger, /slack/events, /healthz); HTMX 2.0.4 vendored w/ SHA-384 + SRI lint gate + CSP meta tag; walking-skeleton e2e test asserts 5-event chain [decision, proposal, approval, order_submitted, fill] intact via walk_chain (2026-06-11)
+- [ ] Plan 01-09 Task 5 (manual demo) — operator runs README §"Phase 1 — Walking-skeleton demo" against real Slack + Alpaca paper + Claude; verifies HITL-01 (Block Kit card render), BROK-A-06 (real fill via TradingStream websocket), AUTH-03 (Windows wrong-passphrase rejection), CADENCE-02 (tzdata on Windows). Resume signal: `demo_passed`.
 - [x] Resolve "wash-sale default" decision before Phase 2 plan-phase — flag-only chosen 2026-06-08
 - [ ] Resolve "default LLM cost ceiling" value before Phase 4 plan-phase
 - [ ] Resolve "trust ladder promotion criteria" placeholder before Phase 5 plan-phase
@@ -112,9 +112,11 @@ None.
 
 ## Session Continuity
 
-**Next action:** Execute Plan 01-09 — CLI + dashboard + scheduler. The FastAPI `gekko serve` app + APScheduler cadence + dashboard "Run now" button + the FastAPI lifespan that wires three load-bearing startup steps: (a) prompt operator for SQLCipher passphrase, verify via `gekko.db.engine.verify_passphrase`, call `runtime.set_passphrase(...)` BEFORE any route serves a Slack request; (b) import `gekko.slack.interactivity` and mount `gekko.slack.app.slack_handler` at `POST /slack/events`; (c) construct `AlpacaFillStream(api_key=..., secret_key=..., user_id=..., on_fill=on_fill_event)` and call `stream.start()`. Manual smoke covers VALIDATION.md §Manual-Only Verifications row 1 (HITL-01) + row 2 (BROK-A-06).
+**Next action:** Operator runs the README §"Phase 1 — Walking-skeleton demo" (10 steps + the new step 11 browser-source SRI inspection) on real Slack + Alpaca paper + Claude. When all steps pass, the operator types `demo_passed` to close Plan 01-09 Task 5 and the Phase 1 milestone. The full automated suite (365 passed, 4 skipped) confirms the wiring is correct; the manual demo is the load-bearing real-world smoke gate.
 
-**Resumable from:** `.planning/phases/01-foundation-vertical-slice-alpaca-paper-slack-hitl/01-09-PLAN.md`. STATE.md + ROADMAP.md + REQUIREMENTS.md + the Plan 01-01..01-08 SUMMARYs + docs/sdk-shape.md provide full context for any agent to pick up the work.
+After the manual demo passes, the next milestone-level step is either `/gsd-complete-milestone` to archive Phase 1 + open the Phase 2 SPEC (OrderGuard + Real-Money Alpaca Live) or `/gsd-new-milestone v2.0` if the operator wants to scope a v2 explicitly.
+
+**Resumable from:** `.planning/phases/01-foundation-vertical-slice-alpaca-paper-slack-hitl/01-09-SUMMARY.md`. STATE.md + ROADMAP.md + REQUIREMENTS.md + the Plan 01-01..01-09 SUMMARYs + docs/sdk-shape.md provide full context for any agent picking up Phase 2.
 
 ### Decisions from Plan 01-02 (added 2026-06-08)
 
@@ -159,6 +161,19 @@ None.
 - _`TradeProposal.client_order_id` is `Field(min_length=32, max_length=32)`._ Exactly the 32-char hex output of `compute_client_order_id` (Plan 01-05). The schema strictness is the load-bearing match: Plan 01-07's ProposalWriter computes `compute_client_order_id(...)`, stores it on the row, AND embeds it in the proposal model; any drift between the two would be caught at TradeProposal validation time.
 - _`TradeProposal.evidence` is `Field(min_length=3, max_length=5)` — the D-12 differentiator._ This is the one-shot architectural decision per CONTEXT.md §"specifics" — cannot be retrofitted from free-form prose. Once Plan 01-07's Decision agent emits a TradeProposal, the schema rejection is the LAST gate before persistence; if the agent supplied fewer than 3 or more than 5 evidence snippets, it's a re-prompt loop, not a silent acceptance.
 
+### Decisions from Plan 01-09 (added 2026-06-11)
+
+- _gekko.vault.passphrase is the SINGLE source of truth for the SQLCipher passphrase._ The CLI bootstrap calls `prompt_passphrase` (or `set_passphrase` for tests / env-driven flows); every consumer (runtime, executor, slack_handler, scheduler, dashboard) reads via `get_passphrase`. The Plan 01-07 / 01-08 `_GET_PASSPHRASE` placeholders survive as thin shims (`gekko.agent.runtime.set_passphrase` / `_get_passphrase`) that delegate to the vault — keeps prior tests that patched these names working.
+- _APScheduler 3.x SQLAlchemyJobStore takes a pre-built sync Engine, not a URL._ Plan 01-09 builds `get_sync_engine(db_path, passphrase)` alongside the existing `get_async_engine` in `gekko.db.engine` — both use the same connect-event PRAGMA key handler closure so the passphrase NEVER appears in `repr(engine)` / `str(engine.url)` (AUTH-03 / T-01-03-05). The scheduler module accepts a sync_engine parameter; the FastAPI lifespan constructs it once and passes it in.
+- _AsyncIOScheduler must be started (even paused) before add_job dedupes via `replace_existing`._ APScheduler queues "pending jobs" in memory until `scheduler.start()` flushes them to the jobstore; `replace_existing=True` only checks the jobstore, not the pending list. Tests that exercise replace_existing or persistence must call `start(paused=True)` first.
+- _trigger_strategy_run is referenced by its `module:fn` string in APScheduler.add_job, not by function reference._ SQLAlchemyJobStore pickles jobs; the string ref form survives across Python refactors better than a serialized function pointer.
+- _HTMX 2.0.4 is vendored at `src/gekko/dashboard/static/htmx.min.js` (50,917 bytes; SHA-384 recorded in VENDOR.md)._ Source URL: `https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js`. The SRI lint test (`tests/unit/test_dashboard_templates_sri.py`) is the build-time gate that fails any future template re-introducing an external `<script src="http(s)://">` without `integrity="sha384-..." crossorigin="anonymous"`. CSP meta tag with `script-src 'self'` in `base.html.j2` is the runtime defence layer.
+- _Hand-crafted minimal Tailwind subset (~5KB) for P1; no Node toolchain._ Documented compromise — P9 deployment phase replaces with the Tailwind standalone CLI build.
+- _Dashboard's POST /strategies/{name}/save generates the new strategy_id ONCE and reuses it for both the Pydantic Strategy validation AND the StrategyRow insert._ The schema requires strategy_id as a non-empty string; both write sites must agree.
+- _httpx.ASGITransport tests set app.state.* directly instead of running the production lifespan._ The real lifespan pulls in the Slack Bolt singleton + AlpacaFillStream websocket + APScheduler — far too heavy for unit-level form-edit tests. The walking-skeleton wave-gate test exercises the full real chain.
+- _Walking-skeleton cassette mocks AlpacaBroker.place_order + is_market_open + Slack DM transport BUT runs the real ProposalWriter + audit chain + state machine + Block Kit card builder._ The 5-event chain hash integrity (`walk_chain` returns []) is the load-bearing assertion.
+- _Manual demo (Task 5) is deferred to the operator._ VALIDATION.md §Manual-Only Verifications rows 1–4 require real Slack + Alpaca paper + Claude — cannot be replayed in an automated session. README §"Phase 1 — Walking-skeleton demo" is the operator's checklist.
+
 ### Decisions from Plan 01-08 (added 2026-06-11)
 
 - _Slack signing-secret verification is automatic via slack-bolt._ `AsyncSlackRequestHandler` runs HMAC verification on every inbound request — no custom HMAC code (RESEARCH §Don't Hand-Roll). Plan 01-09 mounts the handler on `POST /slack/events`.
@@ -197,3 +212,4 @@ None.
 *Updated: 2026-06-09 after Plan 01-06 complete*
 *Updated: 2026-06-09 after Plan 01-07 complete*
 *Updated: 2026-06-11 after Plan 01-08 complete*
+*Updated: 2026-06-11 after Plan 01-09 complete (automated tasks 1-4; Task 5 manual demo deferred to operator)*
