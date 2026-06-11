@@ -1,0 +1,52 @@
+{#
+  Gekko dashboard base template — Plan 01-09 Task 3.
+
+  Loads same-origin Tailwind CSS + vendored HTMX (NEVER a third-party
+  CDN). Renders the PAPER banner at the top (REG-01 invariant; D-24
+  forbids live in P1 so the banner is unconditionally green/PAPER) and
+  the "Not investment advice" disclosure footer.
+
+  Content-Security-Policy (defence-in-depth per T-01-09-08):
+    `script-src 'self'` blocks any future template regression that
+    accidentally embeds an external script. The SRI lint gate
+    (tests/unit/test_dashboard_templates_sri.py) is the static guard;
+    the CSP is the runtime guard.
+
+  Subresource Integrity (SRI) policy:
+    External `<script src="http(s)://">` tags MUST carry
+    `integrity="sha384-..." crossorigin="anonymous"`. The HTMX script
+    below is vendored same-origin so no SRI attribute is needed.
+#}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'">
+  <title>{% block title %}Gekko{% endblock %}</title>
+  <link rel="stylesheet" href="/static/tailwind.css">
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body class="min-h-screen flex flex-col">
+  {# Paper-vs-live banner — D-24: P1 is always PAPER. #}
+  <div class="banner-paper">PAPER</div>
+
+  <header class="border-b bg-white p-4">
+    <div class="max-w-3xl flex items-center justify-between">
+      <a href="/strategies" class="text-xl font-semibold text-gray-900">Gekko</a>
+      <nav class="flex gap-4 text-sm">
+        <a href="/strategies">Strategies</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="max-w-3xl w-full p-6">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="footer">
+    Gekko is personal trade-execution tooling acting on your authored strategy. Not investment advice.
+  </footer>
+</body>
+</html>

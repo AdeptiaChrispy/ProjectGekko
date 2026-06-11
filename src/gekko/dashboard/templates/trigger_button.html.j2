@@ -1,0 +1,8 @@
+{# Partial returned by POST /trigger/{name} — Plan 01-09 Task 3. #}
+{% if triggered %}
+<span class="text-sm text-gray-700 italic">
+  Triggered <span class="font-medium">{{ name }}</span> — check Slack for the proposal.
+</span>
+{% else %}
+<button hx-post="/trigger/{{ name }}" hx-swap="outerHTML">Trigger Run</button>
+{% endif %}

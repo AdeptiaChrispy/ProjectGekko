@@ -1,0 +1,30 @@
+{% extends "base.html.j2" %}
+
+{% block title %}User Agreement — Gekko{% endblock %}
+
+{% block content %}
+<h1 class="text-2xl font-semibold mb-4">Gekko User Agreement</h1>
+
+<div class="bg-white p-4 rounded-md shadow-sm text-sm text-gray-700">
+  <ol class="flex flex-col gap-2">
+    <li>Gekko is personal trade-execution tooling acting on YOUR own authored
+        strategy. The strategy, the trade decisions, and the resulting tax
+        and financial consequences are entirely yours.</li>
+    <li>Gekko is NOT investment advice. Strategies and trades are your own
+        decisions; Gekko executes them on your behalf within the hard caps
+        you author.</li>
+    <li>You acknowledge that you understand the risks of automated trading,
+        including losing money. You will start with paper trading
+        (the default in Phase 1).</li>
+    <li>Each user runs their own isolated Gekko instance on their own
+        hardware (REG-03). Gekko does not share data across users.</li>
+    <li>You agree to keep your SQLCipher passphrase secret. If you lose it,
+        your encrypted database is unrecoverable.</li>
+  </ol>
+</div>
+
+<p class="text-sm text-gray-500 mt-4 italic">
+  The CLI <code>gekko init</code> wizard presents this same text and gates
+  proceeding on an explicit "I agree" acknowledgement (REG-02).
+</p>
+{% endblock %}

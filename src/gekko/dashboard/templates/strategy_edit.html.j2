@@ -1,0 +1,66 @@
+{% extends "base.html.j2" %}
+
+{% block title %}Edit {{ name }} — Gekko{% endblock %}
+
+{% block content %}
+<h1 class="text-2xl font-semibold mb-2">Edit strategy: {{ name }}</h1>
+<p class="text-sm text-gray-500 mb-4">
+  Current version: <span class="font-medium">v{{ version }}</span>.
+  Saving creates a new snapshot row (D-05 versioning).
+</p>
+
+<form method="post" action="/strategies/{{ name }}/save" class="flex flex-col gap-4 bg-white p-4 rounded-md shadow-sm">
+  <div>
+    <label for="thesis">Thesis</label>
+    <textarea id="thesis" name="thesis" required>{{ thesis }}</textarea>
+  </div>
+
+  <div>
+    <label for="watchlist">Watchlist (comma-separated tickers)</label>
+    <input id="watchlist" name="watchlist" type="text" required value="{{ watchlist_csv }}">
+  </div>
+
+  <div class="flex gap-4">
+    <div class="w-full">
+      <label for="max_position_pct">Max position %</label>
+      <input id="max_position_pct" name="max_position_pct" type="text" required value="{{ max_position_pct }}">
+    </div>
+    <div class="w-full">
+      <label for="max_daily_loss_usd">Max daily loss (USD)</label>
+      <input id="max_daily_loss_usd" name="max_daily_loss_usd" type="text" required value="{{ max_daily_loss_usd }}">
+    </div>
+  </div>
+
+  <div class="flex gap-4">
+    <div class="w-full">
+      <label for="max_trades_per_day">Max trades / day</label>
+      <input id="max_trades_per_day" name="max_trades_per_day" type="number" required value="{{ max_trades_per_day }}">
+    </div>
+    <div class="w-full">
+      <label for="max_sector_exposure_pct">Max sector exposure %</label>
+      <input id="max_sector_exposure_pct" name="max_sector_exposure_pct" type="text" required value="{{ max_sector_exposure_pct }}">
+    </div>
+  </div>
+
+  <div>
+    <label for="schedule_time">Schedule (HH:MM IANA/Timezone — blank for manual only)</label>
+    <input id="schedule_time" name="schedule_time" type="text" value="{{ schedule_time }}">
+  </div>
+
+  <div>
+    <label for="mode">Mode</label>
+    {# P1 is paper-only per D-24. The select element is informational only — the
+       server enforces paper at the schema layer and the constructor guard. #}
+    <select id="mode" name="mode" disabled>
+      <option value="paper" {% if strategy.mode == "paper" %}selected{% endif %}>paper</option>
+      <option value="live" disabled>live (coming in Phase 2)</option>
+    </select>
+    <input type="hidden" name="mode" value="paper">
+  </div>
+
+  <div class="flex gap-2 mt-2">
+    <button type="submit">Save new version</button>
+    <a href="/strategies">Cancel</a>
+  </div>
+</form>
+{% endblock %}
