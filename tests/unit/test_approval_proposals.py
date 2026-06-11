@@ -88,7 +88,14 @@ def _make_trade_proposal() -> TradeProposal:
 async def _seed_user_and_strategy(
     session_factory: Any, *, user_id: str = "test-user"
 ) -> str:
-    """Create a User + Strategy row; return the strategy_id."""
+    """Create a User + Strategy row; return the strategy_id.
+
+    The intermediate ``session.flush()`` is required: SQLAlchemy 2.x does
+    not auto-order inserts by FK dependency unless a ``relationship()`` is
+    declared on the parent (it isn't — see ``gekko.db.models``). Without
+    the flush the Strategy INSERT runs first and SQLCipher's
+    ``PRAGMA foreign_keys = ON`` rejects the row.
+    """
     strategy_id = "strat-" + uuid4().hex
     async with session_factory() as session, session.begin():
         session.add(
@@ -97,6 +104,7 @@ async def _seed_user_and_strategy(
                 created_at=datetime.now(UTC).isoformat(),
             )
         )
+        await session.flush()
         session.add(
             StrategyRow(
                 strategy_id=strategy_id,
