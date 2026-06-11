@@ -308,6 +308,13 @@ async def test_execute_proposal_broker_error_transitions_to_failed(
     )
     monkeypatch.setattr(executor, "_build_broker", lambda _u: broker)
 
+    sent_dms: list[str] = []
+
+    async def fake_send_dm(_user_id: str, msg: str) -> None:
+        sent_dms.append(msg)
+
+    monkeypatch.setattr(executor, "_send_slack_dm", fake_send_dm)
+
     await executor.execute_proposal(proposal_id, "test-user")
 
     async with sf() as session:
@@ -326,6 +333,9 @@ async def test_execute_proposal_broker_error_transitions_to_failed(
         assert len(err) == 1
         assert "executor.broker_rejected" in err[0].payload_json
         assert "insufficient buying power" in err[0].payload_json
+
+    # User got a DM explaining the failure (defensive UX check).
+    assert any("failed" in m.lower() for m in sent_dms)
 
 
 # ---------------------------------------------------------------------------
@@ -490,7 +500,11 @@ async def test_execute_proposal_normalizes_decimals_in_audit_payload(
         # canonical-subset must contain '5' (not '5.00' or '5E+0').
         text = order_submitted[0].payload_json
         # qty appears as a string per OrderSubmittedEventPayload contract.
-        assert '"qty": "5"' in text
+        # Canonical JSON uses separators=(',', ':') — no whitespace after :.
+        assert '"qty":"5"' in text
+        # Trailing-zero collapse means '5.00' must NOT survive.
+        assert '"qty":"5.00"' not in text
+        assert '"qty":"5E+0"' not in text
 
 
 # ---------------------------------------------------------------------------

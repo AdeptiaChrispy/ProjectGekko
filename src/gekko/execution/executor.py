@@ -1,58 +1,416 @@
-"""Deterministic order executor — Plan 01-08 Task 4.
+"""Deterministic order Executor — Plan 01-08 Task 4.
 
-Per RESEARCH §"Anti-Patterns" Pattern 1, the LLM **never** calls the
-broker directly. The Executor is the deterministic Python boundary:
+The deterministic Python firewall between the LLM and the broker. Per
+RESEARCH §"Anti-Patterns" Pattern 1, the LLM **never** calls
+``place_order`` directly — the Decision agent's only side-effect-capable
+tools are ``propose_trade`` / ``propose_no_action`` which write a
+:class:`Proposal` row. The Slack approval handler (Plan 01-08 Task 3)
+calls :func:`execute_proposal` AFTER the user clicks Approve. From this
+point on, no LLM bytes touch broker calls.
 
-  1. Load the persisted ``Proposal`` row + validated ``TradeProposal``
-     payload.
-  2. Run the market-hours guard (EXEC-10 / Plan 01-08 Task 2).
-  3. Construct an ``OrderRequest`` using the persisted, deterministic
-     ``client_order_id`` (D-20).
-  4. Call :meth:`AlpacaBroker.place_order` (Plan 01-05).
-  5. Append the ``order_submitted`` audit event and transition the row
-     APPROVED -> EXECUTING.
+:func:`execute_proposal` walks the APPROVED proposal through:
 
-The ``fill`` event + EXECUTING -> FILLED transition land in
-:func:`on_fill_event`, called from :class:`AlpacaFillStream`'s websocket
-callback (Plan 01-08 Task 4 wiring; Plan 01-09 owns the lifespan
-startup that registers the stream).
+  1. **Sanity gate** — re-loads the row + validated :class:`TradeProposal`
+     payload, confirms ``status == "APPROVED"``. Otherwise raises
+     ``ValueError`` (defense in depth — the state machine should already
+     have rejected this).
+  2. **Market-hours guard (EXEC-10)** — :func:`is_market_open` from
+     :mod:`gekko.execution.market_hours`. Closed market -> ``error``
+     audit event with context ``executor.market_closed`` + status flip
+     APPROVED -> FAILED. P1 fails; P7 will add deferred-retry-on-open.
+  3. **Order construction** — :class:`OrderRequest` using the persisted
+     deterministic ``client_order_id`` (D-20 / Pitfall 4). Re-computing
+     the id at this layer is intentional: any drift between the
+     proposal-row id and the broker-call id would defeat the
+     Knight-Capital dedup invariant.
+  4. **Broker submission** — :meth:`AlpacaBroker.place_order`. A
+     :class:`BrokerOrderError` -> ``error`` event + status flip
+     APPROVED -> FAILED + Slack DM. A duplicate (HTTP 422) is handled
+     inside the broker (Plan 01-05) — it returns the existing
+     OrderResult and the Executor records ``order_submitted`` as
+     normal.
+  5. **Audit** — ``order_submitted`` event with the
+     :class:`OrderSubmittedEventPayload` shape; state APPROVED ->
+     EXECUTING.
 
-This module is the "fired" half of the Slack approval handler — the
-handler calls ``asyncio.create_task(execute_proposal(...))`` and walks
-away. Errors are surfaced through audit events and Slack DMs, never
-raised back to the caller (there's no caller to raise to).
+:func:`on_fill_event` is the TradingStream callback (registered in Plan
+01-09's FastAPI lifespan via :class:`AlpacaFillStream`). It receives the
+fill payload, looks up the proposal row by ``client_order_id``, appends
+the ``fill`` audit event, transitions EXECUTING -> FILLED, and sends a
+Slack DM confirmation.
 
-Task 3 currently uses a minimal stub: Task 4 will fill in the broker /
-fill-stream behavior and add the integration test. The stub exists so
-:mod:`gekko.approval.slack_handler` (Task 3) can import
-:func:`execute_proposal` at module level — its tests
-:func:`monkeypatch.setattr` the symbol regardless of body.
+Test seams (the four module-level names tests monkeypatch):
+
+  * :func:`_get_session_factory(user_id)` -> ``(session_factory, engine_or_None)``
+  * :func:`_build_broker(user_id)` -> a :class:`Brokerage` instance
+  * :func:`is_market_open()` (re-exported from :mod:`market_hours`)
+  * :func:`_send_slack_dm(user_id, text)` -> ``None``
+
+The Claude Agent SDK MUST NOT be imported here. The grep-gate in
+``tests/unit/test_executor.py`` enforces this at the source-bytes
+level (Plan 01-08 success criterion 7); even the bare substring of
+the SDK package name would trip it.
 """
 
 from __future__ import annotations
 
+from decimal import Decimal
+from typing import Any
+
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from gekko.agent.runtime import _get_passphrase
+from gekko.approval.proposals import transition_status
+from gekko.audit.canonical import normalize_decimals
+from gekko.audit.log import append_event
+from gekko.brokers.alpaca import AlpacaBroker
+from gekko.brokers.base import Brokerage, OrderRequest, OrderResult
+from gekko.config import get_settings
+from gekko.core.errors import BrokerOrderError
+from gekko.core.types import OrderSide, OrderType, TimeInForce
+from gekko.db.engine import get_async_engine
+from gekko.db.models import Proposal as ProposalRow
+from gekko.db.session import AsyncSessionLocal, make_session_factory
+from gekko.execution.market_hours import is_market_open
 from gekko.logging_config import get_logger
+from gekko.schemas.proposal import TradeProposal
 
 log = get_logger(__name__)
 
 
-async def execute_proposal(proposal_id: str, user_id: str) -> None:
-    """Deterministic execution of an approved proposal.
+# ---------------------------------------------------------------------------
+# Module-level test seams — production builds engines + brokers from settings
+# ---------------------------------------------------------------------------
 
-    Task 3 stub: this is a placeholder so :mod:`gekko.approval.slack_handler`
-    can import the symbol. Task 4 expands the full flow (market-hours
-    guard, broker call, audit events, state transitions).
 
-    NB: Plan 01-08 success criterion 7 — this module contains NO imports
-    from ``claude_agent_sdk``. The Executor is the deterministic Python
-    firewall between the LLM and the broker.
+def _get_session_factory(
+    user_id: str,
+) -> tuple[AsyncSessionLocal, AsyncEngine | None]:
+    """Build a session factory + owning engine for ``user_id``.
+
+    Mirrors the same indirection used by :mod:`gekko.approval.slack_handler`
+    so tests have a single seam to monkeypatch.
     """
-    log.info(
-        "executor.invoked_stub",
-        proposal_id=proposal_id,
-        user_id=user_id,
-        note="Task 4 will expand to real broker call",
+    settings = get_settings()
+    engine = get_async_engine(
+        settings.db_path_for(user_id), _get_passphrase()
+    )
+    return make_session_factory(engine), engine
+
+
+def _build_broker(user_id: str) -> Brokerage:
+    """Construct the per-user :class:`AlpacaBroker`.
+
+    Phase 1 is paper-only (D-24); the constructor enforces it. Tests
+    monkeypatch this with a :class:`MagicMock` so we never hit a real
+    Alpaca endpoint at unit-test time.
+    """
+    settings = get_settings()
+    return AlpacaBroker(
+        api_key=settings.alpaca_paper_api_key.get_secret_value(),
+        secret_key=settings.alpaca_paper_secret_key.get_secret_value(),
+        paper=True,
     )
 
 
-__all__: tuple[str, ...] = ("execute_proposal",)
+async def _send_slack_dm(user_id: str, text: str) -> None:
+    """Send a Slack DM to ``user_id``.
+
+    Lazily imports the bolt :data:`slack_app` so unit tests that don't
+    set up the full Slack env can monkeypatch this without triggering
+    import-time failures.
+    """
+    from gekko.slack.app import slack_app
+
+    await slack_app.client.chat_postMessage(channel=user_id, text=text)
+
+
+# ---------------------------------------------------------------------------
+# execute_proposal — the deterministic order pipeline
+# ---------------------------------------------------------------------------
+
+
+async def execute_proposal(proposal_id: str, user_id: str) -> None:
+    """Walk an APPROVED proposal through the broker + audit-log pipeline.
+
+    :param proposal_id: Primary key of the ``proposals`` row.
+    :param user_id: Owner of the proposal. Used to scope the per-user
+        SQLCipher engine and to construct the broker.
+    :raises ValueError: When the proposal's status is not APPROVED at
+        load time. The state machine should already have rejected this,
+        but the explicit guard catches caller drift.
+
+    Errors past the sanity gate are surfaced via audit events + Slack
+    DMs; the function never raises to the caller (it runs inside an
+    ``asyncio.create_task`` from the Slack approval handler).
+    """
+    sf, engine = _get_session_factory(user_id)
+    try:
+        # ---- 1. Load proposal + validated payload, sanity-check status. ----
+        async with sf() as session:
+            row = (
+                await session.execute(
+                    select(ProposalRow).where(
+                        ProposalRow.proposal_id == proposal_id
+                    )
+                )
+            ).scalar_one()
+            if row.status != "APPROVED":
+                msg = (
+                    f"Cannot execute proposal {proposal_id!r}: expected "
+                    f"status 'APPROVED', found {row.status!r}"
+                )
+                raise ValueError(msg)
+            tp = TradeProposal.model_validate_json(row.payload_json)
+            strategy_id = row.strategy_id
+
+        # ---- 2. Market-hours guard (EXEC-10). -----------------------------
+        if not is_market_open():
+            log.warning(
+                "executor.market_closed",
+                proposal_id=proposal_id,
+                ticker=tp.ticker,
+            )
+            async with sf() as session, session.begin():
+                await append_event(
+                    session,
+                    user_id=user_id,
+                    strategy_id=strategy_id,
+                    event_type="error",
+                    payload=normalize_decimals(
+                        {
+                            "context": "executor.market_closed",
+                            "error_class": "MarketClosed",
+                            "error_message": (
+                                "NYSE not in regular trading hours; order "
+                                "placement deferred. P7 will add scheduled "
+                                "retry."
+                            ),
+                            "proposal_id": proposal_id,
+                            "ticker": tp.ticker,
+                        }
+                    ),
+                )
+                await transition_status(
+                    session,
+                    proposal_id,
+                    from_status="APPROVED",
+                    to_status="FAILED",
+                )
+            return
+
+        # ---- 3. Construct the OrderRequest with the persisted COID. -------
+        req = OrderRequest(
+            symbol=tp.ticker,
+            side=OrderSide(tp.side),
+            qty=tp.qty,
+            order_type=OrderType(tp.order_type),
+            limit_price=tp.limit_price,
+            stop_price=tp.stop_price,
+            time_in_force=TimeInForce.DAY,
+            client_order_id=tp.client_order_id,
+        )
+
+        # ---- 4. Broker submission with structured error handling. ---------
+        broker = _build_broker(user_id)
+        try:
+            result: OrderResult = await broker.place_order(req)
+        except BrokerOrderError as exc:
+            log.warning(
+                "executor.broker_rejected",
+                proposal_id=proposal_id,
+                error=str(exc),
+            )
+            async with sf() as session, session.begin():
+                await append_event(
+                    session,
+                    user_id=user_id,
+                    strategy_id=strategy_id,
+                    event_type="error",
+                    payload=normalize_decimals(
+                        {
+                            "context": "executor.broker_rejected",
+                            "error_class": type(exc).__name__,
+                            "error_message": str(exc),
+                            "proposal_id": proposal_id,
+                            "ticker": tp.ticker,
+                            "client_order_id": tp.client_order_id,
+                        }
+                    ),
+                )
+                await transition_status(
+                    session,
+                    proposal_id,
+                    from_status="APPROVED",
+                    to_status="FAILED",
+                )
+            await _send_slack_dm(
+                user_id,
+                (
+                    f"Order placement failed for `{tp.ticker}` "
+                    f"({proposal_id}): {exc}"
+                ),
+            )
+            return
+
+        # ---- 5. Persist order_submitted + transition APPROVED -> EXECUTING.
+        #
+        # Decimal values (qty) flow as Decimal through normalize_decimals so
+        # the Pitfall 6 trailing-zero collapse runs; canonical_json's
+        # default=str downstream converts the normalized Decimal to a JSON
+        # string. Strings (side, order_type, ids) are passed through
+        # unchanged.
+        async with sf() as session, session.begin():
+            payload: dict[str, Any] = normalize_decimals(
+                {
+                    "event_kind": "order_submitted",
+                    "client_order_id": result.client_order_id,
+                    "broker_order_id": result.broker_order_id,
+                    "symbol": req.symbol,
+                    "side": str(req.side),
+                    "qty": req.qty,
+                    "order_type": str(req.order_type),
+                }
+            )
+            await append_event(
+                session,
+                user_id=user_id,
+                strategy_id=strategy_id,
+                event_type="order_submitted",
+                payload=payload,
+            )
+            # Persist broker_order_id alongside the status transition so
+            # both updates ride on a single commit — the row's identity-map
+            # entry already has the broker_order_id pending; transition_status
+            # below flushes the combined UPDATE.
+            await session.execute(
+                update(ProposalRow)
+                .where(ProposalRow.proposal_id == proposal_id)
+                .values(broker_order_id=result.broker_order_id)
+            )
+            await transition_status(
+                session,
+                proposal_id,
+                from_status="APPROVED",
+                to_status="EXECUTING",
+            )
+
+        log.info(
+            "executor.order_submitted",
+            proposal_id=proposal_id,
+            broker_order_id=result.broker_order_id,
+            client_order_id=result.client_order_id,
+        )
+    finally:
+        if engine is not None:
+            await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# on_fill_event — TradingStream callback
+# ---------------------------------------------------------------------------
+
+
+async def on_fill_event(payload: dict[str, Any], *, user_id: str) -> None:
+    """Fill callback registered with :class:`AlpacaFillStream`.
+
+    Looks up the proposal by ``client_order_id`` (the deterministic id is
+    the correlation key between the broker's fill stream and our row).
+    Appends the ``fill`` audit event, transitions EXECUTING -> FILLED,
+    and sends a Slack DM confirmation.
+
+    Plan 01-09's FastAPI lifespan binds this function as the
+    ``on_fill`` callback when constructing the per-user
+    :class:`AlpacaFillStream`. Unmatched fills (no matching proposal)
+    are logged but do not raise — they can legitimately arrive for
+    orders placed outside this Gekko instance.
+    """
+    sf, engine = _get_session_factory(user_id)
+    try:
+        client_order_id = payload.get("client_order_id", "")
+        async with sf() as session, session.begin():
+            row = (
+                await session.execute(
+                    select(ProposalRow).where(
+                        ProposalRow.client_order_id == client_order_id,
+                        ProposalRow.user_id == user_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                log.warning("executor.fill_unmatched", **payload)
+                return
+            strategy_id = row.strategy_id
+            proposal_id = row.proposal_id
+            ticker = payload.get("ticker") or row.payload_json[:0] or ""
+
+            fill_payload: dict[str, Any] = normalize_decimals(
+                {
+                    "event_kind": "fill",
+                    "client_order_id": payload.get("client_order_id", ""),
+                    "broker_order_id": payload.get("broker_order_id", ""),
+                    "filled_qty": str(payload.get("filled_qty", "0")),
+                    "filled_avg_price": str(
+                        payload.get("filled_avg_price", "")
+                    ),
+                    "ticker": ticker,
+                }
+            )
+            await append_event(
+                session,
+                user_id=user_id,
+                strategy_id=strategy_id,
+                event_type="fill",
+                payload=fill_payload,
+            )
+            if row.status == "EXECUTING":
+                await transition_status(
+                    session,
+                    proposal_id,
+                    from_status="EXECUTING",
+                    to_status="FILLED",
+                )
+
+        # ---- Slack DM confirmation (outside the transaction). -----------
+        from gekko.reporter.slack import build_fill_confirmation
+
+        # Best-effort strategy_name + side lookup for the DM text.
+        strategy_name = ""
+        side = "buy"
+        async with sf() as session:
+            tp_row = (
+                await session.execute(
+                    select(ProposalRow).where(
+                        ProposalRow.proposal_id == proposal_id
+                    )
+                )
+            ).scalar_one_or_none()
+            if tp_row is not None:
+                try:
+                    tp = TradeProposal.model_validate_json(
+                        tp_row.payload_json
+                    )
+                    strategy_name = tp.strategy_name
+                    side = str(tp.side)
+                except Exception:
+                    pass
+
+        msg = build_fill_confirmation(
+            client_order_id=payload.get("client_order_id", ""),
+            broker_order_id=payload.get("broker_order_id", ""),
+            filled_qty=Decimal(str(payload.get("filled_qty", "0"))),
+            filled_avg_price=Decimal(
+                str(payload.get("filled_avg_price", "0"))
+            ),
+            ticker=ticker,
+            strategy_name=strategy_name,
+            side=side,
+        )
+        await _send_slack_dm(user_id, msg)
+    finally:
+        if engine is not None:
+            await engine.dispose()
+
+
+__all__: tuple[str, ...] = ("execute_proposal", "on_fill_event")
