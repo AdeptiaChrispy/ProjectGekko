@@ -14,7 +14,7 @@ progress:
 
 # Project State: Project Gekko
 
-**Last updated:** 2026-06-11 (Plan 01-09 complete — passphrase vault (D-19), real CLI (init/serve/run/strategy create [flag+chat]/audit verify+dump), APScheduler 3.x AsyncIOScheduler+SQLAlchemyJobStore over a pre-built sync engine (CADENCE-02 + AUTH-03/T-01-03-05), FastAPI dashboard w/ HTMX (vendored 2.0.4 + SRI gate) + Tailwind subset + STRAT-02 form, walking-skeleton e2e test (5-event chain intact); STRAT-01 + STRAT-02 + CADENCE-02 + REG-01..04 closed. **Phase 1 automated-only closure: 100%. Manual demo (Task 5) deferred to operator.**)
+**Last updated:** 2026-06-12 (Quick task 260612-dix — 5th Plan 01-09 Task 5 demo-discovery fix. Raised `TradeProposal.rationale` + `NoActionProposal.rationale` `max_length` from 1000 → 5000 (real LLM rationales overflow 1000); added `_truncate_for_slack` helper in `reporter/slack.py` that clamps at 2900 chars before mrkdwn-escape with `…[truncated; see audit log for full text]` marker (Slack `section.text` 3000-char ceiling). 10 new unit tests (4 schema + 6 renderer); full schema+reporter regression scope 150/150. Two atomic commits `9bc8c36` + `03a9b8e`. Phase 1 automated-only closure remains 100%; manual demo Task 5 still open pending operator re-trigger.)
 
 ## Project Reference
 
@@ -110,9 +110,15 @@ Full detail: `.planning/phases/01-foundation-vertical-slice-alpaca-paper-slack-h
 
 None.
 
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260612-dix | raise rationale cap to 5000 + Slack-render truncate guard (fix 01-09 demo finding) | 2026-06-12 | 03a9b8e | [260612-dix-raise-rationale-cap-to-5000-slack-render](./quick/260612-dix-raise-rationale-cap-to-5000-slack-render/) |
+
 ## Session Continuity
 
-**Next action:** Operator runs the README §"Phase 1 — Walking-skeleton demo" (10 steps + the new step 11 browser-source SRI inspection) on real Slack + Alpaca paper + Claude. When all steps pass, the operator types `demo_passed` to close Plan 01-09 Task 5 and the Phase 1 milestone. The full automated suite (365 passed, 4 skipped) confirms the wiring is correct; the manual demo is the load-bearing real-world smoke gate.
+**Next action:** Operator re-runs the demo trigger (`/gekko run ai-infra-bull`) — the 5th demo-discovery fix (quick task 260612-dix) raised the proposal rationale cap from 1000 → 5000 chars and added a Slack-render truncate guard, unblocking the orchestrator from the pydantic ValidationError that crashed the first market-hours attempt at 09:30 ET 2026-06-12. Expected outcome on re-trigger: full 5-event chain (decision → proposal → approval → order_submitted → fill) committed cleanly. When operator types `demo_passed` after the chain verifies, Plan 01-09 Task 5 closes and Phase 1 is done.
 
 After the manual demo passes, the next milestone-level step is either `/gsd-complete-milestone` to archive Phase 1 + open the Phase 2 SPEC (OrderGuard + Real-Money Alpaca Live) or `/gsd-new-milestone v2.0` if the operator wants to scope a v2 explicitly.
 
