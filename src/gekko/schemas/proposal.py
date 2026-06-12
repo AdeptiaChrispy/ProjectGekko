@@ -92,7 +92,7 @@ class TradeProposal(BaseModel):
     order_type: OrderType = OrderType.LIMIT
     limit_price: Decimal | None = None
     stop_price: Decimal | None = None
-    rationale: str = Field(..., min_length=1, max_length=1000)
+    rationale: str = Field(..., min_length=1, max_length=5000)
     confidence: Decimal = Field(..., ge=Decimal("0"), le=Decimal("1"))
     evidence: list[EvidenceSnippet] = Field(..., min_length=3, max_length=5)
     alternatives_considered: list[AlternativeConsidered] = Field(
@@ -130,7 +130,7 @@ class NoActionProposal(BaseModel):
     user_id: str = Field(..., min_length=1)
     strategy_name: str = Field(..., min_length=1)
     decision_id: str = Field(..., min_length=1)
-    rationale: str = Field(..., min_length=1, max_length=1000)
+    rationale: str = Field(..., min_length=1, max_length=5000)
     factors_considered: list[str] = Field(..., min_length=1, max_length=20)
     confidence: Decimal = Field(..., ge=Decimal("0"), le=Decimal("1"))
 

@@ -365,3 +365,63 @@ class TestEventPayload:
             adapter.validate_python(
                 {"event_kind": "lunch_break", "anything": "goes"}
             )
+
+
+# ---------------------------------------------------------------------------
+# Rationale headroom (quick 260612-dix)
+# ---------------------------------------------------------------------------
+#
+# Plan 01-09 Task 5 walking-skeleton demo exposed Sonnet emitting realistic
+# ~1200-3500-char trade rationales that tripped the prior max_length=1000
+# guard. Anthropic's tool-use docs say JSON Schema maxLength is a soft hint —
+# we cannot rely on the LLM to self-cap, so the schema now permits up to 5000
+# chars and Slack rendering is bounded separately via _truncate_for_slack
+# (see test_slack_block_kit.py).
+
+
+def test_trade_proposal_rationale_accepts_4999_chars() -> None:
+    """5000-char cap leaves headroom for realistic Sonnet rationales (1-shot dix)."""
+    from gekko.schemas.proposal import TradeProposal
+
+    tp = TradeProposal(**_trade_proposal_kwargs(rationale="x" * 4999))  # type: ignore[arg-type]
+    assert len(tp.rationale) == 4999
+
+
+def test_trade_proposal_rationale_rejects_5001_chars() -> None:
+    """Above the 5000-char cap, Pydantic raises ``string_too_long`` (1-shot dix)."""
+    from gekko.schemas.proposal import TradeProposal
+
+    with pytest.raises(ValidationError) as exc_info:
+        TradeProposal(**_trade_proposal_kwargs(rationale="x" * 5001))  # type: ignore[arg-type]
+    assert "string_too_long" in str(exc_info.value)
+
+
+def test_no_action_rationale_accepts_4999_chars() -> None:
+    """NoActionProposal mirrors the TradeProposal cap for D-09 verbose drafts."""
+    from gekko.schemas.proposal import NoActionProposal
+
+    n = NoActionProposal(
+        user_id="alice",
+        strategy_name="ai-infra",
+        decision_id="d1",
+        rationale="x" * 4999,
+        factors_considered=["price_vs_thesis"],
+        confidence=Decimal("0.5"),
+    )
+    assert len(n.rationale) == 4999
+
+
+def test_no_action_rationale_rejects_5001_chars() -> None:
+    """NoActionProposal above 5000 chars is rejected with ``string_too_long``."""
+    from gekko.schemas.proposal import NoActionProposal
+
+    with pytest.raises(ValidationError) as exc_info:
+        NoActionProposal(
+            user_id="alice",
+            strategy_name="ai-infra",
+            decision_id="d1",
+            rationale="x" * 5001,
+            factors_considered=["price_vs_thesis"],
+            confidence=Decimal("0.5"),
+        )
+    assert "string_too_long" in str(exc_info.value)
