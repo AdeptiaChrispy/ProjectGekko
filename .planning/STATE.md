@@ -14,7 +14,7 @@ progress:
 
 # Project State: Project Gekko
 
-**Last updated:** 2026-06-12 (**Phase 1 FULLY CLOSED — Plan 01-09 Task 5 `demo_passed`.** `gekko audit verify` returned "Chain intact across 22 events for user chris"; three full 5-event happy-path chains observed (AVGO + NVDA filled, AMD limit unfilled at close). Quick task 260612-dix unblocked the orchestrator by raising rationale cap 1000→5000 + adding Slack-render truncate guard. One Phase-1 follow-up queued as the next quick task: `_send_slack_dm` identity-split (executor passes gekko_user_id where Slack needs slack_user_id; audit chain unaffected, only the fill-confirmation DM crashes). One Phase-3 backlog item captured: executor-error → Slack surfacing on MarketClosed/BrokerOrderError. Next milestone-level step: `/gsd-new-milestone v2.0` or `/gsd-complete-milestone` to open Phase 2 (OrderGuard + Real-Money Alpaca Live).)
+**Last updated:** 2026-06-12 (**Phase 1 FULLY CLOSED — Plan 01-09 Task 5 `demo_passed`.** `gekko audit verify` returned "Chain intact across 22 events for user chris"; three full 5-event happy-path chains observed (AVGO + NVDA filled, AMD limit unfilled at close). Six 01-09 demo-discovery fixes landed: four in commit `297a882` (identity split #1-4 + traceback capture + socket-mode wiring + passphrase env fallback), one in quick task `260612-dix` (rationale-cap 1000→5000 + Slack-render truncate guard), and one in quick task `260612-nlv` (identity split #5 — `_send_slack_dm` now routes via `settings.slack_user_id`; TDD-verified, 11/11 unit + 1/1 integration). One Phase-3 backlog item remains: executor-error → Slack surfacing on MarketClosed/BrokerOrderError. **All Phase-1 follow-ups closed.** Next milestone-level step: `/gsd-complete-milestone` to archive Phase 1 + open Phase 2 SPEC, or `/gsd-plan-phase 2` directly since CONTEXT.md is already captured (commit `3ca0b06`).)
 
 ## Project Reference
 
@@ -28,9 +28,9 @@ Phase: 1 (Foundation & Vertical Slice) — **FULLY CLOSED (9 of 9 plans + manual
 
 - **Phase:** 1 (Foundation & Vertical Slice) — **CLOSED**
 - **Plan:** 9 of 9 complete; manual demo Task 5 passed
-- **Status:** Phase 1 fully closed. One queued follow-up (`_send_slack_dm` identity-split fix) is non-gating — audit chain + trade execution unaffected; only operator-facing fill DM crashes.
+- **Status:** Phase 1 fully closed. All 6 demo-discovery follow-ups landed; no outstanding Phase-1 work.
 - **Progress:** [██████████] 100%
-- **Resume from:** Route `_send_slack_dm` fix via `/gsd-quick` (6th 01-09 demo-discovery fix), then `/gsd-complete-milestone` to archive Phase 1 + open Phase 2. Phase 2 CONTEXT.md already captured (commit `3ca0b06`).
+- **Resume from:** `/gsd-complete-milestone` to archive Phase 1 + open Phase 2 (OrderGuard + Real-Money Alpaca Live), or `/gsd-plan-phase 2` directly — Phase 2 CONTEXT.md already captured (commit `3ca0b06`).
 
 ```
 [##################] 100%
@@ -115,10 +115,11 @@ None.
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260612-dix | raise rationale cap to 5000 + Slack-render truncate guard (fix 01-09 demo finding) | 2026-06-12 | 03a9b8e | [260612-dix-raise-rationale-cap-to-5000-slack-render](./quick/260612-dix-raise-rationale-cap-to-5000-slack-render/) |
+| 260612-nlv | _send_slack_dm identity-split: translate gekko_user_id → slack_user_id (6th 01-09 demo finding; channel_not_found fix) | 2026-06-12 | d7b26c8 | [260612-nlv-fix-send-slack-dm-identity-split-transla](./quick/260612-nlv-fix-send-slack-dm-identity-split-transla/) |
 
 ## Session Continuity
 
-**Next action:** Phase 1 is fully closed. The pending Phase-1 follow-up is a tiny `_send_slack_dm` identity-split fix (the audit chain and trade execution are unaffected; only the operator-facing fill DM crashes). Route it through `/gsd-quick` as the 6th 01-09 demo-discovery quick task. After that, run `/gsd-complete-milestone` to archive Phase 1 + open the Phase 2 SPEC (OrderGuard + Real-Money Alpaca Live) or `/gsd-new-milestone v2.0` to scope a v2 explicitly. Phase 2's CONTEXT.md was already captured on 2026-06-11 (commit `3ca0b06`), so `/gsd-plan-phase 2` can run immediately once Phase 1 is archived.
+**Next action:** Phase 1 is fully closed and all demo-discovery follow-ups have landed. Run `/gsd-complete-milestone` to archive Phase 1 + open the Phase 2 SPEC (OrderGuard + Real-Money Alpaca Live), or `/gsd-new-milestone v2.0` to scope a v2 explicitly. Phase 2's CONTEXT.md was already captured on 2026-06-11 (commit `3ca0b06`), so `/gsd-plan-phase 2` can run immediately. The one outstanding Phase-3 backlog item — executor-error → Slack surfacing on MarketClosed/BrokerOrderError — is tracked in [.planning/quick/260612-dix-raise-rationale-cap-to-5000-slack-render/deferred-items.md] for now (will be re-routed into Phase 3 planning when it spins up).
 
 After the manual demo passes, the next milestone-level step is either `/gsd-complete-milestone` to archive Phase 1 + open the Phase 2 SPEC (OrderGuard + Real-Money Alpaca Live) or `/gsd-new-milestone v2.0` if the operator wants to scope a v2 explicitly.
 
