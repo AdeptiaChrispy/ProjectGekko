@@ -571,3 +571,93 @@ def test_executor_module_does_not_import_claude_agent_sdk() -> None:
     src = open(mod.__file__, encoding="utf-8").read()
     assert "claude_agent_sdk" not in src
     assert "from claude_agent_sdk" not in src
+
+
+# ---------------------------------------------------------------------------
+# 10. _send_slack_dm translates gekko_user_id -> settings.slack_user_id
+#     (quick-task 260612-nlv — 6th 01-09 demo-discovery fix; same bug class as
+#     commit 297a882 which fixed slack_user_id vs gekko_user_id split in 4
+#     other call sites but missed _send_slack_dm)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_send_slack_dm_translates_gekko_user_id_to_slack_user_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """LOAD-BEARING: _send_slack_dm must route by settings.slack_user_id.
+
+    The function takes a ``user_id`` argument (the internal gekko_user_id
+    like "chris") for caller-API stability + audit/log metadata, but it
+    MUST translate to ``settings.slack_user_id`` (e.g. "U08LRFFRBS4")
+    before calling Slack's chat.postMessage. Passing "chris" as
+    ``channel=`` produces ``SlackApiError(channel_not_found)`` — this was
+    the 2026-06-12 manual-demo finding.
+    """
+    import sys
+    import types
+
+    from gekko.execution import executor
+
+    # Patch settings.slack_user_id (executor.py already imports
+    # get_settings from gekko.config — reuse that symbol via monkeypatch).
+    fake_settings = MagicMock()
+    fake_settings.slack_user_id = "U08LRFFRBS4"
+    monkeypatch.setattr(executor, "get_settings", lambda: fake_settings)
+
+    # Stand in for `from gekko.slack.app import slack_app` (lazy import
+    # inside _send_slack_dm so we don't need the real Slack env).
+    chat_postMessage = AsyncMock(return_value=None)
+    fake_slack_app = MagicMock()
+    fake_slack_app.client.chat_postMessage = chat_postMessage
+    fake_module = types.ModuleType("gekko.slack.app")
+    fake_module.slack_app = fake_slack_app  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "gekko.slack.app", fake_module)
+
+    await executor._send_slack_dm(
+        user_id="chris", text="Paper order filled: BUY 1 NVDA @ $204.97"
+    )
+
+    # LOAD-BEARING ASSERTION: routes by settings.slack_user_id, not the
+    # gekko_user_id argument.
+    assert (
+        chat_postMessage.await_args.kwargs["channel"] == "U08LRFFRBS4"
+    )
+    # Explicit defence against the regression class — gekko_user_id MUST
+    # NOT leak into the Slack channel kwarg.
+    assert chat_postMessage.await_args.kwargs["channel"] != "chris"
+    # Body must round-trip unchanged.
+    assert (
+        chat_postMessage.await_args.kwargs["text"]
+        == "Paper order filled: BUY 1 NVDA @ $204.97"
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_slack_dm_preserves_text_verbatim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Complement: the fix must not escape/truncate the message body.
+
+    Mrkdwn-ish characters round-trip verbatim through the ``text=`` kwarg.
+    """
+    import sys
+    import types
+
+    from gekko.execution import executor
+
+    fake_settings = MagicMock()
+    fake_settings.slack_user_id = "U08LRFFRBS4"
+    monkeypatch.setattr(executor, "get_settings", lambda: fake_settings)
+
+    chat_postMessage = AsyncMock(return_value=None)
+    fake_slack_app = MagicMock()
+    fake_slack_app.client.chat_postMessage = chat_postMessage
+    fake_module = types.ModuleType("gekko.slack.app")
+    fake_module.slack_app = fake_slack_app  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "gekko.slack.app", fake_module)
+
+    body = "*bold* _italic_ <https://example.com|link>"
+    await executor._send_slack_dm(user_id="chris", text=body)
+
+    assert chat_postMessage.await_args.kwargs["text"] == body

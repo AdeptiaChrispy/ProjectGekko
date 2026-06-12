@@ -115,7 +115,23 @@ def _build_broker(user_id: str) -> Brokerage:
 
 
 async def _send_slack_dm(user_id: str, text: str) -> None:
-    """Send a Slack DM to ``user_id``.
+    """Send a Slack DM addressed to the configured operator.
+
+    Identity-split: the ``user_id`` argument is the INTERNAL
+    ``gekko_user_id`` (e.g. ``"chris"``) carried for caller-API
+    stability + audit/log metadata. Slack's ``chat.postMessage``
+    requires a Slack channel/user id (e.g. ``"U08LRFFRBS4"``), so this
+    function reads :attr:`gekko.config.Settings.slack_user_id` and
+    binds it to the ``channel=`` kwarg. Passing ``user_id`` to Slack
+    directly produces ``SlackApiError(channel_not_found)``.
+
+    Same bug class as commit ``297a882`` (which fixed the
+    ``slack_user_id`` vs ``gekko_user_id`` split in the slash-command
+    handler, approve-handler, cross-user check, and ``post_run_result``
+    but missed this function). Surfaced as Plan 01-09 Task 5 demo
+    finding #6 on 2026-06-12; audit chain unaffected — the ``fill``
+    event commits inside the DB transaction at ``executor.py``'s
+    ``on_fill_event`` BEFORE this DM call.
 
     Lazily imports the bolt :data:`slack_app` so unit tests that don't
     set up the full Slack env can monkeypatch this without triggering
@@ -123,7 +139,10 @@ async def _send_slack_dm(user_id: str, text: str) -> None:
     """
     from gekko.slack.app import slack_app
 
-    await slack_app.client.chat_postMessage(channel=user_id, text=text)
+    settings = get_settings()
+    await slack_app.client.chat_postMessage(
+        channel=settings.slack_user_id, text=text
+    )
 
 
 # ---------------------------------------------------------------------------
