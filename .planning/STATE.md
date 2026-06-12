@@ -14,7 +14,7 @@ progress:
 
 # Project State: Project Gekko
 
-**Last updated:** 2026-06-12 (Quick task 260612-dix — 5th Plan 01-09 Task 5 demo-discovery fix. Raised `TradeProposal.rationale` + `NoActionProposal.rationale` `max_length` from 1000 → 5000 (real LLM rationales overflow 1000); added `_truncate_for_slack` helper in `reporter/slack.py` that clamps at 2900 chars before mrkdwn-escape with `…[truncated; see audit log for full text]` marker (Slack `section.text` 3000-char ceiling). 10 new unit tests (4 schema + 6 renderer); full schema+reporter regression scope 150/150. Two atomic commits `9bc8c36` + `03a9b8e`. Phase 1 automated-only closure remains 100%; manual demo Task 5 still open pending operator re-trigger.)
+**Last updated:** 2026-06-12 (**Phase 1 FULLY CLOSED — Plan 01-09 Task 5 `demo_passed`.** `gekko audit verify` returned "Chain intact across 22 events for user chris"; three full 5-event happy-path chains observed (AVGO + NVDA filled, AMD limit unfilled at close). Quick task 260612-dix unblocked the orchestrator by raising rationale cap 1000→5000 + adding Slack-render truncate guard. One Phase-1 follow-up queued as the next quick task: `_send_slack_dm` identity-split (executor passes gekko_user_id where Slack needs slack_user_id; audit chain unaffected, only the fill-confirmation DM crashes). One Phase-3 backlog item captured: executor-error → Slack surfacing on MarketClosed/BrokerOrderError. Next milestone-level step: `/gsd-new-milestone v2.0` or `/gsd-complete-milestone` to open Phase 2 (OrderGuard + Real-Money Alpaca Live).)
 
 ## Project Reference
 
@@ -24,13 +24,13 @@ progress:
 
 ## Current Position
 
-Phase: 1 (Foundation & Vertical Slice) — **ALL PLANS COMPLETE (9 of 9)**. Manual demo checkpoint (Task 5 of Plan 01-09) deferred to operator per VALIDATION.md §Manual-Only Verifications.
+Phase: 1 (Foundation & Vertical Slice) — **FULLY CLOSED (9 of 9 plans + manual demo Task 5 `demo_passed` 2026-06-12)**. 22-event audit chain intact; three full 5-event happy-path chains (AVGO/NVDA filled, AMD limit unfilled at close). Five demo-discovery fixes landed in `297a882` + quick task `260612-dix`; one follow-up queued.
 
-- **Phase:** 1 (Foundation & Vertical Slice)
-- **Plan:** 9 of 9 complete
-- **Status:** Phase 1 automated coverage complete; awaiting operator manual smoke for full closeout
+- **Phase:** 1 (Foundation & Vertical Slice) — **CLOSED**
+- **Plan:** 9 of 9 complete; manual demo Task 5 passed
+- **Status:** Phase 1 fully closed. One queued follow-up (`_send_slack_dm` identity-split fix) is non-gating — audit chain + trade execution unaffected; only operator-facing fill DM crashes.
 - **Progress:** [██████████] 100%
-- **Resume from:** Operator runs README §"Phase 1 — Walking-skeleton demo" and types `demo_passed` to close Task 5. Then `/gsd-new-milestone v2.0` or `/gsd-complete-milestone` opens Phase 2 (OrderGuard + Real-Money Alpaca Live).
+- **Resume from:** Route `_send_slack_dm` fix via `/gsd-quick` (6th 01-09 demo-discovery fix), then `/gsd-complete-milestone` to archive Phase 1 + open Phase 2. Phase 2 CONTEXT.md already captured (commit `3ca0b06`).
 
 ```
 [##################] 100%
@@ -41,7 +41,7 @@ Phase: 1 (Foundation & Vertical Slice) — **ALL PLANS COMPLETE (9 of 9)**. Manu
 | Metric | Value |
 |--------|-------|
 | Phases planned | 9 |
-| Phases complete | 0 |
+| Phases complete | 1 |
 | v1 requirements mapped | 108 / 108 |
 | v1 requirements unmapped | 0 |
 | Research summaries | 4 (STACK, FEATURES, ARCHITECTURE, PITFALLS) + consolidated SUMMARY |
@@ -91,7 +91,7 @@ Phase: 1 (Foundation & Vertical Slice) — **ALL PLANS COMPLETE (9 of 9)**. Manu
 - [x] Plan 01-07 executed — Agent runtime: BudgetTracker + 4 Researcher tools + propose_trade/no_action + RESEARCHER/DECISION AgentDefinitions + ProposalWriter + trigger_strategy_run + compile_strategy_from_chat (STRAT-01, STRAT-03, RES-01, RES-02, RES-03, RES-04, RES-05) (2026-06-09)
 - [x] Plan 01-08 executed — Slack Block Kit HITL card (HITL-01) + pandas_market_calendars guard (EXEC-10) + /gekko run slash command + proposals state machine + Approve/Reject handlers w/ cross-user defense (HITL-04) + deterministic Executor + on_fill_event + mrkdwn-escape prompt-injection defense (2026-06-11)
 - [x] Plan 01-09 executed (automated tasks 1-4) — passphrase vault (D-19); real CLI (init+REG-02, serve, run, strategy create flag+chat/STRAT-01, audit verify+dump); APScheduler 3.x AsyncIOScheduler+SQLAlchemyJobStore w/ pre-built sync engine (CADENCE-02, AUTH-03/T-01-03-05); FastAPI dashboard (lifespan wiring engines+scheduler+fill_stream+slack route; routes for STRAT-02 form, /trigger, /slack/events, /healthz); HTMX 2.0.4 vendored w/ SHA-384 + SRI lint gate + CSP meta tag; walking-skeleton e2e test asserts 5-event chain [decision, proposal, approval, order_submitted, fill] intact via walk_chain (2026-06-11)
-- [ ] Plan 01-09 Task 5 (manual demo) — operator runs README §"Phase 1 — Walking-skeleton demo" against real Slack + Alpaca paper + Claude; verifies HITL-01 (Block Kit card render), BROK-A-06 (real fill via TradingStream websocket), AUTH-03 (Windows wrong-passphrase rejection), CADENCE-02 (tzdata on Windows). Resume signal: `demo_passed`.
+- [x] Plan 01-09 Task 5 (manual demo) — passed 2026-06-12. `gekko audit verify` confirmed "Chain intact across 22 events for user chris" — three full 5-event happy-path chains observed in `gekko audit dump`: AVGO BUY 1 @ $381.84 (15:37 UTC), NVDA BUY 2 @ $204.97 (18:10 UTC), and AMD BUY 0.97 @ $513.40 limit (19:25 UTC; order placed but limit sat below ask — likely unfilled at market close). HITL-01 Block Kit card rendered correctly across all three approvals; BROK-A-06 confirmed (real Alpaca paper fills via TradingStream websocket carrying broker_order_ids `cc24de05`, `749da292`); CADENCE-02 confirmed (Socket Mode connected on Windows tzdata); step 11 SRI inspection confirmed (vendored htmx.min.js + sha384 integrity tag in dashboard view-source). Three new demo discoveries surfaced: quick task 260612-dix fixed rationale-cap overflow (cap 1000 → 5000 + Slack-render truncate guard); fill-DM identity-split bug queued as next quick task (`_send_slack_dm` passes gekko_user_id="chris" where Slack expects slack_user_id="U08LRFFRBS4" — affects user-facing fill notification only, audit chain unaffected); P3 backlog item captured for executor-error surfacing to Slack on MarketClosed/BrokerOrderError.
 - [x] Resolve "wash-sale default" decision before Phase 2 plan-phase — flag-only chosen 2026-06-08
 - [ ] Resolve "default LLM cost ceiling" value before Phase 4 plan-phase
 - [ ] Resolve "trust ladder promotion criteria" placeholder before Phase 5 plan-phase
@@ -118,7 +118,7 @@ None.
 
 ## Session Continuity
 
-**Next action:** Operator re-runs the demo trigger (`/gekko run ai-infra-bull`) — the 5th demo-discovery fix (quick task 260612-dix) raised the proposal rationale cap from 1000 → 5000 chars and added a Slack-render truncate guard, unblocking the orchestrator from the pydantic ValidationError that crashed the first market-hours attempt at 09:30 ET 2026-06-12. Expected outcome on re-trigger: full 5-event chain (decision → proposal → approval → order_submitted → fill) committed cleanly. When operator types `demo_passed` after the chain verifies, Plan 01-09 Task 5 closes and Phase 1 is done.
+**Next action:** Phase 1 is fully closed. The pending Phase-1 follow-up is a tiny `_send_slack_dm` identity-split fix (the audit chain and trade execution are unaffected; only the operator-facing fill DM crashes). Route it through `/gsd-quick` as the 6th 01-09 demo-discovery quick task. After that, run `/gsd-complete-milestone` to archive Phase 1 + open the Phase 2 SPEC (OrderGuard + Real-Money Alpaca Live) or `/gsd-new-milestone v2.0` to scope a v2 explicitly. Phase 2's CONTEXT.md was already captured on 2026-06-11 (commit `3ca0b06`), so `/gsd-plan-phase 2` can run immediately once Phase 1 is archived.
 
 After the manual demo passes, the next milestone-level step is either `/gsd-complete-milestone` to archive Phase 1 + open the Phase 2 SPEC (OrderGuard + Real-Money Alpaca Live) or `/gsd-new-milestone v2.0` if the operator wants to scope a v2 explicitly.
 
