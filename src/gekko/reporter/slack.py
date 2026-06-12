@@ -59,6 +59,42 @@ from gekko.schemas.proposal import NoActionProposal, TradeProposal
 _MRKDWN_META = re.compile(r"([<>*_~|`])")
 _WS_RUN = re.compile(r"\s+")
 
+# Slack section.text is hard-capped at 3000 chars. The plan 260612-dix raised the
+# schema rationale cap to 5000 to give Sonnet headroom; this renderer-side guard
+# keeps the rendered section block under Slack's 3000-char ceiling. 2900 + the
+# ~40-char marker leaves headroom for both the marker and any small post-escape
+# length expansion (`_escape_mrkdwn` backslash-escapes `< > * _ ~ | \``, so
+# escape can grow the string slightly — but LLM prose rarely contains those
+# metacharacters, so in practice the post-escape length is ~unchanged).
+_SLACK_SECTION_RAW_LIMIT = 2900
+_SLACK_TRUNCATION_MARKER = "…[truncated; see audit log for full text]"
+
+
+def _truncate_for_slack(text: str, limit: int = _SLACK_SECTION_RAW_LIMIT) -> str:
+    """Truncate ``text`` so its rendered Slack section block stays ≤ 3000 chars.
+
+    Slack ``section.text`` mrkdwn blocks are hard-capped at 3000 characters;
+    a ``chat_postMessage`` call with a longer block returns ``invalid_blocks``.
+    Truncation MUST happen BEFORE :func:`_escape_mrkdwn` because escape can
+    EXPAND length (backslash before each `< > * _ ~ | \\``) — escaping after
+    truncation would push the visible marker over the limit and could also
+    mangle the marker itself.
+
+    The full text remains available in the audit-log ``payload_json`` (D-15
+    invariant; the proposal row is the canonical record). The visible marker
+    tells the user where to look.
+
+    :param text: The raw mrkdwn-bound text (e.g. ``proposal.rationale``).
+    :param limit: Maximum raw length BEFORE the marker is appended. Default
+        2900 leaves ample headroom under Slack's 3000-char ceiling for the
+        ~40-char marker plus any post-escape expansion.
+    :returns: ``text`` unchanged if already ≤ ``limit``; otherwise the first
+        ``limit`` characters followed by :data:`_SLACK_TRUNCATION_MARKER`.
+    """
+    if len(text) <= limit:
+        return text
+    return text[:limit] + _SLACK_TRUNCATION_MARKER
+
 
 def _escape_mrkdwn(text: str | None) -> str:
     """Escape Slack mrkdwn metacharacters in LLM- or user-supplied free-form text.
@@ -191,7 +227,7 @@ def build_proposal_card(
     price_display = _price_field(proposal)
     evidence_md = _evidence_mrkdwn(proposal)
     alternatives_md = _alternatives_mrkdwn(proposal)
-    rationale_md = _escape_mrkdwn(proposal.rationale)
+    rationale_md = _escape_mrkdwn(_truncate_for_slack(proposal.rationale))
     strategy_md = _escape_mrkdwn(proposal.strategy_name)
     decision_id_value = proposal.decision_id
 
@@ -305,7 +341,7 @@ def build_no_action_message(
     # escape mrkdwn metacharacters so injected content can't impersonate
     # additional message rows.
     strategy_safe = _escape_mrkdwn(no_action.strategy_name)
-    rationale_safe = _escape_mrkdwn(no_action.rationale)
+    rationale_safe = _escape_mrkdwn(_truncate_for_slack(no_action.rationale))
     factors_line = ""
     if no_action.factors_considered:
         joined = ", ".join(_escape_mrkdwn(f) for f in no_action.factors_considered)

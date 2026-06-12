@@ -26,6 +26,7 @@ from uuid import uuid4
 import pytest
 
 from gekko.reporter.slack import (
+    _truncate_for_slack,
     build_fill_confirmation,
     build_no_action_message,
     build_proposal_card,
@@ -454,3 +455,119 @@ def test_build_fill_confirmation_returns_short_dm_text() -> None:
     assert "1234.56" in msg
     assert "ai-infra-bull" in msg
     assert "BUY" in msg
+
+
+# ---------------------------------------------------------------------------
+# Slack 3000-char section-block truncation guard (quick 260612-dix)
+# ---------------------------------------------------------------------------
+#
+# Plan 01-09 Task 5 walking-skeleton demo exposed two failure modes:
+# (a) Sonnet routinely emits ~1200-3500-char rationales (Pydantic schema cap
+#     raised to 5000 in the companion fix).
+# (b) Slack section.text is hard-capped at 3000 chars — a 5000-char rationale
+#     would trip ``invalid_blocks``.
+# _truncate_for_slack defends (b) BEFORE _escape_mrkdwn (escape can expand
+# length). 2900 + ~40-char marker leaves ample headroom under 3000.
+
+_TRUNCATION_MARKER = "…[truncated; see audit log for full text]"
+
+
+def test_truncate_for_slack_short_text_unchanged() -> None:
+    """Short text under the limit passes through unmodified."""
+    assert _truncate_for_slack("hello world") == "hello world"
+
+
+def test_truncate_for_slack_at_boundary_unchanged() -> None:
+    """Text at exactly the 2900-char default limit is not truncated."""
+    text = "x" * 2900
+    assert _truncate_for_slack(text) == text
+
+
+def test_truncate_for_slack_over_boundary_truncates() -> None:
+    """One char over the limit yields ``2900 'x's + truncation marker``.
+
+    The marker ``"…[truncated; see audit log for full text]"`` is 41 chars
+    (the leading horizontal-ellipsis U+2026 counts as one Python char), so
+    the total truncated length is 2900 + 41 = 2941, still well under
+    Slack's 3000-char section.text ceiling.
+    """
+    text = "x" * 2901
+    result = _truncate_for_slack(text)
+    assert result.startswith("x" * 2900)
+    assert result.endswith(_TRUNCATION_MARKER)
+    # 2900 raw + 41-char marker = 2941 total, well under Slack's 3000 ceiling.
+    assert len(result) == 2900 + len(_TRUNCATION_MARKER)
+    assert len(result) < 3000
+
+
+def test_card_rationale_truncated_when_long() -> None:
+    """A 4500-char rationale in the proposal card is truncated to ≤ 3000 chars
+    in the Rationale section block, with the visible marker present."""
+    long_rationale = "A" * 4500
+    p = TradeProposal(
+        user_id="U_TEST",
+        strategy_name="ai-infra-bull",
+        decision_id=uuid4().hex,
+        ticker="NVDA",
+        side="buy",
+        qty=Decimal("5"),
+        order_type="limit",
+        limit_price=Decimal("1234.56"),
+        stop_price=None,
+        rationale=long_rationale,
+        confidence=Decimal("0.78"),
+        evidence=_sample_evidence(),
+        alternatives_considered=[
+            AlternativeConsidered(
+                description="Consider AMD as the cheaper alternative",
+                why_rejected="Lower confidence on data-center exposure vs. NVDA",
+            ),
+        ],
+        client_order_id="a" * 32,
+    )
+    blocks = build_proposal_card(p)
+    # Locate the Rationale section block
+    rationale_block_text: str | None = None
+    for b in blocks:
+        if b.get("type") != "section":
+            continue
+        text_obj = b.get("text")
+        if isinstance(text_obj, dict) and "*Rationale:*" in text_obj.get("text", ""):
+            rationale_block_text = text_obj["text"]
+            break
+    assert rationale_block_text is not None, "Rationale section not found"
+    assert len(rationale_block_text) <= 3000
+    assert _TRUNCATION_MARKER in rationale_block_text
+
+
+def test_card_rationale_not_truncated_when_short() -> None:
+    """The existing ~90-char fixture rationale is NOT truncated — no marker present."""
+    p = _sample_trade_proposal()
+    blocks = build_proposal_card(p)
+    rationale_block_text: str | None = None
+    for b in blocks:
+        if b.get("type") != "section":
+            continue
+        text_obj = b.get("text")
+        if isinstance(text_obj, dict) and "*Rationale:*" in text_obj.get("text", ""):
+            rationale_block_text = text_obj["text"]
+            break
+    assert rationale_block_text is not None
+    assert _TRUNCATION_MARKER not in rationale_block_text
+
+
+def test_no_action_message_truncates_long_rationale() -> None:
+    """build_no_action_message truncates a 4500-char rationale and shows the marker."""
+    long_rationale = "B" * 4500
+    nap = NoActionProposal(
+        user_id="U_TEST",
+        strategy_name="ai-infra-bull",
+        decision_id=uuid4().hex,
+        rationale=long_rationale,
+        factors_considered=["price_vs_thesis"],
+        confidence=Decimal("0.60"),
+    )
+    msg = build_no_action_message(nap, cost_usd=Decimal("0.05"))
+    assert _TRUNCATION_MARKER in msg
+    # The outer D-09 template still renders
+    assert "Reviewed" in msg
