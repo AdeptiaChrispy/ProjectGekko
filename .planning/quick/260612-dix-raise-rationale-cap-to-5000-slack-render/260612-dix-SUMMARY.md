@@ -1,4 +1,5 @@
 ---
+status: complete
 type: quick
 slug: 260612-dix-raise-rationale-cap-to-5000-slack-render
 created: 2026-06-12

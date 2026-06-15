@@ -2,8 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: completed
-last_updated: "2026-06-12T02:59:28.947Z"
+status: Awaiting next milestone
+last_updated: "2026-06-15T11:00:55.446Z"
+last_activity: 2026-06-15 — Milestone v1.0 completed and archived
 progress:
   total_phases: 9
   completed_phases: 1
@@ -24,17 +25,10 @@ progress:
 
 ## Current Position
 
-Phase: 1 (Foundation & Vertical Slice) — **FULLY CLOSED (9 of 9 plans + manual demo Task 5 `demo_passed` 2026-06-12)**. 22-event audit chain intact; three full 5-event happy-path chains (AVGO/NVDA filled, AMD limit unfilled at close). Five demo-discovery fixes landed in `297a882` + quick task `260612-dix`; one follow-up queued.
-
-- **Phase:** 1 (Foundation & Vertical Slice) — **CLOSED**
-- **Plan:** 9 of 9 complete; manual demo Task 5 passed
-- **Status:** Phase 1 fully closed. All 6 demo-discovery follow-ups landed; no outstanding Phase-1 work.
-- **Progress:** [██████████] 100%
-- **Resume from:** `/gsd-complete-milestone` to archive Phase 1 + open Phase 2 (OrderGuard + Real-Money Alpaca Live), or `/gsd-plan-phase 2` directly — Phase 2 CONTEXT.md already captured (commit `3ca0b06`).
-
-```
-[##################] 100%
-```
+Phase: Milestone v1.0 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-06-15 — Milestone v1.0 completed and archived
 
 ## Performance Metrics
 
@@ -109,6 +103,15 @@ Full detail: `.planning/phases/01-foundation-vertical-slice-alpaca-paper-slack-h
 ### Blockers
 
 None.
+
+### Deferred Items
+
+Items acknowledged and proceeded-past at milestone close on 2026-06-15:
+
+| Category | Item | Status | Note |
+|----------|------|--------|------|
+| quick_task | 260612-dix-raise-rationale-cap-to-5000-slack-render | complete (audit false positive) | Code commits `9bc8c36` + `03a9b8e`, docs commit `8fcf78f`; tests 54/54. SDK audit-open flags as "missing" because it checks for unprefixed `SUMMARY.md` but the quick-task workflow writes `{quick_id}-SUMMARY.md`. Not actually deferred. |
+| quick_task | 260612-nlv-fix-send-slack-dm-identity-split-transla | complete (audit false positive) | Code commit `d7b26c8`, docs commit `05cd783`; tests 11/11 + 1 integration. Same file-name mismatch as above. Not actually deferred. |
 
 ### Quick Tasks Completed
 
@@ -220,3 +223,7 @@ After the manual demo passes, the next milestone-level step is either `/gsd-comp
 *Updated: 2026-06-09 after Plan 01-07 complete*
 *Updated: 2026-06-11 after Plan 01-08 complete*
 *Updated: 2026-06-11 after Plan 01-09 complete (automated tasks 1-4; Task 5 manual demo deferred to operator)*
+
+## Operator Next Steps
+
+- Start the next milestone with /gsd-new-milestone
