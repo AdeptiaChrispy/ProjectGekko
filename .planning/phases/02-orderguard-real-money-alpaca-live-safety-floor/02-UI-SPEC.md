@@ -1,10 +1,13 @@
 ---
 phase: 2
 slug: orderguard-real-money-alpaca-live-safety-floor
-status: draft
+status: approved
 shadcn_initialized: false
 preset: none
 created: 2026-06-15
+reviewed_at: 2026-06-15
+reviewed_by: gsd-ui-checker
+review_verdict: APPROVED (4 PASS, 2 FLAG — presentation clarity only, non-blocking)
 ---
 
 # Phase 2 — UI Design Contract
@@ -45,11 +48,13 @@ Declared values (multiples of 4 only — matches Phase 1 Tailwind subset):
 | 2xl | 48px | Major section breaks (between trade-detail and confirm-form) |
 | 3xl | 64px | Page-level spacing (above the final "Confirm First Live Trade" button) |
 
-**Exceptions for Phase 2:**
+**Policy:** outer layout (gaps between sections, container margins, grid columns) uses 4-multiples only. **Sub-component padding** may use non-4 values where typographic centering math or WCAG accessibility floors require — but only when the resulting outer dimension lands on a 4-multiple.
 
-- Live banner **HEIGHT**: 40px fixed (taller than Phase 1's 8px PAPER strip to satisfy "impossible to miss"). Banner padding-vertical = 10px (this is **NOT** off-scale — it's `font-size + leading` math; total banner height stays 40px).
-- Kill modal width: 480px max-width centered (not on the 4-multiple grid because this is content-driven sizing).
-- Kill button minimum tap target: 44×44px (accessibility floor; satisfied by 12px vertical × 16px horizontal padding around 16px text label).
+**Phase 2 sub-component exceptions (named, bounded):**
+
+- Live banner **HEIGHT**: 40px fixed (taller than Phase 1's 8px PAPER strip to satisfy "impossible to miss"). Banner padding-vertical = 10px → typographic centering math (14px text × 1.2 line-height + 10px+10px padding) producing the 40px banner; outer dimension is on-grid.
+- Kill modal width: 480px max-width centered (480 ÷ 4 = 120 — on-grid; content-driven sizing within the 4-multiple rule).
+- Kill button minimum tap target: 44×44px — **WCAG 2.5.5 accessibility floor**. Achieved via 16px text label + 12px vertical / 16px horizontal padding (all 4-multiples internally); outer ≈44px because WCAG mandates that minimum, not the 4-multiple grid.
 - 5-second countdown progress bar height: 4px (smallest scale value — visual heartbeat, not a spacing element).
 
 ---
@@ -66,7 +71,9 @@ Phase 1 system font stack is LOCKED. Phase 2 declares the role/size/weight matri
 | Display | 24px | 600 (semibold) | 1.2 | Modal headline ("Confirm First Live Trade"), kill-modal headline ("Type KILL to halt all trading") |
 | Countdown numeral | 20px | 600 (semibold) | 1.0 | The "5… 4… 3… 2… 1…" countdown on the first-live confirm page |
 
-**Weight policy:** exactly TWO weights total — 400 (regular) + 600 (semibold). Plus 700 (bold) reserved EXCLUSIVELY for the live banner header and kill banner header text. No other element uses 700. This honors the orchestrator's "2 weights max" + the safety-floor exception for the highest-stakes copy.
+**Weight policy: 2 + 1 safety-reserved.**
+- **Base weights (used everywhere):** 400 (regular) + 600 (semibold). All standard UI text — body, labels, buttons, headlines, chips, countdown numerals — uses one of these two.
+- **Safety-reserved weight:** 700 (bold) reserved EXCLUSIVELY for two strings in the entire UI: the live banner header (`[LIVE — REAL MONEY]`) and the kill-active banner header (`[KILL ACTIVE — ALL TRADING HALTED]`). No other element ever uses 700. This is a single bounded exception driven by the safety-floor requirement that these two banners feel maximally heavy and visually overpower everything around them.
 
 **Typeface:** system font stack only — no Google Fonts, no `@font-face` import (CSP + no-external-CDN rule).
 
