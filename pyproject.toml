@@ -14,7 +14,7 @@ license = { text = "Proprietary" }
 # (sqlcipher3-wheels retained per RESEARCH decision — Windows wheels priority).
 dependencies = [
     "claude-agent-sdk>=0.2.93,<0.3",
-    "alpaca-py>=0.42,<0.50",
+    "alpaca-py>=0.43.4,<0.50",
     "slack-bolt>=1.18,<2",
     # slack-bolt's AsyncApp imports aiohttp at module-level even when only
     # the FastAPI adapter is used; pin it explicitly so slack.app imports
