@@ -55,7 +55,9 @@ from gekko.execution.checks import (
     check_kill_switch,
     check_market_hours,
     check_paper_live_pairing,
+    check_pdt,
     check_qty_price_sanity,
+    check_t1_settlement,
     check_universe,
 )
 from gekko.schemas.proposal import TradeProposal
@@ -149,15 +151,24 @@ class OrderGuard(Brokerage):
     async def place_order(self, req: OrderRequest) -> OrderResult:
         """Run every BLOCK check; on first failure raise, else delegate.
 
-        Check order (RESEARCH §1 code shape):
+        Check order (RESEARCH §1 code shape; plan 02-03 inserts PDT + T+1
+        AFTER qty_price_sanity and BEFORE market_hours):
 
           1. ``check_kill_switch`` — cheapest possible (single SELECT)
           2. ``check_paper_live_pairing`` — pure in-memory invariant
           3. ``check_universe`` — pure in-memory invariant
           4. ``check_hard_caps`` — broker GETs + audit-log walk
           5. ``check_qty_price_sanity`` — broker GET for MARKET orders
-          6. ``check_market_hours`` — defense in depth (executor's
+          6. ``check_pdt`` — broker get_account + local 5-day round-trip walk
+          7. ``check_t1_settlement`` — broker get_account + ref_price math
+          8. ``check_market_hours`` — defense in depth (executor's
              check fires first; this only catches edge-case crossings)
+
+        ``check_pdt`` + ``check_t1_settlement`` share a single
+        ``broker.get_account()`` call (RESEARCH §1) to avoid duplicate
+        broker HTTP traffic. The ``@retry_on_rate_limit`` decorator on
+        the underlying :class:`AlpacaBroker.get_account` provides the
+        429-handling layer.
 
         :raises gekko.core.errors.OrderGuardRejected: On any check failure.
         :returns: The underlying broker's :class:`OrderResult`.
@@ -186,6 +197,13 @@ class OrderGuard(Brokerage):
                 target_notional_usd=self._proposal.target_notional_usd,
                 broker=self._wrapped,
             )
+
+        # Plan 02-03: PDT + T+1 share one broker.get_account() call.
+        account = await self._wrapped.get_account()
+        await check_pdt(req=req, account=account, user_id=self._user_id)
+        await check_t1_settlement(
+            req=req, account=account, broker=self._wrapped
+        )
 
         await check_market_hours(req)
 
