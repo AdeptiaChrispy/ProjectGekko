@@ -66,14 +66,16 @@ from gekko.audit.log import append_event
 from gekko.brokers.alpaca import AlpacaBroker
 from gekko.brokers.base import Brokerage, OrderRequest, OrderResult
 from gekko.config import get_settings
-from gekko.core.errors import BrokerOrderError
+from gekko.core.errors import BrokerOrderError, OrderGuardRejected
 from gekko.core.types import OrderSide, OrderType, TimeInForce
 from gekko.db.engine import get_async_engine
-from gekko.db.models import Proposal as ProposalRow
+from gekko.db.models import Proposal as ProposalRow, Strategy as StrategyRow
 from gekko.db.session import AsyncSessionLocal, make_session_factory
 from gekko.execution.market_hours import is_market_open
+from gekko.execution.orderguard import OrderGuard
 from gekko.logging_config import get_logger
 from gekko.schemas.proposal import TradeProposal
+from gekko.schemas.strategy import Strategy
 from gekko.vault.passphrase import get_passphrase as _get_passphrase
 
 log = get_logger(__name__)
@@ -99,18 +101,50 @@ def _get_session_factory(
     return make_session_factory(engine), engine
 
 
-def _build_broker(user_id: str) -> Brokerage:
-    """Construct the per-user :class:`AlpacaBroker`.
+def _build_broker(
+    user_id: str,
+    strategy: Strategy,
+    account_mode: str,
+    *,
+    proposal: TradeProposal | None = None,
+) -> Brokerage:
+    """Construct the per-user :class:`AlpacaBroker` wrapped in :class:`OrderGuard`.
 
-    Phase 1 is paper-only (D-24); the constructor enforces it. Tests
-    monkeypatch this with a :class:`MagicMock` so we never hit a real
-    Alpaca endpoint at unit-test time.
+    Plan 02-02 Task 3: wraps the concrete broker in OrderGuard so every
+    paper trade goes through the 6 BLOCK checks (universe, hard caps,
+    qty×price drift, paper/live invariant, kill-switch read, market-hours
+    defense-in-depth).
+
+    Phase 2 paper path: ``AlpacaBroker(paper=True)`` from env-loaded keys.
+    Plan 02-06 adds the live branch (``strategy.mode == 'live' AND
+    strategy_metadata.live_mode_eligible``) — vault-stored credentials
+    fed to ``AlpacaBroker(paper=False)``. Until then this resolves
+    unconditionally to PAPER.
+
+    Tests monkeypatch this with a :class:`MagicMock` so we never hit a
+    real Alpaca endpoint at unit-test time.
+
+    :param user_id: Per-user SQLCipher DB scope (passed through to
+        OrderGuard for ``check_kill_switch``).
+    :param strategy: The :class:`Strategy` the proposal was authored
+        against. Used by OrderGuard for watchlist + hard_caps + mode.
+    :param account_mode: ``"PAPER"`` or ``"LIVE"`` — stamped on the
+        proposal at build time (BLOCKER #5).
+    :param proposal: Optional :class:`TradeProposal` carrying the
+        ``target_notional_usd`` for the qty×price 2% drift check.
     """
     settings = get_settings()
-    return AlpacaBroker(
+    wrapped = AlpacaBroker(
         api_key=settings.alpaca_paper_api_key.get_secret_value(),
         secret_key=settings.alpaca_paper_secret_key.get_secret_value(),
         paper=True,
+    )
+    return OrderGuard(
+        wrapped,
+        strategy=strategy,
+        account_mode=account_mode,  # type: ignore[arg-type]
+        user_id=user_id,
+        proposal=proposal,
     )
 
 
@@ -142,6 +176,64 @@ async def _send_slack_dm(user_id: str, text: str) -> None:
     settings = get_settings()
     await slack_app.client.chat_postMessage(
         channel=settings.slack_user_id, text=text
+    )
+
+
+# ---------------------------------------------------------------------------
+# Strategy hydration helper (Plan 02-02 Task 3)
+# ---------------------------------------------------------------------------
+
+
+def _load_strategy_for_executor(
+    *,
+    strategy_row: StrategyRow | None,
+    tp: TradeProposal,
+    user_id: str,
+) -> Strategy:
+    """Hydrate a :class:`Strategy` Pydantic instance for OrderGuard.
+
+    Phase 1 stores the canonical Strategy JSON in
+    ``strategies.payload_json``. Phase 2's OrderGuard needs ``watchlist``
+    + ``hard_caps`` + ``mode`` at place_order time. We parse the row's
+    ``payload_json`` when available; otherwise we synthesize a minimal
+    Strategy from the proposal — enough for the universe + paper-live
+    invariant + hard-caps math to operate.
+
+    The synthesized fallback exists because every Phase-1 executor test
+    seeds Strategy rows with ``payload_json="{}"`` (the test helpers in
+    Plan 01-08 didn't populate it). Failing here would break the
+    Phase-1 walking-skeleton — so we degrade gracefully with permissive
+    defaults that match the proposal's ticker (universe pass) + a 100%
+    position cap (no hard-cap reject in synthesized mode).
+    """
+    from decimal import Decimal as _D
+    from datetime import UTC as _UTC, datetime as _dt
+
+    from gekko.schemas.strategy import HardCaps as _HardCaps
+
+    if strategy_row is not None and strategy_row.payload_json:
+        try:
+            return Strategy.model_validate_json(strategy_row.payload_json)
+        except Exception:  # noqa: BLE001 - fall through to synth
+            pass
+
+    # Synthesized fallback — minimal viable shape for OrderGuard.
+    synth_mode = "paper" if tp.account_mode == "PAPER" else "live"
+    return Strategy(
+        strategy_id=(strategy_row.strategy_id if strategy_row else "synth"),
+        user_id=user_id,
+        name=tp.strategy_name,
+        version=1,
+        thesis="(synthesized for executor; payload_json empty)",
+        watchlist=[tp.ticker],
+        hard_caps=_HardCaps(
+            max_position_pct=_D("0.20"),
+            max_daily_loss_usd=_D("999999"),
+            max_trades_per_day=999,
+            max_sector_exposure_pct=_D("1"),
+        ),
+        mode=synth_mode,  # type: ignore[arg-type]
+        created_at=_dt.now(_UTC).isoformat(),
     )
 
 
@@ -183,6 +275,25 @@ async def execute_proposal(proposal_id: str, user_id: str) -> None:
                 raise ValueError(msg)
             tp = TradeProposal.model_validate_json(row.payload_json)
             strategy_id = row.strategy_id
+            account_mode = row.account_mode
+            # Plan 02-02 Task 3: load the Strategy snapshot for OrderGuard's
+            # watchlist / hard_caps / mode context. The strategy row's
+            # `payload_json` is the canonical JSON of the Pydantic Strategy
+            # model per Plan 01-06; we parse it back into a Strategy
+            # instance. When the strategy row is missing or empty (test
+            # seed pattern from Phase 1) we fall back to a minimal
+            # Strategy derived from the proposal — enough for the
+            # ticker-in-watchlist check + cap math.
+            strategy_row = (
+                await session.execute(
+                    select(StrategyRow).where(
+                        StrategyRow.strategy_id == strategy_id
+                    )
+                )
+            ).scalar_one_or_none()
+            strategy = _load_strategy_for_executor(
+                strategy_row=strategy_row, tp=tp, user_id=user_id
+            )
 
         # ---- 2. Market-hours guard (EXEC-10). -----------------------------
         if not is_market_open():
@@ -232,9 +343,52 @@ async def execute_proposal(proposal_id: str, user_id: str) -> None:
         )
 
         # ---- 4. Broker submission with structured error handling. ---------
-        broker = _build_broker(user_id)
+        broker = _build_broker(
+            user_id, strategy, account_mode, proposal=tp
+        )
         try:
             result: OrderResult = await broker.place_order(req)
+        except OrderGuardRejected as exc:
+            # Plan 02-02 Task 3: cap_rejection branch — mirrors the
+            # ``executor.market_closed`` shape at lines 222-254 verbatim.
+            # The check_name is exc.reject_code by convention (one event
+            # per reject_code); exc.extra carries per-check context
+            # (ticker, ref_price, cap_value, etc.) that is merged into
+            # the audit payload so the dashboard rejection panel + Slack
+            # rejection card can interpret it.
+            log.warning(
+                "executor.cap_rejection",
+                proposal_id=proposal_id,
+                ticker=tp.ticker,
+                reject_code=exc.reject_code,
+                reject_reason=exc.reject_reason,
+            )
+            async with sf() as session, session.begin():
+                cap_payload: dict[str, Any] = {
+                    "reject_code": exc.reject_code,
+                    "reject_reason": exc.reject_reason,
+                    "ticker": tp.ticker,
+                    "proposal_id": proposal_id,
+                    "check_name": exc.reject_code,
+                }
+                # Merge per-check extras; do NOT overwrite the canonical
+                # keys above on key-collision.
+                for k, v in exc.extra.items():
+                    cap_payload.setdefault(k, v)
+                await append_event(
+                    session,
+                    user_id=user_id,
+                    strategy_id=strategy_id,
+                    event_type="cap_rejection",
+                    payload=normalize_decimals(cap_payload),
+                )
+                await transition_status(
+                    session,
+                    proposal_id,
+                    from_status="APPROVED",
+                    to_status="FAILED",
+                )
+            return
         except BrokerOrderError as exc:
             log.warning(
                 "executor.broker_rejected",

@@ -199,7 +199,7 @@ async def test_full_approval_to_fill_chain(
             raw={"id": "broker-int-001", "status": "accepted"},
         )
     )
-    monkeypatch.setattr(executor, "_build_broker", lambda _u: broker)
+    monkeypatch.setattr(executor, "_build_broker", lambda *a, **k: broker)
 
     # Capture Slack DMs from both the slack_handler (approve DM) and the
     # executor (fill confirmation DM).

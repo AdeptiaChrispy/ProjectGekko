@@ -254,7 +254,7 @@ async def test_walking_skeleton_end_to_end(
             raw={"id": "ORDER-WAVE-GATE-001", "status": "accepted"},
         )
     )
-    monkeypatch.setattr(executor, "_build_broker", lambda _u: broker)
+    monkeypatch.setattr(executor, "_build_broker", lambda *a, **k: broker)
 
     sent_dms: list[str] = []
 

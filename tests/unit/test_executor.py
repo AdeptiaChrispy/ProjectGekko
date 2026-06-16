@@ -187,7 +187,7 @@ async def test_execute_proposal_happy_path(
     broker.place_order = AsyncMock(
         return_value=_success_order_result(client_order_id=tp.client_order_id)
     )
-    monkeypatch.setattr(executor, "_build_broker", lambda _u: broker)
+    monkeypatch.setattr(executor, "_build_broker", lambda *a, **k: broker)
 
     await executor.execute_proposal(proposal_id, "test-user")
 
@@ -238,7 +238,7 @@ async def test_execute_proposal_market_closed(
 
     broker = MagicMock()
     broker.place_order = AsyncMock()
-    monkeypatch.setattr(executor, "_build_broker", lambda _u: broker)
+    monkeypatch.setattr(executor, "_build_broker", lambda *a, **k: broker)
 
     await executor.execute_proposal(proposal_id, "test-user")
 
@@ -280,7 +280,7 @@ async def test_execute_proposal_rejects_non_approved_status(
         executor, "_get_session_factory", lambda _u: (sf, None)
     )
     monkeypatch.setattr(executor, "is_market_open", lambda *a, **k: True)
-    monkeypatch.setattr(executor, "_build_broker", lambda _u: MagicMock())
+    monkeypatch.setattr(executor, "_build_broker", lambda *a, **k: MagicMock())
 
     with pytest.raises(ValueError, match="APPROVED|status"):
         await executor.execute_proposal(proposal_id, "test-user")
@@ -310,7 +310,7 @@ async def test_execute_proposal_broker_error_transitions_to_failed(
     broker.place_order = AsyncMock(
         side_effect=BrokerOrderError("simulated reject: insufficient buying power")
     )
-    monkeypatch.setattr(executor, "_build_broker", lambda _u: broker)
+    monkeypatch.setattr(executor, "_build_broker", lambda *a, **k: broker)
 
     sent_dms: list[str] = []
 
@@ -378,7 +378,7 @@ async def test_execute_proposal_duplicate_client_order_id_is_success(
     )
     broker = MagicMock()
     broker.place_order = AsyncMock(return_value=existing)
-    monkeypatch.setattr(executor, "_build_broker", lambda _u: broker)
+    monkeypatch.setattr(executor, "_build_broker", lambda *a, **k: broker)
 
     await executor.execute_proposal(proposal_id, "test-user")
 
@@ -489,7 +489,7 @@ async def test_execute_proposal_normalizes_decimals_in_audit_payload(
     broker.place_order = AsyncMock(
         return_value=_success_order_result(client_order_id=tp.client_order_id)
     )
-    monkeypatch.setattr(executor, "_build_broker", lambda _u: broker)
+    monkeypatch.setattr(executor, "_build_broker", lambda *a, **k: broker)
 
     await executor.execute_proposal(proposal_id, "test-user")
 
@@ -537,7 +537,7 @@ async def test_order_submitted_payload_conforms_to_schema(
     broker.place_order = AsyncMock(
         return_value=_success_order_result(client_order_id=tp.client_order_id)
     )
-    monkeypatch.setattr(executor, "_build_broker", lambda _u: broker)
+    monkeypatch.setattr(executor, "_build_broker", lambda *a, **k: broker)
 
     await executor.execute_proposal(proposal_id, "test-user")
 
