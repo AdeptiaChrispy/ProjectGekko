@@ -33,6 +33,7 @@ from sqlalchemy import (
     Integer,
     String,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -43,7 +44,12 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 #: Allowed values for ``Guidance.scope`` (D-15 / RES-08).
 _GUIDANCE_SCOPES: tuple[str, ...] = ("strategy", "global")
 
-#: Allowed values for ``Proposal.status`` (D-11 lifecycle).
+#: Allowed values for ``Proposal.status`` (D-11 lifecycle + Phase-2 dual-channel).
+#:
+#: Phase-2 additions (plan 02-01 Task 4): ``AWAITING_2ND_CHANNEL`` is the
+#: holding state between Slack approve and dashboard confirm for the first
+#: live trade per HITL-06; ``APPROVED_LIVE`` is the post-dual-channel
+#: approved state that executes on the live broker per BLOCKER #1.
 _PROPOSAL_STATUSES: tuple[str, ...] = (
     "PENDING",
     "APPROVED",
@@ -51,7 +57,15 @@ _PROPOSAL_STATUSES: tuple[str, ...] = (
     "EXECUTING",
     "FILLED",
     "FAILED",
+    "AWAITING_2ND_CHANNEL",
+    "APPROVED_LIVE",
 )
+
+#: Allowed values for ``Proposal.account_mode`` (BLOCKER #5 / plan 02-01 Task 4).
+_ACCOUNT_MODES: tuple[str, ...] = ("PAPER", "LIVE")
+
+#: Allowed values for ``BrokerCredential.kind`` (D-34 / plan 02-01 Task 4).
+_BROKER_CREDENTIAL_KINDS: tuple[str, ...] = ("alpaca_paper", "alpaca_live")
 
 #: Allowed values for ``Event.event_type`` (D-14 vocabulary).
 _EVENT_TYPES: tuple[str, ...] = (
@@ -99,6 +113,20 @@ class User(Base):
     ``agreement_acknowledged_at`` carries the timestamp the user clicked "I
     agree" during ``gekko init`` (REG-02). NULL means the agreement is
     pending — Plan 01-09 will surface a re-prompt.
+
+    Phase-2 columns (plan 02-01 Task 4 / D-35 + D-36):
+
+    * ``kill_active`` — when True, OrderGuard refuses all new place_order
+      calls and the runtime DMs the operator that kill is still active
+      (EXEC-06). Set to True by ``/gekko kill CONFIRM`` (plan 02-05); flipped
+      back to False ONLY by an explicit operator action — never auto-cleared.
+    * ``kill_active_since`` — ISO timestamp when the kill state was first
+      latched. NULL when kill is inactive.
+    * ``kill_active_reason`` — human-readable note from the operator's
+      ``/gekko kill CONFIRM <reason>`` slash command. NULL when inactive.
+
+    All three are visible in ``__repr__`` (operator-debugging useful; not
+    credential-sensitive).
     """
 
     __tablename__ = "users"
@@ -108,9 +136,22 @@ class User(Base):
     agreement_acknowledged_at: Mapped[str | None] = mapped_column(
         String, nullable=True
     )
+    # Phase-2 / D-35 + D-36 kill-switch columns.
+    kill_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("0")
+    )
+    kill_active_since: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )
+    kill_active_reason: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )
 
     def __repr__(self) -> str:
-        return f"User(user_id={self.user_id!r})"
+        return (
+            f"User(user_id={self.user_id!r}, "
+            f"kill_active={self.kill_active!r})"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +195,55 @@ class Strategy(Base):
             f"user_id={self.user_id!r}, "
             f"strategy_name={self.strategy_name!r}, "
             f"version={self.version!r})"
+        )
+
+
+# ---------------------------------------------------------------------------
+# strategy_metadata (Phase 2 — plan 02-01 Task 4 / D-31, D-32)
+# ---------------------------------------------------------------------------
+
+
+class StrategyMetadata(Base):
+    """Per-(user, strategy_name) metadata for the live promotion ladder.
+
+    Lives alongside the Strategy snapshot rows (D-05) so the per-strategy
+    eligibility + first-live-trade timestamps don't fan out into every
+    snapshot row. Plan 02-01 Task 4 adds the columns; plans 02-06 + 02-07
+    wire the runtime behavior:
+
+    * ``live_mode_eligible`` (D-31) — gate that plan 02-06's
+      check_paper_live_pairing reads alongside ``strategy.mode == 'live'``.
+      Flipping a strategy to mode='live' without also flipping this column
+      keeps the strategy paper-bound.
+    * ``live_promoted_at`` — ISO timestamp the operator clicked
+      "Promote to live" in the dashboard.
+    * ``first_live_trade_confirmed_at`` (D-32) — ISO timestamp of the first
+      dashboard dual-channel confirm. Used by HITL-06 to switch off the
+      first-live-trade dual-channel requirement; subsequent live trades
+      revert to single-channel approval.
+    """
+
+    __tablename__ = "strategy_metadata"
+
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.user_id"), primary_key=True
+    )
+    strategy_name: Mapped[str] = mapped_column(String, primary_key=True)
+    live_mode_eligible: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("0")
+    )
+    live_promoted_at: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )
+    first_live_trade_confirmed_at: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"StrategyMetadata(user_id={self.user_id!r}, "
+            f"strategy_name={self.strategy_name!r}, "
+            f"live_mode_eligible={self.live_mode_eligible!r})"
         )
 
 
@@ -239,11 +329,22 @@ class Proposal(Base):
     broker_order_id: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[str] = mapped_column(String, nullable=False)
     updated_at: Mapped[str] = mapped_column(String, nullable=False)
+    # BLOCKER #5 / plan 02-01 Task 4: account_mode locked at proposal-build
+    # time; closes TOCTOU window between proposal-gen and approve-click.
+    # Backfilled to 'PAPER' for all pre-migration rows (Phase-1 was
+    # paper-only per D-24).
+    account_mode: Mapped[str] = mapped_column(
+        String, nullable=False, server_default=text("'PAPER'")
+    )
 
     __table_args__ = (
         CheckConstraint(
             _in_check("status", _PROPOSAL_STATUSES),
             name="ck_proposal_status",
+        ),
+        CheckConstraint(
+            _in_check("account_mode", _ACCOUNT_MODES),
+            name="ck_proposals_account_mode",
         ),
     )
 
@@ -253,7 +354,8 @@ class Proposal(Base):
             f"Proposal(proposal_id={self.proposal_id!r}, "
             f"user_id={self.user_id!r}, "
             f"strategy_id={self.strategy_id!r}, "
-            f"status={self.status!r})"
+            f"status={self.status!r}, "
+            f"account_mode={self.account_mode!r})"
         )
 
 
@@ -327,11 +429,19 @@ class BrokerCredential(Base):
 
     Per-row encryption is NOT applied here — D-19 says whole-DB SQLCipher
     encryption is the only at-rest layer in Phase 1; a per-row Fernet layer
-    is deferred. The composite primary key ``(user_id, broker)`` enforces
-    at most one credential row per (user, broker) pair.
+    is deferred. The composite primary key ``(user_id, broker, kind)``
+    (extended in plan 02-01 Task 4 / D-34) enforces at most one credential
+    row per (user, broker, kind) pair — so a user can store BOTH an
+    ``alpaca_paper`` and ``alpaca_live`` row.
 
-    ``paper`` MUST be ``True`` for ``alpaca`` rows in Phase 1 — the
-    ``AlpacaBroker`` constructor (Plan 01-05) refuses live keys.
+    ``paper`` is preserved as a denormalized convenience column for backward
+    compatibility with Phase-1 code paths; new code should read ``kind``.
+    ``kind`` is the authoritative discriminator and is constrained to
+    ``alpaca_paper`` or ``alpaca_live`` by a CHECK constraint.
+
+    ``__repr__`` excludes ``key_blob`` + ``secret_blob`` (AUTH-04 defense
+    preserved through the schema extension); ``kind`` IS visible because it
+    is a non-sensitive discriminator.
     """
 
     __tablename__ = "broker_credentials"
@@ -340,16 +450,29 @@ class BrokerCredential(Base):
         String, ForeignKey("users.user_id"), primary_key=True
     )
     broker: Mapped[str] = mapped_column(String, primary_key=True)
+    # D-34 / plan 02-01 Task 4: kind discriminates paper-vs-live credentials.
+    # Backfilled at migration time from the existing ``paper`` column.
+    kind: Mapped[str] = mapped_column(
+        String, primary_key=True, server_default=text("'alpaca_paper'")
+    )
     key_blob: Mapped[str] = mapped_column(String, nullable=False)
     secret_blob: Mapped[str] = mapped_column(String, nullable=False)
     paper: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[str] = mapped_column(String, nullable=False)
 
+    __table_args__ = (
+        CheckConstraint(
+            _in_check("kind", _BROKER_CREDENTIAL_KINDS),
+            name="ck_broker_credentials_kind",
+        ),
+    )
+
     def __repr__(self) -> str:
         # NB: key_blob and secret_blob deliberately excluded — AUTH-04 defense.
         return (
             f"BrokerCredential(user_id={self.user_id!r}, "
-            f"broker={self.broker!r}, paper={self.paper!r})"
+            f"broker={self.broker!r}, kind={self.kind!r}, "
+            f"paper={self.paper!r})"
         )
 
 
@@ -357,6 +480,7 @@ __all__: tuple[str, ...] = (
     "Base",
     "User",
     "Strategy",
+    "StrategyMetadata",
     "Guidance",
     "Proposal",
     "Event",

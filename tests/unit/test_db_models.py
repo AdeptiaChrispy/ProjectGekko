@@ -73,7 +73,12 @@ async def session(engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
 
 
 async def test_metadata_creates_six_p1_tables(engine: AsyncEngine) -> None:
-    """``Base.metadata.create_all`` succeeds and creates exactly the 6 P1 tables."""
+    """``Base.metadata.create_all`` succeeds and creates the expected tables.
+
+    Phase-1 baseline: 6 tables (users, strategies, guidance, proposals,
+    events, broker_credentials). Phase-2 plan 02-01 Task 4 added
+    ``strategy_metadata`` (D-31 / D-32 — live-promotion ladder state).
+    """
 
     def _tables(sync_conn: object) -> set[str]:
         return set(inspect(sync_conn).get_table_names())
@@ -88,6 +93,8 @@ async def test_metadata_creates_six_p1_tables(engine: AsyncEngine) -> None:
         "proposals",
         "events",
         "broker_credentials",
+        # Phase 2 / plan 02-01 Task 4.
+        "strategy_metadata",
     }
 
 
