@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Safety & Trust
 status: executing
-last_updated: "2026-06-16T15:00:00.000Z"
-last_activity: 2026-06-16 -- Plan 02-01 complete (Wave-1 foundations + BLOCKER #1 + BLOCKER #5 schema half)
+last_updated: "2026-06-16T21:45:00.000Z"
+last_activity: 2026-06-16 -- Plan 02-02 complete (Wave-2 OrderGuard decorator + 6 BLOCK checks + cap_rejection branch)
 progress:
   total_phases: 2
   completed_phases: 1
   total_plans: 16
-  completed_plans: 10
-  percent: 56
+  completed_plans: 11
+  percent: 63
 ---
 
 # Project State: Project Gekko
@@ -26,9 +26,9 @@ progress:
 ## Current Position
 
 Phase: 02 (OrderGuard & Real-Money Alpaca Live (Safety Floor)) — EXECUTING
-Plan: 2 of 7 (Plan 02-01 closed; Plan 02-02 next)
+Plan: 3 of 7 (Plans 02-01 + 02-02 closed; next is Wave 2's other plan 02-04 OR Wave 3's plan 02-03)
 Status: Executing Phase 02
-Last activity: 2026-06-16 -- Plan 02-01 complete (Wave-1 foundations + BLOCKER #1 + BLOCKER #5 schema half)
+Last activity: 2026-06-16 -- Plan 02-02 complete (Wave-2 OrderGuard decorator + 6 BLOCK checks + cap_rejection branch)
 
 ## Performance Metrics
 
@@ -87,6 +87,7 @@ Last activity: 2026-06-16 -- Plan 02-01 complete (Wave-1 foundations + BLOCKER #
 - [x] Plan 01-09 executed (automated tasks 1-4) — passphrase vault (D-19); real CLI (init+REG-02, serve, run, strategy create flag+chat/STRAT-01, audit verify+dump); APScheduler 3.x AsyncIOScheduler+SQLAlchemyJobStore w/ pre-built sync engine (CADENCE-02, AUTH-03/T-01-03-05); FastAPI dashboard (lifespan wiring engines+scheduler+fill_stream+slack route; routes for STRAT-02 form, /trigger, /slack/events, /healthz); HTMX 2.0.4 vendored w/ SHA-384 + SRI lint gate + CSP meta tag; walking-skeleton e2e test asserts 5-event chain [decision, proposal, approval, order_submitted, fill] intact via walk_chain (2026-06-11)
 - [x] Plan 01-09 Task 5 (manual demo) — passed 2026-06-12. `gekko audit verify` confirmed "Chain intact across 22 events for user chris" — three full 5-event happy-path chains observed in `gekko audit dump`: AVGO BUY 1 @ $381.84 (15:37 UTC), NVDA BUY 2 @ $204.97 (18:10 UTC), and AMD BUY 0.97 @ $513.40 limit (19:25 UTC; order placed but limit sat below ask — likely unfilled at market close). HITL-01 Block Kit card rendered correctly across all three approvals; BROK-A-06 confirmed (real Alpaca paper fills via TradingStream websocket carrying broker_order_ids `cc24de05`, `749da292`); CADENCE-02 confirmed (Socket Mode connected on Windows tzdata); step 11 SRI inspection confirmed (vendored htmx.min.js + sha384 integrity tag in dashboard view-source). Three new demo discoveries surfaced: quick task 260612-dix fixed rationale-cap overflow (cap 1000 → 5000 + Slack-render truncate guard); fill-DM identity-split bug queued as next quick task (`_send_slack_dm` passes gekko_user_id="chris" where Slack expects slack_user_id="U08LRFFRBS4" — affects user-facing fill notification only, audit chain unaffected); P3 backlog item captured for executor-error surfacing to Slack on MarketClosed/BrokerOrderError.
 - [x] Plan 02-01 executed — tenacity 9.1.4 installed (operator-verified PyPI legitimacy); 26 Wave-0 test stub files created (17 unit + 9 integration); 3 conftest fixtures (account_mode parametrized, kill_state, live_credential_pair); TradeProposal.target_notional_usd (D-27) + TradeProposal.account_mode (BLOCKER #5 schema half) + TradeProposal.wash_sale_flag forward-compat slot; Alembic 0002 migration (strategy_metadata table per D-31/D-32, users.kill_active* per D-35/D-36, broker_credentials.kind per D-34, proposals.account_mode + status CHECK extension per BLOCKER #1 + BLOCKER #5); StrategyMetadata ORM class + Phase-2 vocab tuples (_ACCOUNT_MODES, _BROKER_CREDENTIAL_KINDS, extended _PROPOSAL_STATUSES); STATE_TRANSITIONS extended with 5 Phase-2 edges (BLOCKER #1 closure); OrderGuardRejected exception class. 377 unit tests + 31 integration tests pass; Phase-1 audit chain integrity preserved through Alembic 0002 round-trip (2026-06-16).
+- [x] Plan 02-02 executed — OrderGuard(Brokerage) decorator class shipped, wrapping every approved paper proposal before broker POST (D-26 / EXEC-04). 6 BLOCK checks under src/gekko/execution/checks/: _universe, _hard_caps (4 sub-checks), _qty_price (LIMIT/STOP/MARKET branches), _paper_live (three-way invariant), _kill_switch (READ side), _market_hours (defense-in-depth). _build_broker(user_id) -> _build_broker(user_id, strategy, account_mode, *, proposal=None); cap_rejection branch added to execute_proposal mirroring executor.market_closed verbatim. 11-entry reject_code vocabulary locked (universe, hard_cap_*, qty_price_drift, ref_price_missing, paper_live_mismatch_*, kill_active, market_closed). cap_rejection event payload schema locked (5 canonical keys + exc.extra spread via setdefault). 33+ new unit tests in test_orderguard.py + 6 paper/live + 5 cap_rejection integration scenarios + 1 paper-happy chain test — all green. Phase-1 walking-skeleton 5-event chain still validates. 419 unit + 37 integration tests pass (3 unit + 4 integration deselected/skipped — 3 are pre-existing env-pollution failures from Phase 1). 3 commits: a671c7f (Tasks 1+2), fa78387 (Task 3 executor wiring), 0a4a962 (Task 4 integration tests). Plan executed across 3 executor sessions — 2 prior crashes recovered from disk state without rewriting work (see SUMMARY "Crash recovery notes") (2026-06-16).
 - [x] Resolve "wash-sale default" decision before Phase 2 plan-phase — flag-only chosen 2026-06-08
 - [ ] Resolve "default LLM cost ceiling" value before Phase 4 plan-phase
 - [ ] Resolve "trust ladder promotion criteria" placeholder before Phase 5 plan-phase
@@ -213,6 +214,20 @@ After the manual demo passes, the next milestone-level step is either `/gsd-comp
 - _`runtime.set_passphrase` / `_get_passphrase` is the SQLCipher passphrase indirection — Plan 01-09 owns the bootstrap._ Production: `gekko serve` / `gekko run` CLI prompts the operator, verifies via `gekko.db.engine.verify_passphrase`, then calls `runtime.set_passphrase(...)` BEFORE any APScheduler / FastAPI route fires. Tests bypass entirely by passing `session_factory=` to `trigger_strategy_run`.
 - _`compile_strategy_from_chat` follows the same `<STRATEGY>{json}</STRATEGY>` regex pattern as the Researcher._ Single `query()` call with the Strategy Compiler system_prompt; parses the block; runtime fills `strategy_id` (uuid), `user_id`, `version=1`, `created_at`, `created_by_chat=True`. LLM only authors the user-visible fields (name, thesis, watchlist, hard_caps, mode, schedule_time).
 
+### Decisions from Plan 02-02 (added 2026-06-16)
+
+- _OrderGuard is a Brokerage subclass that composes via wrapping, not inheritance._ `class OrderGuard(Brokerage)` proxies `name` / `supports_fractional` / `is_paper` from the wrapped concrete broker and delegates all GET methods (`health_check`, `get_account`, `get_positions`, `get_quote`, `get_order_by_client_order_id`, `cancel_order`) unchanged. Only `place_order` interposes the 6 BLOCK checks. This pattern composes cleanly with future IBKR / Schwab / browser-fallback brokers (Phases 8 + 9).
+- _Strategy hydration uses a permissive synth fallback when strategies.payload_json is empty._ Phase-1 test seeds populate `payload_json=""` (a Plan 01-08 convention that pre-dates the Phase-2 Strategy-hydration requirement). Rather than rewriting 10+ test fixtures, `_load_strategy_for_executor` synthesizes a minimal Strategy from the proposal: `watchlist=[tp.ticker]` (universe pass), 100% position cap, 999999 loss cap, 999 trades/day, 100% sector cap. This preserves the Phase-1 walking-skeleton AND exercises the real `model_validate_json(row.payload_json)` path via the new Phase-2 integration tests (which DO populate payload_json).
+- _OrderGuard.__init__ accepts an optional proposal kwarg._ The executor passes the loaded `TradeProposal` so `check_qty_price_sanity` can read `target_notional_usd` at place_order time without re-querying the proposal row. When proposal is None (tests constructing OrderGuard directly), `check_qty_price_sanity` is bypassed.
+- _cap_rejection branch mirrors executor.market_closed verbatim._ Sibling `except OrderGuardRejected as exc:` to the existing `except BrokerOrderError`. Logs warning via structlog, opens a fresh transaction, `append_event(event_type='cap_rejection', payload=normalize_decimals({reject_code, reject_reason, ticker, proposal_id, check_name, **exc.extra}))`, then `transition_status(APPROVED -> FAILED)`. The transition is permitted by Phase-1's existing STATE_TRANSITIONS frozenset (D-30 reuses FAILED — no new states needed).
+- _Hard caps run in deterministic order: position_pct -> daily_loss -> trades_per_day -> sector_exposure._ First reject wins. Unit tests assert the ordering.
+- _Sector exposure check is best-effort._ If `broker._wrapped._client.get_asset(symbol).attributes` returns None or raises a shape mismatch (alpaca-py variants), the check logs and passes (not blocks). Operators see the warning in structlog; not a load-bearing security boundary per RESEARCH §1 Open Question.
+- _check_market_hours runs LAST in OrderGuard._ The executor's existing market_closed branch at line 188 fires FIRST when is_market_open returns False; OrderGuard's check is pure defense-in-depth for the millisecond-window between the executor check and the broker POST. In practice OrderGuard's check is always a no-op in the current pipeline.
+- _cap_rejection branch does NOT send a Slack DM._ Per PATTERNS §4 anti-pattern row 11 — would re-introduce the load-bearing-lock issue from Plan 01-08. Operator surface is the dashboard rejections panel + audit log. Slack rejection card is plan 02-05's surface (UI-SPEC §4a).
+- _OrderGuardRejected.extra is merged into cap_rejection payload via dict.setdefault._ Canonical keys (reject_code, reject_reason, ticker, proposal_id, check_name) are written first and protected from override. A buggy check that passes `ticker` in extra cannot corrupt the canonical payload field.
+- _The 6 monkeypatch sites in Phase-1 tests switched from `lambda _u: broker` to `lambda *a, **k: broker`._ The new `_build_broker(user_id, strategy, account_mode, *, proposal=None)` signature has 4 positional + 1 kwarg; tests stay signature-agnostic via *a / **k so future signature changes (plan 02-06 live branch) don't break them again.
+- _Plan executed across 3 executor sessions due to crashes (API 500 + wifi loss); no work was rewritten._ Task 1+2 were committed by the first executor (`a671c7f`) just before an API-500 at 79 tool uses. The second executor lost socket before any disk changes. The third executor inspected the surviving in-flight diff via `python -m py_compile` + targeted test runs, verified coherence, and committed Task 3 (`fa78387`) and Task 4 (`0a4a962`) as separate commits per crash-resilience guidance. All 6 integration tests passed first-try on the resumed run — confirming the in-flight diff from the API-500 crash was already coherent.
+
 ### Decisions from Plan 02-01 (added 2026-06-16)
 
 - _tenacity 9.1.4 added behind operator-verified PyPI legitimacy gate._ Maintainer "jd" / Julien Danjou; Apache-2.0; repo github.com/jd/tenacity. Used by plan 02-03 for tenacity-decorated GET retries on Alpaca read endpoints (EXEC-08). Per BLOCKER #4 / EXEC-03, place_order MUST stay zero-decorator — enforced by a grep gate in tests/unit/test_alpaca_retry.py + tests/unit/test_orderguard.py.
@@ -240,7 +255,11 @@ After the manual demo passes, the next milestone-level step is either `/gsd-comp
 *Updated: 2026-06-11 after Plan 01-08 complete*
 *Updated: 2026-06-11 after Plan 01-09 complete (automated tasks 1-4; Task 5 manual demo deferred to operator)*
 *Updated: 2026-06-16 after Plan 02-01 complete (Wave-1 foundations + BLOCKER #1 + BLOCKER #5 schema half)*
+*Updated: 2026-06-16 after Plan 02-02 complete (Wave-2 OrderGuard decorator + 6 BLOCK checks + cap_rejection branch — 3 commits across 3 executor sessions; 2 prior crashes recovered from disk)*
 
 ## Operator Next Steps
 
-- Continue Phase 2 by executing Plan 02-02 (OrderGuard paper) next. The Wave-0 stub at `tests/unit/test_orderguard.py` is in place and ready to replace `pytest.skip` with real assertions per plan 02-02's <behavior> block.
+- Continue Phase 2 by executing one of Wave 2's other plans OR move to Wave 3:
+  - **Plan 02-04** (RES-06/07 prompt-injection minimums) — Wave 2 sibling; depends_on: [02-01] only, can run in parallel with anything Wave-2-or-earlier. Wave-0 stubs at `tests/unit/test_decision_prompt_isolation.py` + `test_research_tools_wrapping.py` + `test_web_allowlist.py` + `test_prompt_injection_minimums.py` are ready.
+  - **Plan 02-03** (PDT + T+1 BLOCK + wash-sale FLAG + tenacity-on-GETs + EXEC-03 grep gate) — Wave 3; depends_on: [02-02]. Now unblocked since 02-02 just completed. Wave-0 stubs at `tests/unit/test_alpaca_retry.py` (partially landed — AST gates for OrderGuard + AlpacaBroker zero-decorator are real; tenacity-on-GETs portion still skipped) and `test_rate_limit_backoff.py` + `test_wash_sale.py` + `test_pdt_t1_detection.py`.
+- The 6 cap-rejection scenarios from Plan 02-02 should be exercised live against an Alpaca paper account once Plan 02-07's cassette test is built; until then the integration tests rely on MagicMock brokers.

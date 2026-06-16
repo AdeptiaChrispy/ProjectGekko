@@ -83,7 +83,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 02-02-PLAN.md — OrderGuard skeleton + universe / hard caps / qty×price / paper-live / kill-read / market-hours BLOCK checks
+- [x] 02-02-PLAN.md — OrderGuard skeleton + universe / hard caps / qty×price / paper-live / kill-read / market-hours BLOCK checks (complete 2026-06-16)
 - [ ] 02-04-PLAN.md — RES-06/07 prompt-injection minimums (WEB_ALLOWLIST + untrusted_content + Decision prompt)
 
 **Wave 3** *(blocked on Wave 2 completion)*
@@ -231,7 +231,7 @@ Plans:
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 1. Foundation & Vertical Slice | v1.0 | 9/9 | Complete ✅ | 2026-06-15 |
-| 2. OrderGuard & Real-Money Alpaca Live | v2.0 | 1/7 | Executing (Plan 02-01 complete) | 2026-06-16 |
+| 2. OrderGuard & Real-Money Alpaca Live | v2.0 | 2/7 | Executing (Plan 02-02 complete) | 2026-06-16 |
 | 3. Production HITL UX | v2.0 | 0/0 | Not started | - |
 | 4. Agent Architecture & Cost Bounds | v2.0 | 0/0 | Not started | - |
 | 5. Trust Ladder | v2.0 | 0/0 | Not started | - |
