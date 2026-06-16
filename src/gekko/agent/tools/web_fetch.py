@@ -112,15 +112,28 @@ async def web_fetch(args: dict[str, Any]) -> dict[str, Any]:
         resp.raise_for_status()
 
     body = resp.text
-    quote_text = body[:_QUOTE_CHARS]
+    quote_text_raw = body[:_QUOTE_CHARS]
     summary = _one_line_summary(body)
+
+    # D-39 / RES-07 Site 1 (Web tier): wrap content in <untrusted_content>
+    # markers BEFORE it crosses into the Researcher's tool result. The
+    # `source="web:{host}"` carries the parsed-URL hostname (lowercased)
+    # so the Decision agent can see provenance at the wrap boundary.
+    # Phase-2 D-40 warning text in DECISION_SYSTEM_PROMPT tells the LLM
+    # to treat anything inside these markers as DATA, not instructions.
+    host = (parsed.hostname or "").lower()
+    quote_text_wrapped = (
+        f'<untrusted_content source="web:{host}">\n'
+        f"{quote_text_raw}\n"
+        f"</untrusted_content>"
+    )
 
     snippet = EvidenceSnippet(
         source_type="web_fetch",
         source_url=url,
         fetched_at=datetime.now(UTC).isoformat(),
         summary=summary,
-        quote_text=quote_text,
+        quote_text=quote_text_wrapped,
     )
 
     ctx.budget.record_call(tokens=_TOKEN_COST)

@@ -49,6 +49,15 @@ def _build_evidence_from_row(row: dict[str, Any]) -> EvidenceSnippet:
 
     Finnhub rows carry ``headline``, ``summary``, ``url``, ``datetime``
     (epoch seconds), and ``source`` keys.
+
+    Per Phase-2 D-39 / RES-07 the article body (the ``summary`` field
+    from Finnhub, which is third-party news prose) is wrapped in
+    ``<untrusted_content source="finnhub_news">...</untrusted_content>``
+    markers BEFORE it reaches the Researcher's tool result. The
+    ``headline`` stays unwrapped — it becomes the EvidenceSnippet
+    ``summary`` field which is Researcher-authored editorial summary
+    per the EvidenceSnippet schema docstring (D-39 News tier: wrap
+    article body, not headline).
     """
     headline = (row.get("headline") or "").strip()
     summary_text = (row.get("summary") or "").strip()
@@ -62,12 +71,27 @@ def _build_evidence_from_row(row: dict[str, Any]) -> EvidenceSnippet:
         if epoch
         else datetime.now(UTC).isoformat()
     )
+
+    # D-39 / RES-07 Site 1 (News tier): wrap article body in
+    # <untrusted_content source="finnhub_news"> markers. If the
+    # article has no body text, leave quote_text as None — there's
+    # nothing untrusted to mark up.
+    if summary_text:
+        body_clamped = summary_text[:2000]
+        quote_text_wrapped: str | None = (
+            f'<untrusted_content source="finnhub_news">\n'
+            f"{body_clamped}\n"
+            f"</untrusted_content>"
+        )
+    else:
+        quote_text_wrapped = None
+
     return EvidenceSnippet(
         source_type="finnhub_news",
         source_url=url,
         fetched_at=fetched_at,
         summary=summary[:2000],
-        quote_text=summary_text[:2000] if summary_text else None,
+        quote_text=quote_text_wrapped,
     )
 
 
