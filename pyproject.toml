@@ -38,6 +38,7 @@ dependencies = [
     "tzdata",
     "typer>=0.12",
     "aiosqlite>=0.22.1",
+    "tenacity>=9.1,<10",
 ]
 
 [project.optional-dependencies]
