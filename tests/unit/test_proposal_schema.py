@@ -56,6 +56,8 @@ def _trade_proposal_kwargs(**overrides: object) -> dict[str, object]:
         "ticker": "NVDA",
         "side": "buy",
         "qty": Decimal("5"),
+        # Plan 02-01 Task 3 (D-27): LLM-authored dollar intent for OrderGuard.
+        "target_notional_usd": Decimal("6173.00"),  # ~ 5 * 1234.56
         "order_type": "limit",
         "limit_price": Decimal("1234.56"),
         "stop_price": None,
@@ -64,6 +66,8 @@ def _trade_proposal_kwargs(**overrides: object) -> dict[str, object]:
         "evidence": _evidence(3),
         "alternatives_considered": _alts(1),
         "client_order_id": "a" * 32,
+        # Plan 02-01 Task 3 (BLOCKER #5): account_mode is required + runtime-stamped.
+        "account_mode": "PAPER",
     }
     base.update(overrides)
     return base

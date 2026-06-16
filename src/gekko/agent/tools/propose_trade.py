@@ -57,12 +57,28 @@ def _build_propose_trade_schema() -> dict[str, Any]:
        JSON Schema dict with ``properties``, ``required``, ``$defs``.
     2. Remove runtime-computed fields from both ``properties`` and
        ``required``: ``user_id``, ``strategy_name``, ``decision_id``,
-       ``client_order_id``.
+       ``client_order_id``, ``account_mode`` (BLOCKER #5 — stamped by
+       ProposalWriter from strategy.mode at proposal-build time to close
+       the TOCTOU window; the LLM cannot author it), and ``wash_sale_flag``
+       (populated by OrderGuard runtime in plan 02-03).
 
     The remaining schema is what the LLM sees in its tool-use prompt.
+
+    NB: ``target_notional_usd`` (D-27) is LLM-authored and NOT in
+    ``_runtime_only`` — the Decision agent declares its dollar intent and
+    OrderGuard checks ``qty * ref_price`` against it.
     """
     schema: dict[str, Any] = dict(TradeProposal.model_json_schema())
-    _runtime_only = ("user_id", "strategy_name", "decision_id", "client_order_id")
+    _runtime_only = (
+        "user_id",
+        "strategy_name",
+        "decision_id",
+        "client_order_id",
+        # BLOCKER #5 — account_mode is runtime-stamped from strategy state.
+        "account_mode",
+        # Plan 02-03 — OrderGuard populates this flag, not the LLM.
+        "wash_sale_flag",
+    )
     props = dict(schema.get("properties", {}))
     for f in _runtime_only:
         props.pop(f, None)
@@ -81,7 +97,9 @@ _PROPOSE_TRADE_SCHEMA: dict[str, Any] = _build_propose_trade_schema()
         "Propose a trade for human approval. Requires 3-5 evidence snippets, "
         "at least one alternative considered, and a confidence score in [0,1]. "
         "Ticker MUST be in the strategy's watchlist. The decision_id, "
-        "user_id, strategy_name, and client_order_id are filled by the runtime."
+        "user_id, strategy_name, client_order_id, and account_mode are filled "
+        "by the runtime. Provide `target_notional_usd` as your dollar intent — "
+        "OrderGuard rejects if `qty * ref_price` drifts > 2% from this value."
     ),
     _PROPOSE_TRADE_SCHEMA,
 )

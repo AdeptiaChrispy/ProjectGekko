@@ -81,6 +81,7 @@ def _llm_trade_payload(
     ticker: str = "NVDA",
     side: str = "buy",
     qty: str = "10",
+    target_notional_usd: str = "1800.00",
     order_type: str = "limit",
     limit_price: str | None = "180.00",
     confidence: str = "0.75",
@@ -88,13 +89,15 @@ def _llm_trade_payload(
     """A minimal LLM-emitted TradeProposal payload (D-11 / D-12).
 
     Carries the LLM-visible fields only — ``user_id``,
-    ``strategy_name``, ``decision_id``, and ``client_order_id`` are
-    filled by ``write_proposal``.
+    ``strategy_name``, ``decision_id``, ``client_order_id``, and
+    ``account_mode`` are filled by ``write_proposal``. The LLM authors
+    ``target_notional_usd`` (D-27) as its dollar intent.
     """
     return {
         "ticker": ticker,
         "side": side,
         "qty": qty,
+        "target_notional_usd": target_notional_usd,
         "order_type": order_type,
         "limit_price": limit_price,
         "rationale": "Earnings beat + analyst upgrade aligns with thesis.",

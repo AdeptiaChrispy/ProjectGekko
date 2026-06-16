@@ -26,7 +26,7 @@ References:
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -89,6 +89,11 @@ class TradeProposal(BaseModel):
     ticker: str = Field(..., min_length=1, max_length=16)
     side: OrderSide
     qty: Decimal = Field(..., gt=Decimal("0"))
+    # D-27 (Plan 02-01 Task 3): LLM-authored dollar intent for OrderGuard's
+    # qty×price drift check. OrderGuard rejects with reject_code='qty_price_drift'
+    # if `qty * ref_price` strays > 2% from this value (RESEARCH §1). The 2%
+    # drift bound is OrderGuard runtime policy, NOT a schema validator.
+    target_notional_usd: Decimal = Field(..., gt=Decimal("0"))
     order_type: OrderType = OrderType.LIMIT
     limit_price: Decimal | None = None
     stop_price: Decimal | None = None
@@ -99,6 +104,19 @@ class TradeProposal(BaseModel):
         ..., min_length=1
     )
     client_order_id: str = Field(..., min_length=32, max_length=32)
+    # BLOCKER #5 (Plan 02-01 Task 3): TOCTOU closure between proposal-gen (T0)
+    # and approve-click (T1). ProposalWriter stamps this from strategy.mode +
+    # strategy_metadata.live_mode_eligible AT PROPOSAL-BUILD TIME; downstream
+    # callers (Slack approve handler, executor) read account_mode directly
+    # from the proposal row and NEVER re-derive from strategy state. The
+    # LLM does NOT author this field — see _runtime_only in
+    # gekko.agent.tools.propose_trade.
+    account_mode: Literal["PAPER", "LIVE"] = Field(...)
+    # Forward-compat slot for plan 02-03's wash-sale FLAG path (EXEC-09).
+    # When OrderGuard detects an open wash-sale replay window, it populates
+    # this dict (NOT a sub-model — keeps the schema flexible while plan 02-03
+    # locks the key set in tests/unit/test_wash_sale_flag.py).
+    wash_sale_flag: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def _validate_price_for_order_type(self) -> TradeProposal:

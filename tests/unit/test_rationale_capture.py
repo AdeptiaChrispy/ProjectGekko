@@ -77,6 +77,8 @@ async def test_proposal_event_contains_full_rationale(
         "ticker": "NVDA",
         "side": "buy",
         "qty": "10",
+        # Plan 02-01 Task 3: D-27 LLM-authored dollar intent.
+        "target_notional_usd": "1800.00",
         "order_type": "limit",
         "limit_price": "180.00",
         "rationale": "Comprehensive thesis: earnings + sector + 10-Q + price-action.",

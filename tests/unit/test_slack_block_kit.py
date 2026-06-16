@@ -74,6 +74,7 @@ def _sample_trade_proposal(
     side: str = "buy",
     order_type: str = "limit",
     limit_price: str | None = "1234.56",
+    account_mode: str = "PAPER",
 ) -> TradeProposal:
     return TradeProposal(
         user_id="U_TEST",
@@ -82,6 +83,8 @@ def _sample_trade_proposal(
         ticker=ticker,
         side=side,
         qty=Decimal("5"),
+        # Plan 02-01 Task 3: target_notional_usd (D-27) + account_mode (BLOCKER #5).
+        target_notional_usd=Decimal("6172.80"),  # ~ 5 * 1234.56
         order_type=order_type,
         limit_price=Decimal(limit_price) if limit_price is not None else None,
         stop_price=None,
@@ -102,6 +105,7 @@ def _sample_trade_proposal(
             ),
         ],
         client_order_id="a" * 32,
+        account_mode=account_mode,  # type: ignore[arg-type]
     )
 
 
@@ -352,6 +356,7 @@ def test_mrkdwn_metacharacters_in_llm_fields_are_escaped() -> None:
         ticker="NVDA",
         side="buy",
         qty=Decimal("5"),
+        target_notional_usd=Decimal("6172.80"),
         order_type="limit",
         limit_price=Decimal("1234.56"),
         stop_price=None,
@@ -381,6 +386,7 @@ def test_mrkdwn_metacharacters_in_llm_fields_are_escaped() -> None:
             AlternativeConsidered(description=nasty, why_rejected=nasty),
         ],
         client_order_id="a" * 32,
+        account_mode="PAPER",
     )
     blocks = build_proposal_card(p)
     # Walk the raw Python strings (not the JSON-encoded payload — JSON adds
@@ -511,6 +517,7 @@ def test_card_rationale_truncated_when_long() -> None:
         ticker="NVDA",
         side="buy",
         qty=Decimal("5"),
+        target_notional_usd=Decimal("6172.80"),
         order_type="limit",
         limit_price=Decimal("1234.56"),
         stop_price=None,
@@ -524,6 +531,7 @@ def test_card_rationale_truncated_when_long() -> None:
             ),
         ],
         client_order_id="a" * 32,
+        account_mode="PAPER",
     )
     blocks = build_proposal_card(p)
     # Locate the Rationale section block

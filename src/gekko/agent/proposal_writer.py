@@ -180,12 +180,21 @@ async def _write_trade(
     #    errors before we touch the DB. We hand the LLM dict a placeholder
     #    client_order_id (32 hex chars) so the model_validate succeeds; the
     #    real id replaces this once we know the ticker is valid.
+    #
+    # BLOCKER #5 / Plan 02-01 Task 3: stamp ``account_mode`` from
+    # ``strategy.mode`` AT PROPOSAL-BUILD TIME (T0). Plan 02-06 Task 2
+    # deepens this to read ``strategy_metadata.live_mode_eligible`` and
+    # gate LIVE behind the eligibility flag — for Phase-1 paper-only
+    # operation, paper strategies stamp PAPER. The LLM does NOT author
+    # this field (it is in ``_runtime_only`` in propose_trade.py).
+    account_mode = "LIVE" if strategy.mode == "live" else "PAPER"
     merged: dict[str, Any] = {
         **payload,
         "user_id": user_id,
         "strategy_name": strategy.name,
         "decision_id": decision_id,
         "client_order_id": "0" * 32,
+        "account_mode": account_mode,
     }
     tp = TradeProposal.model_validate(merged)
 

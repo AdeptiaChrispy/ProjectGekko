@@ -51,6 +51,8 @@ def _make_trade_proposal() -> TradeProposal:
         ticker="NVDA",
         side="buy",
         qty=Decimal("5"),
+        # Plan 02-01 Task 3: target_notional_usd (D-27) + account_mode (BLOCKER #5).
+        target_notional_usd=Decimal("6172.80"),
         order_type="limit",
         limit_price=Decimal("1234.56"),
         rationale="Bullish on AI infra leaders.",
@@ -82,6 +84,7 @@ def _make_trade_proposal() -> TradeProposal:
             ),
         ],
         client_order_id="a" * 32,
+        account_mode="PAPER",
     )
 
 

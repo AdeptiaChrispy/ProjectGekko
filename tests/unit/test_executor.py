@@ -58,6 +58,7 @@ def _make_trade_proposal(
     client_order_id: str | None = None,
     order_type: str = "limit",
     limit_price: Decimal | None = Decimal("1234.56"),
+    account_mode: str = "PAPER",
 ) -> TradeProposal:
     return TradeProposal(
         user_id=user_id,
@@ -66,6 +67,8 @@ def _make_trade_proposal(
         ticker="NVDA",
         side="buy",
         qty=Decimal("5"),
+        # Plan 02-01 Task 3: target_notional_usd (D-27) + account_mode (BLOCKER #5).
+        target_notional_usd=Decimal("6172.80"),
         order_type=order_type,
         limit_price=limit_price,
         rationale="Bullish on AI infrastructure.",
@@ -97,6 +100,7 @@ def _make_trade_proposal(
             ),
         ],
         client_order_id=client_order_id or "a" * 32,
+        account_mode=account_mode,  # type: ignore[arg-type]
     )
 
 
