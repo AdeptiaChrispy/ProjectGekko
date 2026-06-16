@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Safety & Trust
 status: executing
-last_updated: "2026-06-16T21:45:00.000Z"
-last_activity: 2026-06-16 -- Plan 02-02 complete (Wave-2 OrderGuard decorator + 6 BLOCK checks + cap_rejection branch)
+last_updated: "2026-06-16T22:19:26.652Z"
+last_activity: 2026-06-16 -- Plan 02-04 complete (Wave-2 RES-06/07 prompt-injection minimums: WEB_ALLOWLIST module + <untrusted_content> wrap + D-40 warning + directory-wide AST walk)
 progress:
   total_phases: 2
   completed_phases: 1
   total_plans: 16
-  completed_plans: 11
-  percent: 63
+  completed_plans: 12
+  percent: 50
 ---
 
 # Project State: Project Gekko
@@ -26,9 +26,9 @@ progress:
 ## Current Position
 
 Phase: 02 (OrderGuard & Real-Money Alpaca Live (Safety Floor)) — EXECUTING
-Plan: 3 of 7 (Plans 02-01 + 02-02 closed; next is Wave 2's other plan 02-04 OR Wave 3's plan 02-03)
-Status: Executing Phase 02
-Last activity: 2026-06-16 -- Plan 02-02 complete (Wave-2 OrderGuard decorator + 6 BLOCK checks + cap_rejection branch)
+Plan: 4 of 7 (Plans 02-01 + 02-02 + 02-04 closed; Wave 2 done; next is Wave 3's plan 02-03 — Alpaca resilience + retry policy)
+Status: Ready to execute
+Last activity: 2026-06-16 -- Plan 02-04 complete (Wave-2 RES-06/07 prompt-injection minimums: WEB_ALLOWLIST module + <untrusted_content> wrap + D-40 warning + directory-wide AST walk)
 
 ## Performance Metrics
 
@@ -214,6 +214,18 @@ After the manual demo passes, the next milestone-level step is either `/gsd-comp
 - _`runtime.set_passphrase` / `_get_passphrase` is the SQLCipher passphrase indirection — Plan 01-09 owns the bootstrap._ Production: `gekko serve` / `gekko run` CLI prompts the operator, verifies via `gekko.db.engine.verify_passphrase`, then calls `runtime.set_passphrase(...)` BEFORE any APScheduler / FastAPI route fires. Tests bypass entirely by passing `session_factory=` to `trigger_strategy_run`.
 - _`compile_strategy_from_chat` follows the same `<STRATEGY>{json}</STRATEGY>` regex pattern as the Researcher._ Single `query()` call with the Strategy Compiler system_prompt; parses the block; runtime fills `strategy_id` (uuid), `user_id`, `version=1`, `created_at`, `created_by_chat=True`. LLM only authors the user-visible fields (name, thesis, watchlist, hard_caps, mode, schedule_time).
 
+### Decisions from Plan 02-04 (added 2026-06-16)
+
+- _WEB_ALLOWLIST is the single source of truth at gekko.research.allowlist._ Phase-1's hardcoded `ALLOWED_DOMAINS` frozenset in `src/gekko/agent/tools/web_fetch.py` is now an `is`-identity alias for `gekko.research.allowlist.WEB_ALLOWLIST` (verified by `assert wf.ALLOWED_DOMAINS is al.WEB_ALLOWLIST` test). No hardcoded duplicate list survives. Adding / removing entries is a P4 operator-extensible per-user-override surface — out of scope for plan 02-04 per D-39.
+- _16-entry curated seed locked from RESEARCH §8._ sec.gov, finra.org, reuters.com, bloomberg.com, ft.com, wsj.com, marketwatch.com, barrons.com, investors.com, finance.yahoo.com, seekingalpha.com, alpaca.markets, finnhub.io, alphavantage.co, businesswire.com, alphaquery.com. Size locked at exactly 16 in the test — accidental adds during P2 fail loudly. Phase-2 list is a SUPERSET of Phase-1's 12-domain list (adds finra.org, finnhub.io, alphavantage.co, alpaca.markets per D-39 trust-tier framework).
+- _Parent-suffix wildcards: WEB_ALLOWLIST_PARENT_SUFFIXES = frozenset({.gov, .edu})._ Right-to-left parent walk in `is_host_allowed` closes T-02-04-P-04 crafted-subdomain spoofing — `is_host_allowed("sec.gov.evil.example.com")` returns False because the parent walk traverses to "example.com" / "com" first, never to "sec.gov".
+- _Three trust tiers per D-39 (concrete file mapping):_ (1) **Structured-API** = `gekko.agent.tools.alpaca_data` + `gekko.agent.tools.edgar` — source bytes verified to contain ZERO `<untrusted_content` references. (2) **News** = `gekko.agent.tools.finnhub_news._build_evidence_from_row` — wraps `summary_text[:2000]` in `<untrusted_content source="finnhub_news">` when non-empty; headline stays unwrapped → `EvidenceSnippet.summary`. (3) **Web** = `gekko.agent.tools.web_fetch.web_fetch` — host-allowlist-filtered THEN wrapped in `<untrusted_content source="web:{lowercased-host}">` after `_QUOTE_CHARS` truncation.
+- _D-40 verbatim warning paragraphs appended to DECISION_SYSTEM_PROMPT TRUST BOUNDARY block (header now "D-10 / D-40 / RES-06")._ The verbatim text is snapshot-locked as Python string constants `D40_WARNING_CORE` + `D40_IMPERATIVE_SIGNATURE` in `tests/unit/test_prompt_injection_minimums.py` — any paraphrase fails the test, forcing a coordinated CONTEXT.md amendment. Phase-1 D-10 lines preserved (additive, not replacing) — verified by separate tests.
+- _BLOCKER #6 hardening shipped via directory-wide AST walk over src/gekko/agent/._ The load-bearing isolation assertion in `tests/unit/test_decision_prompt_isolation.py` walks every `.py` file under `src/gekko/agent/`, locates every function whose name matches `_run_decision` / `_build_decision_prompt` / `build_decision_prompt` / `_invoke_decision` / `decision_prompt_*`, and asserts no `ast.Name` / `ast.Attribute` / string-`Constant` node references the forbidden identifiers `tool_result`, `tool_use_result`, `raw_transcript`, `raw_tool_output`, `tool_outputs`, `tool_use_blocks`. A future module that pre-processes raw tool output before the Decision boundary would fail this test even if `_run_decision` itself stays clean.
+- _Pydantic structural firewall (Layer 2 of the RES-06 defense)._ `build_decision_prompt(strategy: Strategy, brief: ResearchBrief)` calls `brief.model_dump_json(indent=2)`. A forged raw `dict` masquerading as ResearchBrief has no `.model_dump_json` method, so the call raises `AttributeError` — proving the trust boundary is STRUCTURAL, not just documented. Test asserts `pytest.raises((AttributeError, TypeError))` on the forged-dict call.
+- _Wrapped quote_text round-trips through canonical_json cleanly._ `<` and `>` are preserved verbatim by JSON encoding (not escaped); the canonical-subset shape is unchanged. Protects the audit-chain hash from drifting when D-39 wrapping is added.
+- _NOT shipped per D-39 P4 boundary (explicitly deferred)._ Suspicious-content pattern detection (regex for `SYSTEM:` / `OVERRIDE:` / `ignore previous instructions`) + structured `injected_content_flags` field on ResearchBrief + full red-team battery + per-user operator-extensible allowlist override. P4 scope per CONTEXT.md Deferred Ideas.
+
 ### Decisions from Plan 02-02 (added 2026-06-16)
 
 - _OrderGuard is a Brokerage subclass that composes via wrapping, not inheritance._ `class OrderGuard(Brokerage)` proxies `name` / `supports_fractional` / `is_paper` from the wrapped concrete broker and delegates all GET methods (`health_check`, `get_account`, `get_positions`, `get_quote`, `get_order_by_client_order_id`, `cancel_order`) unchanged. Only `place_order` interposes the 6 BLOCK checks. This pattern composes cleanly with future IBKR / Schwab / browser-fallback brokers (Phases 8 + 9).
@@ -256,6 +268,7 @@ After the manual demo passes, the next milestone-level step is either `/gsd-comp
 *Updated: 2026-06-11 after Plan 01-09 complete (automated tasks 1-4; Task 5 manual demo deferred to operator)*
 *Updated: 2026-06-16 after Plan 02-01 complete (Wave-1 foundations + BLOCKER #1 + BLOCKER #5 schema half)*
 *Updated: 2026-06-16 after Plan 02-02 complete (Wave-2 OrderGuard decorator + 6 BLOCK checks + cap_rejection branch — 3 commits across 3 executor sessions; 2 prior crashes recovered from disk)*
+*Updated: 2026-06-16 after Plan 02-04 complete (Wave-2 RES-06/07 prompt-injection minimums — WEB_ALLOWLIST module + <untrusted_content> wrap at web_fetch + finnhub_news + D-40 warning in DECISION_SYSTEM_PROMPT + directory-wide AST walk over src/gekko/agent/ for RES-06 isolation hardening)*
 
 ## Operator Next Steps
 
