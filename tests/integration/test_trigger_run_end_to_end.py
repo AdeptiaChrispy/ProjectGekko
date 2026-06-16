@@ -140,6 +140,8 @@ def _trade_tool_payload() -> dict[str, Any]:
         "ticker": "NVDA",
         "side": "buy",
         "qty": "5",
+        # Plan 02-01 Task 3 (D-27): LLM-authored dollar intent.
+        "target_notional_usd": "6172.80",
         "order_type": "limit",
         "limit_price": "1234.56",
         "rationale": "Catalyst + research brief support a small position.",
