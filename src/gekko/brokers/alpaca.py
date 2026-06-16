@@ -38,8 +38,10 @@ from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockLatestQuoteRequest
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderSide as AlpacaOrderSide
+from alpaca.trading.enums import QueryOrderStatus
 from alpaca.trading.enums import TimeInForce as AlpacaTimeInForce
 from alpaca.trading.requests import (
+    GetOrdersRequest,
     LimitOrderRequest,
     MarketOrderRequest,
     StopOrderRequest,
@@ -240,6 +242,39 @@ class AlpacaBroker(Brokerage):
         """
         await asyncio.to_thread(self._client.cancel_order_by_id, broker_order_id)
         return True
+
+    @retry_on_rate_limit
+    async def get_orders_open(self) -> list[dict[str, Any]]:
+        """Return open orders for this account. P2 kill switch uses this.
+
+        Phase-2 plan 02-05 (EXEC-06 / D-37 / RESEARCH §3). Uses alpaca-py's
+        ``TradingClient.get_orders(filter=GetOrdersRequest(status=OPEN, limit=500))``
+        via ``asyncio.to_thread`` since alpaca-py 0.43 has no native async API.
+
+        EXEC-08: wrapped with ``@retry_on_rate_limit`` — this is a GET; 429s
+        on the read path are retried with exponential backoff. The cancel
+        path (``cancel_all_open_orders``) is DELIBERATELY undecorated per
+        RESEARCH §6 Open Question #1.
+        """
+        req = GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=500)
+        orders = await asyncio.to_thread(self._client.get_orders, filter=req)
+        return [_model_dump(o) for o in orders]
+
+    async def cancel_all_open_orders(self) -> list[dict[str, Any]]:
+        """Cancel ALL open orders. Returns the broker's per-order status list.
+
+        Phase-2 plan 02-05 (EXEC-06 / D-37 / RESEARCH §3 verbatim). Uses
+        alpaca-py's ``TradingClient.cancel_orders()`` single-HTTP-call batch
+        cancel via ``asyncio.to_thread``.
+
+        Per RESEARCH §6 Open Question #1: this method is INTENTIONALLY NOT
+        decorated with ``@retry_on_rate_limit``. A 429 retry storm during a
+        kill is the worst possible failure mode — the kill switch's
+        ``asyncio.gather`` + 4s timeout is the failure-tolerant scaffold.
+        Tenacity here would convert a 429 into ~5 minutes of retries.
+        """
+        responses = await asyncio.to_thread(self._client.cancel_orders)
+        return [_model_dump(r) for r in responses]
 
 
 # ---------------------------------------------------------------------------

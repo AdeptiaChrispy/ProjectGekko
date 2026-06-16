@@ -183,6 +183,31 @@ class Brokerage(ABC):
     async def cancel_order(self, broker_order_id: str) -> bool:
         """Cancel an open order by broker_order_id. Returns True on success."""
 
+    @abstractmethod
+    async def get_orders_open(self) -> list[dict[str, Any]]:
+        """Return open orders for this account. P2 kill switch uses this.
+
+        Phase-2 addition (plan 02-05) for the kill switch (EXEC-06 / D-37).
+        Returns each open order as a JSON-friendly dict (alpaca-py's
+        ``Order.model_dump(mode='json')`` shape — id, symbol, side, qty,
+        order_type, status, etc.).
+        """
+
+    @abstractmethod
+    async def cancel_all_open_orders(self) -> list[dict[str, Any]]:
+        """Cancel ALL open orders for this account. Returns the broker's per-order status list.
+
+        Phase-2 addition (plan 02-05) for the kill switch (EXEC-06 / D-37).
+        Concrete brokers SHOULD use a single-HTTP-call batch cancel where
+        the underlying SDK supports it (alpaca-py ``TradingClient.cancel_orders()``)
+        rather than iterating per-order.
+
+        Per RESEARCH §6 Open Question #1 (verbatim): this method MUST NOT
+        be decorated with ``@retry_on_rate_limit`` — a 429 retry storm
+        during a kill is the worst possible failure mode; the kill switch
+        owns failure-tolerance via ``asyncio.gather`` + 4s timeout.
+        """
+
 
 __all__: tuple[str, ...] = (
     "Brokerage",
