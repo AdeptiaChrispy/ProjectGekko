@@ -65,12 +65,26 @@ def _make_api_error(status_code: int, body: str = "") -> APIError:
     """Build an ``APIError`` whose ``status_code`` property returns the
     requested code.
 
-    alpaca-py 0.43's ``APIError.status_code`` is a property that reads
-    from ``self._http_error.response.status_code`` — we synthesize a
-    minimal http_error so the predicate's ``getattr(exc, 'status_code',
-    None)`` check sees the right value.
+    Implementation detail: Phase-1's ``tests/unit/test_alpaca_place_order.py``
+    mutates ``APIError.status_code`` AT THE CLASS LEVEL via
+    ``type(api_err).status_code = property(lambda self: 422)``, which
+    permanently rebinds the property on the alpaca-py class for the
+    remainder of the pytest session. To avoid relying on the (potentially
+    mutated) parent property, we build a fresh per-call subclass that
+    declares its own ``status_code`` property at class definition time
+    — this shadows whatever Phase-1's test left on ``APIError``. The
+    isinstance check ``isinstance(exc, APIError)`` in
+    :func:`_is_rate_limit` still passes because the subclass inherits
+    from APIError.
     """
-    return APIError(body or "synthetic", http_error=_FakeHTTPError(status_code))
+    code = status_code
+
+    class _PinnedAPIError(APIError):
+        @property
+        def status_code(self) -> int:
+            return code
+
+    return _PinnedAPIError(body or "synthetic")
 
 
 # ---------------------------------------------------------------------------
