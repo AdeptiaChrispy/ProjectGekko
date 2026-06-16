@@ -28,6 +28,7 @@ from claude_agent_sdk import tool
 from gekko.agent.tools.context import get_tool_context
 from gekko.config import get_settings
 from gekko.logging_config import get_logger
+from gekko.research.allowlist import WEB_ALLOWLIST, is_host_allowed
 from gekko.schemas.research import EvidenceSnippet
 
 log = get_logger(__name__)
@@ -35,52 +36,26 @@ log = get_logger(__name__)
 #: Token-cost estimate per ``web_fetch`` invocation.
 _TOKEN_COST: int = 500
 
-#: P1 minimal allowlist — curated finance-news/data domains per RESEARCH
-#: §Open Question 3. Each entry is matched against the parsed host as
-#: either an exact host match OR a parent suffix (so ``reuters.com``
-#: matches ``www.reuters.com`` and ``finance.reuters.com``).
-#:
-#: P4 hardening will move this list to config + add per-source content
-#: sanitization (the EvidenceSnippet.quote_text wrapper).
-ALLOWED_DOMAINS: frozenset[str] = frozenset(
-    {
-        "reuters.com",          # major financial news wire
-        "bloomberg.com",        # market data + news
-        "ft.com",               # Financial Times
-        "wsj.com",              # Wall Street Journal
-        "finance.yahoo.com",    # Yahoo Finance — quotes/news (Yahoo fallback)
-        "seekingalpha.com",     # crowdsourced equity analysis
-        "marketwatch.com",      # consumer-facing market news
-        "barrons.com",          # weekly market analysis
-        "investors.com",        # IBD — fundamental + technical analysis
-        "sec.gov",              # SEC filings (additional surface beyond EDGAR tool)
-        "alphaquery.com",       # equity options/volatility data
-        "businesswire.com",     # press-release wire (issuer-direct)
-    }
-)
+#: Backward-compat alias for Phase-1 callers. The canonical source of
+#: truth is :data:`gekko.research.allowlist.WEB_ALLOWLIST` (Plan 02-04
+#: Task 1 / D-39). Existing Phase-1 code paths that imported
+#: ``ALLOWED_DOMAINS`` continue to resolve to the same frozenset object
+#: — :data:`gekko.research.allowlist.WEB_ALLOWLIST` is.
+ALLOWED_DOMAINS: frozenset[str] = WEB_ALLOWLIST
 
 #: Max body chars to include in the returned EvidenceSnippet.quote_text.
 _QUOTE_CHARS: int = 2000
 
 
 def _host_is_allowed(host: str | None) -> bool:
-    """Return True if ``host`` (lowercased) is in the P1 allowlist.
+    """Backward-compat shim — delegates to :func:`gekko.research.allowlist.is_host_allowed`.
 
-    Matches both exact host (``reuters.com``) and parent suffix
-    (``www.reuters.com`` → matches ``reuters.com`` via the loop below).
+    Phase-2 D-39 consolidated the host-allowlist check at
+    ``gekko.research.allowlist``. This name is kept so any monkey-patch
+    test seam in Phase-1 still resolves. New code should import
+    :func:`is_host_allowed` from :mod:`gekko.research.allowlist`.
     """
-    if not host:
-        return False
-    h = host.lower().strip()
-    if h in ALLOWED_DOMAINS:
-        return True
-    # Walk the parent-suffix chain: "www.reuters.com" -> "reuters.com" -> "com".
-    parts = h.split(".")
-    for i in range(1, len(parts)):
-        parent = ".".join(parts[i:])
-        if parent in ALLOWED_DOMAINS:
-            return True
-    return False
+    return is_host_allowed(host)
 
 
 def _one_line_summary(body: str) -> str:
@@ -117,7 +92,7 @@ async def web_fetch(args: dict[str, Any]) -> dict[str, Any]:
     url = str(args["url"]).strip()
 
     parsed = urlparse(url)
-    if not _host_is_allowed(parsed.hostname):
+    if not is_host_allowed(parsed.hostname):
         log.warning(
             "research.web_fetch.off_allowlist",
             url=url,
