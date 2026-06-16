@@ -45,6 +45,7 @@ from alpaca.trading.requests import (
     StopOrderRequest,
 )
 
+from gekko.brokers._retry import retry_on_rate_limit
 from gekko.brokers.base import Brokerage, OrderRequest, OrderResult
 from gekko.core.errors import BrokerConfigError, BrokerOrderError
 from gekko.core.types import OrderSide, OrderType, TimeInForce
@@ -134,16 +135,27 @@ class AlpacaBroker(Brokerage):
             return False
         return True
 
+    @retry_on_rate_limit
     async def get_account(self) -> dict[str, Any]:
-        """Return the Alpaca account state as a JSON-serializable dict."""
+        """Return the Alpaca account state as a JSON-serializable dict.
+
+        EXEC-08: wrapped with ``@retry_on_rate_limit`` — 429 rate-limit
+        errors are retried with exponential backoff + jitter, up to 6
+        total attempts. Non-429 errors propagate immediately.
+        """
         acct = await asyncio.to_thread(self._client.get_account)
         return _model_dump(acct)
 
+    @retry_on_rate_limit
     async def get_positions(self) -> list[dict[str, Any]]:
-        """Return the list of open positions (empty list if none)."""
+        """Return the list of open positions (empty list if none).
+
+        EXEC-08: wrapped with ``@retry_on_rate_limit``.
+        """
         positions = await asyncio.to_thread(self._client.get_all_positions)
         return [_model_dump(p) for p in positions]
 
+    @retry_on_rate_limit
     async def get_quote(self, symbol: str) -> dict[str, Any]:
         """Return the latest quote for ``symbol``.
 
@@ -197,6 +209,7 @@ class AlpacaBroker(Brokerage):
 
         return _order_to_result(order, req.client_order_id)
 
+    @retry_on_rate_limit
     async def get_order_by_client_order_id(self, client_order_id: str) -> OrderResult | None:
         """Look up an order by its deterministic client_order_id.
 
@@ -204,6 +217,12 @@ class AlpacaBroker(Brokerage):
         Pitfall 4 escape hatch), so we never want it to raise upward and
         mask a 422-handling path. If the broker is genuinely down, the
         caller's place_order will surface that separately.
+
+        EXEC-08: wrapped with ``@retry_on_rate_limit`` — 429s on the lookup
+        path are retried with exponential backoff. Note: the outer
+        ``try/except Exception: return None`` swallows the FINAL exception
+        after retries are exhausted, so the probe still returns None on a
+        sustained-429 broker.
         """
         try:
             order = await asyncio.to_thread(
