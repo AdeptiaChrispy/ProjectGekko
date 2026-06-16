@@ -70,9 +70,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from gekko.audit.canonical import normalize_decimals
 from gekko.audit.log import append_event
+from gekko.brokers.base import OrderRequest
 from gekko.core.errors import ProposalRejected
 from gekko.core.ids import compute_client_order_id
 from gekko.db.models import Proposal as ProposalRow
+from gekko.execution.checks._wash_sale import flag_wash_sale
 from gekko.logging_config import get_logger
 from gekko.schemas.proposal import NoActionProposal, TradeProposal
 from gekko.schemas.strategy import Strategy
@@ -238,7 +240,33 @@ async def _write_trade(
         qty=tp.qty,
         ticker=tp.ticker,
     )
-    tp = tp.model_copy(update={"client_order_id": client_order_id})
+    # Plan 02-03 / D-28 + EXEC-09: stamp the wash-sale FLAG at proposal-
+    # build time (T0). The 30-day lookback over local fill events surfaces
+    # a same-ticker prior fill in the HITL Slack card (plan 02-05/02-06
+    # renders the warning line); OrderGuard does NOT re-check at place_order
+    # time — wash-sale is FLAG-only per D-29.
+    #
+    # flag_wash_sale NEVER raises (PATTERNS §4 anti-pattern row 12) so this
+    # call is safe inside the writer's transactional path. A None result
+    # means no flag — the proposal is unmarked.
+    wash_sale_flag = await flag_wash_sale(
+        req=OrderRequest(
+            symbol=tp.ticker,
+            side=tp.side,
+            qty=tp.qty,
+            order_type=tp.order_type,
+            limit_price=tp.limit_price,
+            stop_price=tp.stop_price,
+            client_order_id=client_order_id,
+        ),
+        user_id=user_id,
+    )
+    tp = tp.model_copy(
+        update={
+            "client_order_id": client_order_id,
+            "wash_sale_flag": wash_sale_flag,
+        }
+    )
 
     # 4. Idempotent persistence — return existing row if it exists.
     existing_row = (
