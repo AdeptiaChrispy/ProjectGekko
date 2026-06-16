@@ -73,6 +73,44 @@ class ProposalRejected(GekkoError):
     """
 
 
+class OrderGuardRejected(GekkoError):
+    """Raised when OrderGuard rejects a proposal at the pre-broker gate.
+
+    Plan 02-01 Task 5 (foundational error class — plans 02-02 + 02-03 raise
+    this from check_universe / check_hard_caps / check_qty_price_sanity /
+    check_paper_live_pairing / check_kill_active / check_pdt_t1 /
+    check_wash_sale).
+
+    Carries:
+
+    * ``reject_code`` — a stable machine-readable code from D-29 / D-30
+      (e.g., ``"universe"``, ``"hard_cap_position_pct"``, ``"qty_price_drift"``,
+      ``"paper_live_mismatch_broker"``, ``"kill_active"``, ``"pdt_rule_local"``,
+      ``"t1_settlement"``). The full vocabulary is enumerated in plan 02-01
+      Task 2's stub action body — those literal strings are locked so the
+      Slack card + audit log + dashboard layers can interpret them.
+    * ``reject_reason`` — a human-readable explanation surfaced in the
+      Slack card and the audit ``cap_rejection`` event payload.
+    * ``extra`` — optional dict of structured context (ticker, attempted
+      qty, cap value, etc.) for the audit log + retrospective dashboard.
+
+    Catch as ``GekkoError`` to handle the entire family in the
+    runtime / executor / Slack-handler top-level except blocks.
+    """
+
+    def __init__(
+        self,
+        reject_code: str,
+        reject_reason: str,
+        *,
+        extra: dict[str, object] | None = None,
+    ) -> None:
+        super().__init__(f"{reject_code}: {reject_reason}")
+        self.reject_code = reject_code
+        self.reject_reason = reject_reason
+        self.extra: dict[str, object] = dict(extra) if extra is not None else {}
+
+
 __all__: tuple[str, ...] = (
     "GekkoError",
     "WrongPassphraseError",
@@ -81,4 +119,5 @@ __all__: tuple[str, ...] = (
     "BudgetExceeded",
     "AuditChainBroken",
     "ProposalRejected",
+    "OrderGuardRejected",
 )
