@@ -383,6 +383,71 @@ def configured_logging() -> Iterator[None]:
     # No explicit teardown — structlog keeps its config until the next call.
 
 
+# ---------------------------------------------------------------------------
+# Phase 2 fixtures — Plan 02-01 Task 2 (VALIDATION.md §Wave 0 Requirements)
+#
+# Mirrors the Phase-1 `_get_session_factory` test seam style (PATTERNS §5a).
+# All three are function-scoped and opt-in (no autouse).
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(params=["PAPER", "LIVE"])
+def account_mode(request: pytest.FixtureRequest) -> str:
+    """Parametrized fixture yielding both account modes.
+
+    Any test that depends on this fixture is automatically duplicated against
+    PAPER and LIVE. Used by Plan 02-02's paper/live pairing tests + the
+    Phase-2 walking-skeleton end-to-end test.
+
+    The string values are LOCKED — they match the `account_mode` Literal on
+    TradeProposal (plan 02-01 Task 3) and the CHECK constraint on
+    `proposals.account_mode` (plan 02-01 Task 4).
+    """
+    return str(request.param)
+
+
+@pytest_asyncio.fixture
+async def kill_state(
+    temp_sqlcipher_db: Any,
+) -> AsyncIterator[Any]:
+    """Yield an AsyncSession + assert users.kill_active=False around the test.
+
+    Plan 02-05 (kill-switch) uses this fixture: tests open a session, flip
+    `users.kill_active=True` to simulate the kill flow, run their assertions,
+    and rely on the fixture's teardown to reset the flag to False so test
+    isolation is preserved.
+
+    Wave-0 SCAFFOLD: yields the raw engine — plan 02-05 deepens to a full
+    session + seeded user row when the kill-switch state machine lands.
+    """
+    # NB: Wave 0 — no kill_active column exists on `users` yet (plan 02-01
+    # Task 4 adds it). The fixture yields the engine so the kill-switch
+    # plan can extend with the column-aware setup once the migration lands.
+    yield temp_sqlcipher_db
+
+
+@pytest_asyncio.fixture
+async def live_credential_pair(
+    temp_sqlcipher_db: Any,
+) -> AsyncIterator[Any]:
+    """Seed a `(user_id, alpaca_paper)` + `(user_id, alpaca_live)` row pair.
+
+    Plan 02-06 (live credential vault) uses this fixture to exercise the
+    credential loader: it MUST select the `kind='alpaca_live'` row when
+    constructing a live AlpacaBroker, and the `kind='alpaca_paper'` row when
+    constructing a paper AlpacaBroker.
+
+    Wave-0 SCAFFOLD: yields the raw engine — plan 02-06 deepens to actually
+    seed the BrokerCredential rows (kind column added by plan 02-01 Task 4).
+    """
+    yield temp_sqlcipher_db
+
+
+# ---------------------------------------------------------------------------
+# Settings infrastructure
+# ---------------------------------------------------------------------------
+
+
 @pytest.fixture
 def clean_settings_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[pytest.MonkeyPatch]:
     """Strip the env, seed required vars to test sentinels, clear the cache.
