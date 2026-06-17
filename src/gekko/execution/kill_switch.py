@@ -205,81 +205,122 @@ async def _execute_kill(
             )
 
         # ---- STEP 2: fetch open orders, then parallel cancel with 4s timeout.
-        broker = _build_kill_broker(user_id)
+        # BL-02 fix: the entire sweep is wrapped in try/except + try/finally
+        # so the ``kill_complete`` audit event ALWAYS lands on the chain,
+        # even when the cancel sweep raises (asyncio cancellation, broker
+        # ConnectionError, sqlalchemy operational error against the second
+        # session, etc.). The previous shape lost the tally + ts_end when
+        # an uncaught exception escaped between the "kill" event and the
+        # "kill_complete" event — the kill switch's forensic story is
+        # load-bearing and must never silently disappear.
         tally: dict[str, Any] = {
             "cancelled": 0,
             "pending": 0,
             "failed": 0,
             "total": 0,
         }
+        ts_end: str | None = None
         try:
-            open_orders = await broker.get_orders_open()
-            tally["total"] = len(open_orders)
-        except Exception:  # noqa: BLE001 — fetch failure surfaces as "failed"
-            log.exception(
-                "kill_switch.fetch_open_orders_failed",
-                user_id=user_id,
-            )
-            open_orders = []
-
-        if open_orders:
-            # PATTERNS §5d background-task shape: each cancel is wrapped so
-            # one exception doesn't abort the whole gather.
-            async def _cancel_one(order_id: str) -> tuple[str, bool, str]:
-                try:
-                    ok = await broker.cancel_order(order_id)
-                    return (order_id, bool(ok), "")
-                except Exception as exc:  # noqa: BLE001
-                    return (order_id, False, str(exc))
-
-            cancel_coros = [_cancel_one(str(o.get("id", ""))) for o in open_orders]
+            broker = _build_kill_broker(user_id)
             try:
-                results = await asyncio.wait_for(
-                    asyncio.gather(*cancel_coros, return_exceptions=False),
-                    timeout=4.0,
-                )
-            except asyncio.TimeoutError:
-                # In-flight cancels keep running but we report them as
-                # "pending" — the kill_active column was already flipped,
-                # so no new orders will fire while the sweep finishes.
-                log.warning(
-                    "kill_switch.cancel_timeout",
+                open_orders = await broker.get_orders_open()
+                tally["total"] = len(open_orders)
+            except Exception as e:  # noqa: BLE001 — fetch failure surfaces in tally
+                log.exception(
+                    "kill_switch.fetch_open_orders_failed",
                     user_id=user_id,
-                    total=tally["total"],
                 )
-                tally["pending"] = tally["total"]
-            else:
-                for _oid, ok, _err in results:
-                    if ok:
-                        tally["cancelled"] += 1
-                    else:
-                        tally["failed"] += 1
+                tally["error"] = f"fetch_open: {e!s}"
+                open_orders = []
 
-        ts_end = datetime.now(UTC).isoformat()
-        tally["ts_start"] = ts_start
-        tally["ts_end"] = ts_end
+            if open_orders:
+                # PATTERNS §5d background-task shape: each cancel is wrapped so
+                # one exception doesn't abort the whole gather.
+                async def _cancel_one(order_id: str) -> tuple[str, bool, str]:
+                    try:
+                        ok = await broker.cancel_order(order_id)
+                        return (order_id, bool(ok), "")
+                    except Exception as exc:  # noqa: BLE001
+                        return (order_id, False, str(exc))
 
-        # ---- STEP 3: write the "kill_complete" audit event.
-        async with sf() as session, session.begin():
-            await append_event(
-                session,
+                cancel_coros = [_cancel_one(str(o.get("id", ""))) for o in open_orders]
+                try:
+                    results = await asyncio.wait_for(
+                        asyncio.gather(*cancel_coros, return_exceptions=False),
+                        timeout=4.0,
+                    )
+                except asyncio.TimeoutError:
+                    # In-flight cancels keep running but we report them as
+                    # "pending" — the kill_active column was already flipped,
+                    # so no new orders will fire while the sweep finishes.
+                    log.warning(
+                        "kill_switch.cancel_timeout",
+                        user_id=user_id,
+                        total=tally["total"],
+                    )
+                    tally["pending"] = tally["total"]
+                else:
+                    for _oid, ok, _err in results:
+                        if ok:
+                            tally["cancelled"] += 1
+                        else:
+                            tally["failed"] += 1
+        except Exception as e:  # noqa: BLE001 — sweep-level failure
+            log.exception(
+                "kill_switch.sweep_failed",
                 user_id=user_id,
-                strategy_id=None,
-                event_type="kill_switch",
-                payload=normalize_decimals(
-                    {
-                        "action": "kill_complete",
-                        "source": source,
-                        "reason": reason,
-                        "ts_start": ts_start,
-                        "ts_end": ts_end,
-                        "tally": dict(tally),
-                    }
-                ),
             )
+            tally.setdefault("error", f"sweep: {e!s}")
+        finally:
+            # BL-02 fix: the ``kill_complete`` audit event is the canonical
+            # forensic record of the sweep tally + ts_end. It MUST emit
+            # regardless of how the sweep terminated. The Slack DM is also
+            # best-effort here so a DM failure doesn't suppress the
+            # post-finally bookkeeping.
+            ts_end = datetime.now(UTC).isoformat()
+            tally["ts_start"] = ts_start
+            tally["ts_end"] = ts_end
 
-        # ---- STEP 4: Slack DM (OUTSIDE the audit transaction — PATTERNS §4 row 14).
-        await _dm_kill_summary(user_id, tally)
+            # ---- STEP 3: write the "kill_complete" audit event.
+            try:
+                async with sf() as session, session.begin():
+                    await append_event(
+                        session,
+                        user_id=user_id,
+                        strategy_id=None,
+                        event_type="kill_switch",
+                        payload=normalize_decimals(
+                            {
+                                "action": "kill_complete",
+                                "source": source,
+                                "reason": reason,
+                                "ts_start": ts_start,
+                                "ts_end": ts_end,
+                                "tally": dict(tally),
+                            }
+                        ),
+                    )
+            except Exception:  # noqa: BLE001
+                # If even the audit write fails, log loudly. The kill_active
+                # column was still flipped in step 1, so the safety floor
+                # holds even when the audit chain entry is lost.
+                log.exception(
+                    "kill_switch.complete_audit_failed",
+                    user_id=user_id,
+                    tally=dict(tally),
+                )
+
+            # ---- STEP 4: Slack DM (OUTSIDE the audit transaction — PATTERNS §4 row 14).
+            # ``_dm_kill_summary`` already wraps the DM in try/except, but
+            # be defensive at the call site too so a future refactor of the
+            # helper doesn't reopen the event-loss window.
+            try:
+                await _dm_kill_summary(user_id, tally)
+            except Exception:  # noqa: BLE001
+                log.exception(
+                    "kill_switch.dm_outside_failed",
+                    user_id=user_id,
+                )
 
         log.info(
             "kill_switch.activate.complete",
@@ -346,13 +387,28 @@ async def _execute_unkill(
             )
 
         # DM OUTSIDE the transaction (PATTERNS §4 row 14).
+        # BL-02 fix: wrap the DM in try/except so a Slack outage during
+        # unkill (or any _send_slack_dm failure) does NOT raise out of
+        # _execute_unkill after the DB commit. The unkill DB transaction
+        # has already committed at this point — letting the DM exception
+        # propagate would leave the caller's outer try/except to swallow
+        # it with no audit trace and an inconsistent operator UX
+        # ("did unkill succeed?"). The kill_active column is the source
+        # of truth; the DM is a notification, not a state transition.
         from gekko.execution.executor import _send_slack_dm
 
-        await _send_slack_dm(
-            user_id,
-            "✅ Kill cleared — new orders will fire again. "
-            "Note: previously-cancelled orders were NOT restored.",
-        )
+        try:
+            await _send_slack_dm(
+                user_id,
+                "✅ Kill cleared — new orders will fire again. "
+                "Note: previously-cancelled orders were NOT restored.",
+            )
+        except Exception:  # noqa: BLE001 — DM failure must not abort unkill
+            log.exception(
+                "kill_switch.unkill_dm_failed",
+                user_id=user_id,
+                source=source,
+            )
         log.info("kill_switch.deactivate.complete", user_id=user_id, source=source)
     finally:
         if engine is not None:
