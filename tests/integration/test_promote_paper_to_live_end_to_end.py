@@ -529,6 +529,30 @@ async def test_phase2_walking_skeleton_promote_paper_to_live_end_to_end(
     fake_client = MagicMock()
     fake_client.chat_postMessage = AsyncMock(return_value={"ok": True})
 
+    # CR-02 fix: capture the rich first-live card sent through the
+    # _send_slack_dm_blocks identity-split seam (previously the test
+    # asserted on a direct fake_client.chat_postMessage call which
+    # bypassed the seam — PATTERNS §10).
+    sent_block_dms: list[dict[str, Any]] = []
+
+    async def _capture_blocks(
+        user_id: str,
+        *,
+        blocks: list[dict[str, Any]],
+        fallback: str = "",
+    ) -> None:
+        sent_block_dms.append(
+            {
+                "user_id": user_id,
+                "blocks": blocks,
+                "fallback": fallback,
+            }
+        )
+
+    monkeypatch.setattr(
+        "gekko.execution.executor._send_slack_dm_blocks", _capture_blocks
+    )
+
     await _approve_workflow(
         decision_id=decision_id,
         slack_user_id="U_TEST_USER",
@@ -548,14 +572,25 @@ async def test_phase2_walking_skeleton_promote_paper_to_live_end_to_end(
         f"Got: {dispatched_from_slack}"
     )
 
-    # The DM must contain the dashboard URL.
-    assert fake_client.chat_postMessage.await_count == 1
-    dm_text = fake_client.chat_postMessage.await_args.kwargs.get(
-        "text"
-    ) or ""
-    assert "/live-confirm/" in dm_text, dm_text
-    assert decision_id in dm_text, dm_text
-    assert "FIRST live trade" in dm_text, dm_text
+    # CR-02 fix: the DM is now a Block Kit card routed through the
+    # _send_slack_dm_blocks seam; the bolt client is NOT used.
+    assert fake_client.chat_postMessage.await_count == 0, (
+        "first-live DM must NOT use the direct bolt-client postMessage path; "
+        "it must route through _send_slack_dm_blocks (PATTERNS §10)"
+    )
+    assert len(sent_block_dms) == 1, (
+        f"expected exactly one _send_slack_dm_blocks call; got {sent_block_dms!r}"
+    )
+    dm = sent_block_dms[0]
+    # Fallback text + the embedded URL inside the blocks must contain
+    # the dashboard URL and the decision id.
+    assert "/live-confirm/" in dm["fallback"], dm["fallback"]
+    assert decision_id in dm["fallback"], dm["fallback"]
+    assert "FIRST LIVE TRADE" in dm["fallback"], dm["fallback"]
+    block_text_blob = json.dumps(dm["blocks"])
+    assert "/live-confirm/" in block_text_blob
+    assert decision_id in block_text_blob
+    assert "FIRST LIVE TRADE" in block_text_blob
 
     # ---- 7. Dashboard /live-confirm — second channel transitions to
     #         APPROVED_LIVE + dispatches the real executor.
