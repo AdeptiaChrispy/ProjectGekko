@@ -393,8 +393,13 @@ async def test_cap_rejection_universe_end_to_end(
         expected_reject_code="universe",
     )
     assert "TSLA" in cap.payload_json
-    # The check_name is reject_code by convention.
-    assert "check_name" in cap.payload_json
+    # WR-07 fix: ``check_name`` was a duplicate of ``reject_code`` and
+    # was dropped from the cap_rejection payload (D-14 canonical-subset
+    # principle — no redundancy in the chain-hashed payload). The test
+    # now asserts the canonical ``reject_code`` discriminator is the
+    # one in the payload.
+    assert '"reject_code"' in cap.payload_json
+    assert '"check_name"' not in cap.payload_json
 
 
 # ---------------------------------------------------------------------------

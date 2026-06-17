@@ -508,12 +508,15 @@ async def execute_proposal(proposal_id: str, user_id: str) -> None:
                 reject_reason=exc.reject_reason,
             )
             async with sf() as session, session.begin():
+                # WR-07 fix: drop the duplicate ``check_name`` key (was
+                # always equal to ``reject_code`` here). The D-14 canonical
+                # subset principle says no redundancy in the chain-hashed
+                # payload; ``reject_code`` is the authoritative key.
                 cap_payload: dict[str, Any] = {
                     "reject_code": exc.reject_code,
                     "reject_reason": exc.reject_reason,
                     "ticker": tp.ticker,
                     "proposal_id": proposal_id,
-                    "check_name": exc.reject_code,
                 }
                 for k, v in exc.extra.items():
                     cap_payload.setdefault(k, v)
@@ -555,11 +558,15 @@ async def execute_proposal(proposal_id: str, user_id: str) -> None:
         except OrderGuardRejected as exc:
             # Plan 02-02 Task 3: cap_rejection branch — mirrors the
             # ``executor.market_closed`` shape at lines 222-254 verbatim.
-            # The check_name is exc.reject_code by convention (one event
-            # per reject_code); exc.extra carries per-check context
-            # (ticker, ref_price, cap_value, etc.) that is merged into
-            # the audit payload so the dashboard rejection panel + Slack
-            # rejection card can interpret it.
+            # ``exc.extra`` carries per-check context (ticker, ref_price,
+            # cap_value, etc.) that is merged into the audit payload so the
+            # dashboard rejection panel + Slack rejection card can
+            # interpret it.
+            #
+            # WR-07 fix: ``reject_code`` is the canonical discriminator
+            # for cap_rejection events; the prior duplicate ``check_name``
+            # field (always equal to ``reject_code`` here) violated the
+            # D-14 canonical-subset principle and was dropped.
             log.warning(
                 "executor.cap_rejection",
                 proposal_id=proposal_id,
@@ -573,7 +580,6 @@ async def execute_proposal(proposal_id: str, user_id: str) -> None:
                     "reject_reason": exc.reject_reason,
                     "ticker": tp.ticker,
                     "proposal_id": proposal_id,
-                    "check_name": exc.reject_code,
                 }
                 # Merge per-check extras; do NOT overwrite the canonical
                 # keys above on key-collision.
