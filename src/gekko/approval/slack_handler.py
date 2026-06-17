@@ -41,10 +41,16 @@ from typing import Any, Awaitable, Callable
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from gekko.approval.proposals import approve_proposal, reject_proposal
+from gekko.approval.proposals import (
+    approve_proposal,
+    reject_proposal,
+    transition_status,
+)
+from gekko.audit.log import append_event
 from gekko.config import get_settings
 from gekko.db.engine import get_async_engine
 from gekko.db.models import Proposal as ProposalRow
+from gekko.db.models import StrategyMetadata
 from gekko.db.session import AsyncSessionLocal, make_session_factory
 from gekko.execution.executor import execute_proposal
 from gekko.logging_config import get_logger
@@ -147,6 +153,15 @@ async def _approve_workflow(
 
     sf, engine = _get_session_factory(gekko_user_id)
     try:
+        # Snapshot account_mode + strategy_name from the LOCKED proposal row,
+        # plus the first_live_trade stamp from StrategyMetadata. These
+        # decide whether to take the standard approve path or divert to
+        # the HITL-06 dual-channel branch. Reading account_mode from the
+        # proposal row (NOT from strategy state) closes the TOCTOU
+        # window per BLOCKER #5.
+        proposal_account_mode: str | None = None
+        strategy_name_snapshot: str | None = None
+        is_live_first: bool = False
         async with sf() as session, session.begin():
             row = await session.get(ProposalRow, decision_id)
             if row is None:
@@ -155,9 +170,80 @@ async def _approve_workflow(
                     text=f"Proposal `{decision_id}` not found.",
                 )
                 return
-            await approve_proposal(
-                session, decision_id, actor=slack_user_id
+            proposal_account_mode = row.account_mode
+            # Pull strategy_name from the persisted TradeProposal payload
+            # so we can look up StrategyMetadata.
+            from gekko.schemas.proposal import TradeProposal as _TP
+
+            try:
+                _tp = _TP.model_validate_json(row.payload_json)
+                strategy_name_snapshot = _tp.strategy_name
+            except Exception:  # noqa: BLE001 — defensive
+                strategy_name_snapshot = None
+
+            # Compute is_live_first ONLY from the proposal row + metadata
+            # stamp. Re-reading strategy.mode or live_mode_eligible here
+            # would reopen the TOCTOU window — those gates already fired
+            # at proposal-build time (T0).
+            if proposal_account_mode == "LIVE" and strategy_name_snapshot:
+                meta = await session.get(
+                    StrategyMetadata,
+                    (gekko_user_id, strategy_name_snapshot),
+                )
+                is_live_first = (
+                    meta is None
+                    or meta.first_live_trade_confirmed_at is None
+                )
+
+            if is_live_first:
+                # HITL-06 dual-channel: divert PENDING → AWAITING_2ND_CHANNEL.
+                # Do NOT dispatch the executor here; the dashboard
+                # /live-confirm route fires it once the second channel
+                # confirms.
+                await transition_status(
+                    session,
+                    decision_id,
+                    from_status="PENDING",
+                    to_status="AWAITING_2ND_CHANNEL",
+                )
+                await append_event(
+                    session,
+                    user_id=row.user_id,
+                    strategy_id=row.strategy_id,
+                    event_type="approval",
+                    payload={
+                        "proposal_id": decision_id,
+                        "actor": slack_user_id,
+                        "slack_action_id": "approve_proposal",
+                        "awaiting_2nd_channel": True,
+                    },
+                )
+            else:
+                # Standard single-channel approve (Phase-1 path).
+                await approve_proposal(
+                    session, decision_id, actor=slack_user_id
+                )
+
+        if is_live_first:
+            # DM the operator the dashboard URL — AFTER the transaction
+            # commits so the row state on disk matches what the dashboard
+            # route will see. Read dashboard_url from settings (fallback
+            # to a sentinel string when unset so the message still
+            # rendsers).
+            dashboard_url = getattr(
+                settings, "dashboard_url", "http://localhost:8000"
             )
+            await client.chat_postMessage(
+                channel=slack_user_id,
+                text=(
+                    f"⚠️ This is your FIRST live trade for "
+                    f"`{strategy_name_snapshot}`. To execute, also "
+                    f"click confirm in your dashboard at "
+                    f"{dashboard_url}/live-confirm/{decision_id}"
+                ),
+            )
+            return
+
         # Outside the approval transaction — the Executor opens its own.
         # Note: pass gekko_user_id (internal id), NOT slack_user_id, so
         # the executor opens the per-user DB at the right path.

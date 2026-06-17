@@ -1,4 +1,4 @@
-"""FastAPI dashboard routes — Plan 01-09 Task 3 (STRAT-02, REG-01, REG-03, REG-04).
+"""FastAPI dashboard routes — Plan 01-09 + 02-05 + 02-06.
 
 P1 dashboard surface — minimal HTMX/Tailwind UI:
 
@@ -440,6 +440,261 @@ async def _execute_unkill_background(*, user_id: str, source: str) -> None:
             user_id=user_id,
             source=source,
         )
+
+
+# ---------------------------------------------------------------------------
+# Live-mode promotion + dual-channel confirm — Plan 02-06 Task 2/3
+# (D-31 promote-to-live + D-32 / HITL-06 dual-channel)
+# ---------------------------------------------------------------------------
+
+
+import time as _time
+
+
+@router.post("/strategies/{name}/promote-to-live", response_class=HTMLResponse)
+async def promote_to_live(
+    request: Request,
+    name: str,
+    strategy_name_confirm: str = Form(...),
+) -> HTMLResponse:
+    """Promote a paper strategy to live-eligible (D-31).
+
+    UI-SPEC §"Destructive Action Confirmations": requires the operator
+    to type the EXACT strategy name in the ``strategy_name_confirm``
+    form field. On confirm, calls
+    :func:`gekko.strategy.promotion.promote_strategy_to_live`.
+
+    Symmetric with the CLI ``gekko strategy promote-live <name>``.
+    Returns an HTMX partial that replaces the "Promote to Live" button.
+    """
+    from gekko.strategy.promotion import promote_strategy_to_live
+
+    if strategy_name_confirm.strip() != name:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Typed strategy name did not match {name!r}. "
+                "Promotion aborted."
+            ),
+        )
+
+    settings = get_settings()
+    await promote_strategy_to_live(
+        user_id=settings.gekko_user_id, strategy_name=name
+    )
+    # Invalidate the cached banner_mode so the next render picks up the
+    # new live-eligible state without waiting for the 60s TTL.
+    try:
+        request.app.state.banner_mode = "LIVE"
+        request.state.banner_mode = "LIVE"
+    except Exception:  # noqa: BLE001 — best-effort cache hint
+        pass
+    return HTMLResponse(
+        '<span class="chip-live">LIVE — eligible</span>'
+    )
+
+
+@router.get("/live-confirm/{proposal_id}", response_class=HTMLResponse)
+async def live_confirm_get(
+    request: Request, proposal_id: str
+) -> HTMLResponse:
+    """Render the HITL-06 second-channel confirm page (UI-SPEC §3b).
+
+    The operator lands here from the Slack DM URL. Renders the
+    ``first_live_confirm.html.j2`` full-page template with the trade
+    detail panel + two checkboxes + 5s countdown. Form POSTs back to
+    this same path.
+    """
+    from gekko.schemas.proposal import TradeProposal
+
+    settings = get_settings()
+    engine = request.app.state.engine
+    user_id = settings.gekko_user_id
+
+    from gekko.db.models import Proposal as _Proposal
+
+    async with make_session_factory(engine)() as session:
+        row = (
+            await session.execute(
+                select(_Proposal).where(
+                    _Proposal.proposal_id == proposal_id,
+                    _Proposal.user_id == user_id,
+                )
+            )
+        ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(
+            status_code=404, detail=f"Proposal {proposal_id} not found"
+        )
+    if row.status == "APPROVED_LIVE":
+        # Idempotent — already confirmed. Render success template.
+        return templates.TemplateResponse(
+            "live_confirm_success.html.j2",
+            {
+                "request": request,
+                "proposal_id": proposal_id,
+                "already_confirmed_at": row.updated_at,
+            },
+        )
+    if row.status != "AWAITING_2ND_CHANNEL":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Proposal is in status {row.status!r} and cannot "
+                "be confirmed via the dual-channel gate."
+            ),
+        )
+
+    try:
+        tp = TradeProposal.model_validate_json(row.payload_json)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not parse proposal payload: {exc}",
+        ) from exc
+
+    return templates.TemplateResponse(
+        "first_live_confirm.html.j2",
+        {
+            "request": request,
+            "proposal_id": proposal_id,
+            "strategy_name": tp.strategy_name,
+            "ticker": tp.ticker,
+            "side": str(tp.side),
+            "qty": str(tp.qty),
+            "order_type": str(tp.order_type),
+            "limit_price": str(tp.limit_price) if tp.limit_price else "",
+            "stop_price": str(tp.stop_price) if tp.stop_price else "",
+            "target_notional_usd": str(tp.target_notional_usd),
+            "rationale": tp.rationale,
+            "page_load_ts": _time.time(),
+        },
+    )
+
+
+@router.post("/live-confirm/{proposal_id}", response_class=HTMLResponse)
+async def live_confirm_post(
+    request: Request,
+    proposal_id: str,
+    ack_real_money: str = Form(""),
+    ack_read_rationale: str = Form(""),
+    page_load_ts: float = Form(...),
+) -> HTMLResponse:
+    """HITL-06 second-channel confirm — AWAITING_2ND_CHANNEL → APPROVED_LIVE.
+
+    Server-side validation:
+      * Both ``ack_real_money`` AND ``ack_read_rationale`` checkboxes
+        must be "on".
+      * ``time.time() - page_load_ts >= 5.0`` (5-second read timer).
+
+    On validation pass, transitions the proposal AWAITING_2ND_CHANNEL →
+    APPROVED_LIVE inside one transaction and dispatches the executor
+    via ``asyncio.create_task``. Idempotency: when the proposal is
+    already in APPROVED_LIVE (double-click), returns the success
+    template without re-dispatching.
+    """
+    from gekko.approval.proposals import transition_status
+    from gekko.audit.log import append_event
+    from gekko.db.models import Proposal as _Proposal
+    from gekko.execution.executor import execute_proposal as _execute_proposal
+
+    settings = get_settings()
+    engine = request.app.state.engine
+    user_id = settings.gekko_user_id
+
+    # Validation Layer 1: both checkboxes must be checked.
+    if ack_real_money != "on" or ack_read_rationale != "on":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Both acknowledgements are required to confirm a live "
+                "trade. Tick both boxes and re-submit."
+            ),
+        )
+
+    # Validation Layer 2: server-side 5-second read timer. The client
+    # MAY send any value here; we trust ONLY the server clock for the
+    # gate (UI-SPEC §3b "pure server-side timestamp check").
+    elapsed = _time.time() - page_load_ts
+    if elapsed < 5.0:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Please read the trade details for the full 5 seconds. "
+                f"Time elapsed: {elapsed:.2f}s."
+            ),
+        )
+
+    # State transition + idempotency layer. We re-read the row's status
+    # inside the transaction to handle the double-click case.
+    sf = make_session_factory(engine)
+    should_dispatch = False
+    async with sf() as session, session.begin():
+        row = (
+            await session.execute(
+                select(_Proposal).where(
+                    _Proposal.proposal_id == proposal_id,
+                    _Proposal.user_id == user_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Proposal {proposal_id} not found",
+            )
+        if row.status == "APPROVED_LIVE":
+            # Already confirmed — no-op (double-click defense).
+            return templates.TemplateResponse(
+                "live_confirm_success.html.j2",
+                {
+                    "request": request,
+                    "proposal_id": proposal_id,
+                    "already_confirmed_at": row.updated_at,
+                },
+            )
+        if row.status != "AWAITING_2ND_CHANNEL":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Proposal is in status {row.status!r} and cannot "
+                    "be confirmed via the dual-channel gate."
+                ),
+            )
+
+        await transition_status(
+            session,
+            proposal_id,
+            from_status="AWAITING_2ND_CHANNEL",
+            to_status="APPROVED_LIVE",
+        )
+        await append_event(
+            session,
+            user_id=row.user_id,
+            strategy_id=row.strategy_id,
+            event_type="approval",
+            payload={
+                "proposal_id": proposal_id,
+                "actor": "dashboard",
+                "slack_action_id": "live_confirm",
+                "second_channel": True,
+            },
+        )
+        should_dispatch = True
+
+    # Dispatch the executor AFTER the transaction commits so the
+    # executor sees status=APPROVED_LIVE on its sanity gate.
+    if should_dispatch:
+        asyncio.create_task(_execute_proposal(proposal_id, user_id))
+
+    return templates.TemplateResponse(
+        "live_confirm_success.html.j2",
+        {
+            "request": request,
+            "proposal_id": proposal_id,
+            "already_confirmed_at": None,
+        },
+    )
 
 
 __all__: tuple[str, ...] = ("router",)

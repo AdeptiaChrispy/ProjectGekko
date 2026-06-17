@@ -54,6 +54,7 @@ the SDK package name would trip it.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -663,6 +664,8 @@ async def on_fill_event(payload: dict[str, Any], *, user_id: str) -> None:
     sf, engine = _get_session_factory(user_id)
     try:
         client_order_id = payload.get("client_order_id", "")
+        live_strategy_name_to_stamp: str | None = None
+        fill_ts: str | None = None
         async with sf() as session, session.begin():
             row = (
                 await session.execute(
@@ -704,6 +707,41 @@ async def on_fill_event(payload: dict[str, Any], *, user_id: str) -> None:
                     proposal_id,
                     from_status="EXECUTING",
                     to_status="FILLED",
+                )
+
+            # Plan 02-06 Task 2 — D-32 first-live-trade stamp.
+            # Only LIVE fills trigger the stamp; paper fills are no-ops.
+            # The stamp closes the HITL-06 dual-channel gate per
+            # strategy: subsequent live trades skip AWAITING_2ND_CHANNEL.
+            if row.account_mode == "LIVE":
+                try:
+                    tp_for_strategy = TradeProposal.model_validate_json(
+                        row.payload_json
+                    )
+                    live_strategy_name_to_stamp = tp_for_strategy.strategy_name
+                except Exception:  # noqa: BLE001 — defensive
+                    live_strategy_name_to_stamp = None
+                fill_ts = payload.get("ts") or datetime.now(UTC).isoformat()
+
+        # ---- First-live-trade stamp (outside the fill transaction). -----
+        # Plan 02-06 Task 2 — opens its own transaction. Set-once on
+        # `strategy_metadata.first_live_trade_confirmed_at`. Subsequent
+        # calls are no-ops (the helper checks the current value before
+        # setting). Paper fills skip this entirely.
+        if live_strategy_name_to_stamp is not None and fill_ts is not None:
+            try:
+                from gekko.strategy.promotion import stamp_first_live_trade
+
+                await stamp_first_live_trade(
+                    user_id=user_id,
+                    strategy_name=live_strategy_name_to_stamp,
+                    fill_ts=fill_ts,
+                )
+            except Exception:  # noqa: BLE001
+                log.exception(
+                    "executor.first_live_stamp_failed",
+                    proposal_id=proposal_id,
+                    strategy_name=live_strategy_name_to_stamp,
                 )
 
         # ---- Slack DM confirmation (outside the transaction). -----------

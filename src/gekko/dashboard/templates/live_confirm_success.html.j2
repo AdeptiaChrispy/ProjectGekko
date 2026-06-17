@@ -1,0 +1,23 @@
+{% extends "base.html.j2" %}
+
+{% block title %}Live trade confirmed — Gekko{% endblock %}
+
+{% block content %}
+<h1 class="text-2xl font-semibold mb-2">First live trade confirmed</h1>
+
+{% if already_confirmed_at %}
+<p class="text-sm text-gray-700 mb-4">
+  This proposal was already confirmed at <code>{{ already_confirmed_at }}</code>.
+  No new order will be placed (idempotent double-click defense).
+</p>
+{% else %}
+<p class="text-sm text-gray-700 mb-4">
+  The executor is placing your order with Alpaca. You'll receive a
+  Slack DM when the fill confirms.
+</p>
+{% endif %}
+
+<p class="text-sm">
+  <a href="/strategies">← Back to strategies</a>
+</p>
+{% endblock %}

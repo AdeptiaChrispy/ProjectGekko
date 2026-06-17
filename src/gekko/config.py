@@ -121,6 +121,15 @@ class Settings(BaseSettings):
             "Override in production with a real contact email."
         ),
     )
+    dashboard_url: str = Field(
+        default="http://localhost:8000",
+        description=(
+            "Base URL of the operator's Gekko dashboard. Used by the HITL-06 "
+            "dual-channel Slack DM (Plan 02-06) to link the operator to "
+            "`{dashboard_url}/live-confirm/{proposal_id}`. Override in "
+            "production with the real public-facing or tunnel URL."
+        ),
+    )
 
     # ---- Methods ------------------------------------------------------------
 

@@ -74,6 +74,7 @@ from gekko.brokers.base import OrderRequest
 from gekko.core.errors import ProposalRejected
 from gekko.core.ids import compute_client_order_id
 from gekko.db.models import Proposal as ProposalRow
+from gekko.db.models import StrategyMetadata
 from gekko.execution.checks._wash_sale import flag_wash_sale
 from gekko.logging_config import get_logger
 from gekko.schemas.proposal import NoActionProposal, TradeProposal
@@ -183,13 +184,31 @@ async def _write_trade(
     #    client_order_id (32 hex chars) so the model_validate succeeds; the
     #    real id replaces this once we know the ticker is valid.
     #
-    # BLOCKER #5 / Plan 02-01 Task 3: stamp ``account_mode`` from
-    # ``strategy.mode`` AT PROPOSAL-BUILD TIME (T0). Plan 02-06 Task 2
-    # deepens this to read ``strategy_metadata.live_mode_eligible`` and
-    # gate LIVE behind the eligibility flag — for Phase-1 paper-only
-    # operation, paper strategies stamp PAPER. The LLM does NOT author
-    # this field (it is in ``_runtime_only`` in propose_trade.py).
-    account_mode = "LIVE" if strategy.mode == "live" else "PAPER"
+    # BLOCKER #5 / Plan 02-01 Task 3 + Plan 02-06 Task 2: stamp
+    # ``account_mode`` AT PROPOSAL-BUILD TIME (T0). The stamp is final;
+    # downstream callers (Slack approve handler, executor) read
+    # ``tp.account_mode`` from the LOCKED proposal row and NEVER re-derive
+    # from strategy state at execute-time. This closes the TOCTOU window
+    # between proposal-gen (T0) and approve-click (T1).
+    #
+    # The decision rule per plan 02-06 must check BOTH:
+    #   * ``strategy.mode == "live"`` (operator's intent for this strategy)
+    #   * ``strategy_metadata.live_mode_eligible == True`` (operator's
+    #     explicit promotion via typed-name confirm)
+    # Either missing → defensive "PAPER" stamp. The LLM does NOT author
+    # this field (``account_mode`` is in ``_runtime_only`` in
+    # propose_trade.py).
+    strategy_meta = await session.get(
+        StrategyMetadata, (user_id, strategy.name)
+    )
+    is_live_eligible = (
+        strategy_meta is not None and strategy_meta.live_mode_eligible
+    )
+    account_mode = (
+        "LIVE"
+        if strategy.mode == "live" and is_live_eligible
+        else "PAPER"
+    )
     merged: dict[str, Any] = {
         **payload,
         "user_id": user_id,

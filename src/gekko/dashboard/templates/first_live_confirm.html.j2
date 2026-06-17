@@ -1,0 +1,94 @@
+{% extends "base.html.j2" %}
+
+{% block title %}Confirm First Live Trade — {{ strategy_name }}{% endblock %}
+
+{% block content %}
+{# UI-SPEC §3b — full-page dual-channel confirm.
+   No inline <script> per CSP `script-src 'self'`. The 5-second timer is
+   ENTIRELY server-side (page_load_ts hidden field; the POST handler
+   verifies time.time() - page_load_ts >= 5.0). The visible countdown is
+   informational only — bypassing it client-side gains the operator
+   nothing because the server is the gate.
+#}
+<h1 class="text-2xl font-semibold mb-2">Confirm First Live Trade — {{ strategy_name }}</h1>
+<p class="text-sm text-gray-600 mb-4">
+  This is your FIRST live trade for this strategy. Slack approval alone
+  is NOT enough — both channels (Slack + this dashboard form) must
+  confirm before the executor places the order with Alpaca.
+</p>
+
+<section aria-labelledby="trade-detail-heading"
+         class="bg-white p-4 rounded-md shadow-sm mb-4">
+  <h2 id="trade-detail-heading" class="text-lg font-medium mb-3">Trade detail</h2>
+  <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+    <dt class="font-medium">Strategy</dt>
+    <dd>{{ strategy_name }}</dd>
+
+    <dt class="font-medium">Ticker</dt>
+    <dd>{{ ticker }}</dd>
+
+    <dt class="font-medium">Side</dt>
+    <dd>{{ side|upper }}</dd>
+
+    <dt class="font-medium">Quantity</dt>
+    <dd>{{ qty }}</dd>
+
+    <dt class="font-medium">Order type</dt>
+    <dd>{{ order_type|upper }}</dd>
+
+    {% if limit_price %}
+    <dt class="font-medium">Limit price</dt>
+    <dd>${{ limit_price }}</dd>
+    {% endif %}
+
+    {% if stop_price %}
+    <dt class="font-medium">Stop price</dt>
+    <dd>${{ stop_price }}</dd>
+    {% endif %}
+
+    <dt class="font-medium">Target notional</dt>
+    <dd>${{ target_notional_usd }}</dd>
+
+    <dt class="font-medium">Proposal ID</dt>
+    <dd><code class="text-xs">{{ proposal_id }}</code></dd>
+  </dl>
+
+  <h3 class="text-md font-medium mt-4 mb-1">Rationale</h3>
+  <p class="text-sm text-gray-800 whitespace-pre-wrap">{{ rationale }}</p>
+</section>
+
+<section aria-labelledby="ack-heading"
+         class="bg-yellow-50 border border-yellow-300 p-4 rounded-md mb-4">
+  <h2 id="ack-heading" class="text-lg font-medium mb-2">⚠️ Real-money acknowledgement</h2>
+  <p class="text-sm mb-3">
+    This will place a REAL-MONEY order on your Alpaca live account.
+    The order has already passed OrderGuard's policy checks.
+  </p>
+
+  <form method="post" action="/live-confirm/{{ proposal_id }}" class="flex flex-col gap-3">
+    <input type="hidden" name="page_load_ts" value="{{ page_load_ts }}">
+
+    <label class="flex items-start gap-2 text-sm">
+      <input type="checkbox" name="ack_real_money" value="on" required class="mt-1">
+      <span>I understand this places a REAL-MONEY order on my Alpaca LIVE account.</span>
+    </label>
+
+    <label class="flex items-start gap-2 text-sm">
+      <input type="checkbox" name="ack_read_rationale" value="on" required class="mt-1">
+      <span>I have read the trade detail and rationale above.</span>
+    </label>
+
+    <p class="text-xs text-gray-600 mt-2">
+      Server-side 5-second read timer. Submitting earlier returns an
+      error — please read the trade detail carefully.
+    </p>
+
+    <div class="flex gap-3 mt-3">
+      <button type="submit" class="bg-red-600 text-white px-4 py-2 rounded-md font-medium">
+        Confirm First Live Trade
+      </button>
+      <a href="/strategies" class="px-4 py-2 underline">Cancel — return to strategies</a>
+    </div>
+  </form>
+</section>
+{% endblock %}

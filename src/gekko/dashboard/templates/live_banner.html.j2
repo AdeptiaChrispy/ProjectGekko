@@ -1,0 +1,9 @@
+{# Live-mode persistent red banner — Plan 02-06 Task 3 / UI-SPEC §1 / D-33.
+
+   Rendered at the top of every dashboard page whenever
+   ``request.state.banner_mode == "LIVE"``. ARIA role + aria-live ensure
+   screen readers announce the live-mode arming.
+#}
+<div class="banner-live-strong" role="alert" aria-live="polite" aria-atomic="true">
+  [LIVE — REAL MONEY] Alpaca live trading is armed.
+</div>
