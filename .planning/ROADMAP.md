@@ -75,7 +75,7 @@ See `milestones/v1.0-ROADMAP.md` for the full archived snapshot (with detailed p
   4. Paper credentials cannot place live orders and vice versa — OrderGuard validates env-credential pairing and hard-rejects mismatches, with a red banner indicating live mode on every Slack message and UI surface
   5. User can promote a paper strategy to live, place a small real-money trade through the full HITL flow, and see PDT-rule awareness, wash-sale flagging, market-hours guard, and broker rate-limit backoff all enforce correctly without manual intervention
 
-**Plans:** 5/7 plans executed
+**Plans:** 6/7 plans executed
 Plans:
 **Wave 1**
 
@@ -96,7 +96,7 @@ Plans:
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 02-06-PLAN.md — Live credentials vault + promotion + HITL-06 dual-channel + live banner / chips
+- [x] 02-06-PLAN.md — Live credentials vault + promotion + HITL-06 dual-channel + live banner / chips (complete 2026-06-16)
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
