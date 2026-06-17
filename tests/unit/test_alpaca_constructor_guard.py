@@ -36,6 +36,11 @@ def test_paper_false_rejected_before_trading_client_constructed(mocker: Any) -> 
     """``AlpacaBroker(paper=False)`` raises BEFORE building the TradingClient.
 
     The mock confirms ``TradingClient.__init__`` was never called.
+
+    Plan 02-06 Task 1 (BLOCKER #4): the error message changed because
+    Phase 2 permits live mode via the internal ``_allow_live=True`` opt-in.
+    Naive ``AlpacaBroker(paper=False)`` from user code STILL raises;
+    the message now points at ``_build_broker`` as the only vetted site.
     """
     from gekko.brokers.alpaca import AlpacaBroker
     from gekko.core.errors import BrokerConfigError
@@ -45,13 +50,14 @@ def test_paper_false_rejected_before_trading_client_constructed(mocker: Any) -> 
     with pytest.raises(BrokerConfigError) as excinfo:
         AlpacaBroker(api_key="x", secret_key="y", paper=False)
 
-    # Message mentions Phase 1, paper, and the Phase 2 escape hatch.
+    # Message points at the vetted live path.
     msg = str(excinfo.value)
-    assert "Phase 1" in msg
-    assert "paper" in msg.lower()
-    assert "Phase 2" in msg
+    assert "live" in msg.lower()
+    assert "_build_broker" in msg or "_allow_live" in msg
 
-    # TradingClient was NEVER constructed.
+    # TradingClient was NEVER constructed (Phase-1 invariant preserved
+    # — even with the Phase-2 live opt-in available, the guard still
+    # short-circuits naive callers).
     tc_mock.assert_not_called()
 
 

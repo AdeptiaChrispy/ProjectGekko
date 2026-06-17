@@ -519,8 +519,101 @@ async def post_run_result(
     # else: unknown outcome -> no-op (defensive; tests use sentinel values).
 
 
+def build_first_live_card(
+    proposal: TradeProposal, dashboard_url: str
+) -> list[dict[str, Any]]:
+    """Build the HITL-06 first-live-trade Block Kit card (UI-SPEC §3a).
+
+    Plan 02-06 Task 3. The Slack approve handler posts THIS card instead
+    of the regular HITL card when the first live trade for a strategy
+    fires. The actions block has ONE URL-button pointing at the
+    dashboard ``/live-confirm/{decision_id}`` route — NO inline
+    Approve/Reject (those would bypass the dual-channel gate).
+
+    Per UI-SPEC §3a:
+      * Header: "🔴 FIRST LIVE TRADE — DUAL CONFIRM REQUIRED"
+      * Context: strategy / ticker / action / notional
+      * Rationale section (escaped)
+      * Warning section pointing at the dashboard
+      * Actions block with ONE URL-button "Open Dashboard to Confirm"
+
+    All LLM-authored free-form text is routed through ``_escape_mrkdwn``.
+    """
+    strategy_name = _escape_mrkdwn(proposal.strategy_name)
+    ticker = proposal.ticker  # schema-validated; safe
+    side = str(proposal.side).upper()
+    qty = str(proposal.qty)
+    notional = str(proposal.target_notional_usd)
+    rationale = _escape_mrkdwn(proposal.rationale)
+    decision_id = proposal.decision_id
+
+    blocks: list[dict[str, Any]] = [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": "🔴 FIRST LIVE TRADE — DUAL CONFIRM REQUIRED",
+            },
+        },
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": (
+                        f"*Strategy:* {strategy_name}  |  "
+                        f"*Ticker:* {ticker}  |  "
+                        f"*Action:* {side} {qty}  |  "
+                        f"*Notional:* ${notional}"
+                    ),
+                }
+            ],
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"*Rationale:* {rationale}",
+            },
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    "⚠️ This is your FIRST live trade on this strategy. "
+                    "Slack approval alone is NOT enough. Open your "
+                    "dashboard to complete the second-channel confirmation."
+                ),
+            },
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {
+                        "type": "plain_text",
+                        "text": "Open Dashboard to Confirm",
+                    },
+                    "style": "primary",
+                    "url": f"{dashboard_url}/live-confirm/{decision_id}",
+                }
+            ],
+        },
+        {
+            "type": "context",
+            "elements": [
+                {"type": "mrkdwn", "text": REG_01_DISCLOSURE},
+            ],
+        },
+    ]
+    return blocks
+
+
 __all__: tuple[str, ...] = (
     "build_fill_confirmation",
+    "build_first_live_card",
     "build_no_action_message",
     "build_orderguard_rejection_card",
     "build_proposal_card",

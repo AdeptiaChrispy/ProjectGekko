@@ -36,7 +36,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from fastapi import FastAPI, Request
 from fastapi.responses import Response
@@ -224,7 +224,78 @@ def create_app() -> FastAPI:
     async def slack_events(req: Request) -> Response:
         return await slack_handler.handle(req)
 
+    # Plan 02-06 Task 3 — banner_mode + kill_active middleware.
+    # Copies the app.state values to request.state so the Jinja base
+    # template can render the right banner stack (live on top, kill
+    # second, paper as fallback). The actual cache invalidation +
+    # 60s TTL lives in the route handlers that flip these — this
+    # middleware is the read side only.
+    @app.middleware("http")
+    async def _inject_banner_state(request: Request, call_next: Any) -> Any:
+        try:
+            request.state.kill_active = getattr(
+                request.app.state, "kill_active", False
+            )
+        except Exception:  # noqa: BLE001 — best-effort
+            request.state.kill_active = False
+        try:
+            request.state.banner_mode = await _resolve_banner_mode(request)
+        except Exception:  # noqa: BLE001
+            request.state.banner_mode = "PAPER"
+        return await call_next(request)
+
     return app
+
+
+async def _resolve_banner_mode(request: Request) -> str:
+    """Compute ``banner_mode`` for the current request.
+
+    Checks (in order):
+      1. ``request.app.state.banner_mode`` if a route set it explicitly
+         (e.g., /promote-to-live writes "LIVE" so the next render picks
+         it up without waiting for the TTL).
+      2. Counts ``strategy_metadata.live_mode_eligible=True`` rows for
+         the current user. If ≥1, "LIVE"; else "PAPER".
+
+    Cached for 60s on ``app.state._banner_mode_ts`` per UI-SPEC §1.
+    """
+    import time as _time
+
+    from sqlalchemy import func, select
+
+    from gekko.config import get_settings
+    from gekko.db.models import StrategyMetadata
+    from gekko.db.session import make_session_factory
+
+    app = request.app
+    now = _time.time()
+    cached_ts = getattr(app.state, "_banner_mode_ts", 0.0)
+    cached_mode = getattr(app.state, "banner_mode", None)
+    if cached_mode is not None and (now - cached_ts) < 60.0:
+        return cached_mode
+
+    settings = get_settings()
+    user_id = settings.gekko_user_id
+    engine = getattr(app.state, "engine", None)
+    if engine is None:
+        return "PAPER"
+
+    sf = make_session_factory(engine)
+    async with sf() as session:
+        count = (
+            await session.execute(
+                select(func.count())
+                .select_from(StrategyMetadata)
+                .where(
+                    StrategyMetadata.user_id == user_id,
+                    StrategyMetadata.live_mode_eligible.is_(True),
+                )
+            )
+        ).scalar_one()
+    mode = "LIVE" if count and count >= 1 else "PAPER"
+    app.state.banner_mode = mode
+    app.state._banner_mode_ts = now
+    return mode
 
 
 __all__: tuple[str, ...] = ("create_app", "lifespan")

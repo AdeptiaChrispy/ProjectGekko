@@ -1,0 +1,47 @@
+{# Promote-to-Live confirmation modal — Plan 02-06 Task 3.
+
+   UI-SPEC §"Destructive Action Confirmations": typed-strategy-name
+   confirmation. The user must type the EXACT strategy name in the
+   ``strategy_name_confirm`` field. The POST handler validates the
+   match server-side; this UI is just convenience.
+
+   No inline <script>; the form posts via HTMX hx-post. CSP-clean.
+#}
+<div class="modal-backdrop">
+  <div class="modal" role="dialog" aria-labelledby="promote-headline" aria-modal="true">
+    <h2 id="promote-headline" class="modal-headline">Promote strategy to LIVE</h2>
+    <div class="modal-body">
+      <p>You're promoting <code class="font-medium">{{ name }}</code> to live-eligible.</p>
+      <p class="mt-2 text-sm text-gray-700">
+        This does NOT immediately place live orders. After promotion, the first
+        live trade per strategy still requires the dashboard dual-channel
+        confirmation (HITL-06).
+      </p>
+      <p class="mt-2 text-sm font-medium">
+        Type the strategy name <code>{{ name }}</code> to confirm:
+      </p>
+      <form hx-post="/strategies/{{ name }}/promote-to-live"
+            hx-target="#promote-result"
+            hx-swap="outerHTML"
+            class="mt-2">
+        <input type="text"
+               name="strategy_name_confirm"
+               required
+               autocomplete="off"
+               class="w-full mb-3"
+               aria-label="Strategy name confirmation"
+               placeholder="{{ name }}">
+        <div class="modal-actions">
+          <a href="#"
+             hx-get="/modal/close"
+             hx-target="#modal-mount"
+             hx-swap="innerHTML">
+            Cancel
+          </a>
+          <button type="submit" class="danger">Promote to LIVE</button>
+        </div>
+      </form>
+      <div id="promote-result"></div>
+    </div>
+  </div>
+</div>

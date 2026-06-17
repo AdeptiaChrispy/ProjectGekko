@@ -49,13 +49,22 @@
 
   <div>
     <label for="mode">Mode</label>
-    {# P1 is paper-only per D-24. The select element is informational only — the
-       server enforces paper at the schema layer and the constructor guard. #}
-    <select id="mode" name="mode" disabled>
-      <option value="paper" {% if strategy.mode == "paper" %}selected{% endif %}>paper</option>
-      <option value="live" disabled>live (coming in Phase 2)</option>
-    </select>
-    <input type="hidden" name="mode" value="paper">
+    {# Plan 02-06 Task 3 — live option enabled when live_mode_eligible.
+       Until the strategy has been promoted to live-eligible via the
+       /strategies/{name}/promote-to-live route (or the CLI), the live
+       option is disabled. Promotion requires typed-strategy-name confirm. #}
+    {% if live_mode_eligible %}
+      <select id="mode" name="mode">
+        <option value="paper" {% if strategy.mode == "paper" %}selected{% endif %}>paper</option>
+        <option value="live" {% if strategy.mode == "live" %}selected{% endif %}>live</option>
+      </select>
+    {% else %}
+      <select id="mode" name="mode" disabled>
+        <option value="paper" {% if strategy.mode == "paper" %}selected{% endif %}>paper</option>
+        <option value="live" disabled>live (promote strategy first)</option>
+      </select>
+      <input type="hidden" name="mode" value="paper">
+    {% endif %}
   </div>
 
   <div class="flex gap-2 mt-2">

@@ -89,21 +89,46 @@ async def strategies_list(request: Request) -> HTMLResponse:
         rows = (await session.execute(q)).scalars().all()
 
     # Each row gets a watchlist preview computed from payload_json so the
-    # template doesn't need to deserialize Pydantic models.
+    # template doesn't need to deserialize Pydantic models. Plan 02-06
+    # Task 3: enrich with the StrategyMetadata.live_mode_eligible flag so
+    # the template can render the [LIVE] chip + Promote-to-Live button.
+    from gekko.db.models import StrategyMetadata
+
     enriched: list[dict[str, object]] = []
+    async with make_session_factory(engine)() as session:
+        meta_rows = list(
+            (
+                await session.execute(
+                    select(StrategyMetadata).where(
+                        StrategyMetadata.user_id == user_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    meta_by_name = {m.strategy_name: m for m in meta_rows}
+
     for r in rows:
         try:
             strategy = Strategy.model_validate_json(r.payload_json)
             preview = ", ".join(strategy.watchlist[:5])
             if len(strategy.watchlist) > 5:
                 preview += f", … (+{len(strategy.watchlist) - 5})"
+            mode = strategy.mode
         except Exception:
             preview = "(payload not parseable)"
+            mode = "paper"
+        meta = meta_by_name.get(r.strategy_name)
         enriched.append(
             {
                 "strategy_name": r.strategy_name,
                 "version": r.version,
                 "watchlist_preview": preview,
+                "mode": mode,
+                "live_mode_eligible": (
+                    meta.live_mode_eligible if meta is not None else False
+                ),
             }
         )
 
@@ -149,6 +174,14 @@ async def strategy_edit(request: Request, name: str) -> HTMLResponse:
         )
 
     strategy = Strategy.model_validate_json(row.payload_json)
+
+    # Plan 02-06 Task 3 — fetch live_mode_eligible for the mode <select> gate.
+    from gekko.db.models import StrategyMetadata
+
+    async with make_session_factory(engine)() as session:
+        meta = await session.get(StrategyMetadata, (user_id, name))
+    live_mode_eligible = bool(meta and meta.live_mode_eligible)
+
     return templates.TemplateResponse(
         "strategy_edit.html.j2",
         {
@@ -165,6 +198,7 @@ async def strategy_edit(request: Request, name: str) -> HTMLResponse:
                 strategy.hard_caps.max_sector_exposure_pct
             ),
             "schedule_time": strategy.schedule_time or "",
+            "live_mode_eligible": live_mode_eligible,
         },
     )
 
@@ -449,6 +483,19 @@ async def _execute_unkill_background(*, user_id: str, source: str) -> None:
 
 
 import time as _time
+
+
+@router.get(
+    "/strategies/{name}/promote-modal", response_class=HTMLResponse
+)
+async def promote_modal(
+    request: Request, name: str
+) -> HTMLResponse:
+    """Render the typed-confirm modal for promoting a strategy to live."""
+    return templates.TemplateResponse(
+        "promote_to_live_modal.html.j2",
+        {"request": request, "name": name},
+    )
 
 
 @router.post("/strategies/{name}/promote-to-live", response_class=HTMLResponse)
