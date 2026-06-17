@@ -140,6 +140,13 @@ async def _check_daily_loss(
 ) -> None:
     start_iso, end_iso = _today_utc_window()
     sf, engine = _get_session_factory(user_id)
+    # TODO(perf, IN-02 / Phase-3): once realized_pnl_usd lands on fill
+    # payloads, move the aggregation into a SQL ``SUM(...)`` expression
+    # rather than a Python loop over every row. The current scan has no
+    # LIMIT clause; a high-volume strategy day could put hundreds of
+    # rows in this scan, and it runs on every OrderGuard.place_order
+    # call. The LIMIT 1000 below caps the worst-case row count at a
+    # value comfortably above any realistic daily fill volume.
     try:
         async with sf() as session:
             # ``payload_json`` is the canonical-subset JSON; the realized
@@ -149,19 +156,40 @@ async def _check_daily_loss(
             # compatible: in Phase 1 the sum is always 0 and the cap never
             # fires. Plan 02-03's wash-sale + future cost-basis work will
             # populate this key.
+            #
+            # IN-02 fix: cap the scan at 1000 rows. A LIMIT also flags
+            # when daily volume is high enough to warrant the SQL SUM
+            # rewrite — see the threshold-warning log below.
             rows = (
                 await session.execute(
-                    select(Event).where(
+                    select(Event)
+                    .where(
                         Event.user_id == user_id,
                         Event.event_type == "fill",
                         Event.ts >= start_iso,
                         Event.ts <= end_iso,
                     )
+                    .limit(1000)
                 )
             ).scalars().all()
     finally:
         if engine is not None:
             await engine.dispose()
+
+    if len(rows) >= 1000:
+        # Perf canary — if we ever hit the cap, the SQL SUM rewrite is
+        # overdue. Out of v1 perf scope but operators should see it.
+        log.warning(
+            "orderguard.daily_loss_scan_at_limit",
+            user_id=user_id,
+            row_count=len(rows),
+            limit=1000,
+            note=(
+                "Daily-loss check scanned the LIMIT 1000 cap; "
+                "Phase-3 should rewrite as SQL SUM. IN-02 in "
+                "Phase-2 code review."
+            ),
+        )
 
     cumulative_loss = Decimal("0")
     for row in rows:
@@ -292,7 +320,31 @@ async def _check_sector_exposure(
     if equity <= Decimal("0"):
         return
 
+    # TODO(perf, IN-01 / Phase-3): batch sector resolution via
+    # ``broker.get_all_assets()`` once and build a ``{symbol: sector}`` map
+    # rather than per-position ``get_asset`` calls. With ~50 open positions
+    # on a slow link, this loop issues 50 sequential blocking HTTP calls
+    # wrapped in ``asyncio.to_thread`` — the user-facing approve-to-fill
+    # latency directly absorbs the cost because cap_rejection runs
+    # synchronously before broker submission. Out of v1 perf scope but
+    # the threshold warning below flags when the loop gets long enough
+    # to matter.
     positions = await broker.get_positions()
+    if len(positions) > 25:
+        # Structured warning — perf canary for Phase-3 sector-resolution
+        # batching. 25 positions = ~25 broker GETs at ~50-200ms each on
+        # a typical link, which is the boundary where users notice the
+        # approve latency.
+        log.warning(
+            "orderguard.sector_resolve_loop_long",
+            ticker=req.symbol,
+            position_count=len(positions),
+            threshold=25,
+            note=(
+                "Per-position get_asset loop; Phase-3 should batch via "
+                "get_all_assets. IN-01 in Phase-2 code review."
+            ),
+        )
     sector_exposure = Decimal("0")
     for pos in positions:
         sym = pos.get("symbol") or pos.get("asset_id") or ""
