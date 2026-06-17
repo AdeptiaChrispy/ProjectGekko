@@ -149,6 +149,18 @@ class OrderGuard(Brokerage):
         return await self._wrapped.get_order_by_client_order_id(client_order_id)
 
     async def cancel_order(self, broker_order_id: str) -> bool:
+        """Pure passthrough to the wrapped broker's ``cancel_order``.
+
+        WR-05 fix (Phase-2 code review): this method MUST stay
+        zero-decorator at the OrderGuard layer too. The Knight Capital
+        pitfall lives on the wrapped broker side, but adding a retry
+        decorator on the OrderGuard wrap would equally break kill
+        timing (a 429 retry storm during a kill is the worst failure
+        mode; the kill switch's ``asyncio.gather`` + 4s timeout owns
+        failure tolerance — RESEARCH §6 Open Question #1). Mirror
+        the docstring shape used by ``cancel_all_open_orders`` just
+        below so the invariant is load-bearing in both places.
+        """
         return await self._wrapped.cancel_order(broker_order_id)
 
     async def get_orders_open(self) -> list[dict[str, Any]]:

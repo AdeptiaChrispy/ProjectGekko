@@ -283,8 +283,30 @@ class AlpacaBroker(Brokerage):
     async def cancel_order(self, broker_order_id: str) -> bool:
         """Cancel an open order. Returns True on success.
 
-        P1 keeps this minimal — rate-limit hardening and retry policy land
-        in Phase 2's OrderGuard per SKELETON.md (§"What's Real vs Minimal").
+        Per RESEARCH §6 Open Question #1: this method is INTENTIONALLY
+        NOT decorated with ``@retry_on_rate_limit`` (same rationale as
+        :meth:`cancel_all_open_orders`). A 429 retry storm during a
+        kill is the worst possible failure mode — the kill switch's
+        ``asyncio.gather`` + 4s timeout is the failure-tolerant
+        scaffold. Tenacity here would convert a 429 into ~5 minutes of
+        retries during a cancel sweep, blowing the EXEC-06 / D-37 5s
+        SLA wide open.
+
+        EXEC-03 / Knight Capital invariant: ``place_order``,
+        ``cancel_order``, ``cancel_all_open_orders``, and
+        ``OrderGuard.place_order`` MUST stay zero-decorator. The AST
+        gate in ``tests/unit/test_alpaca_retry.py`` enforces zero
+        retry decorators on this method — adding ``@retry_*`` here
+        will fail CI.
+
+        WR-04 fix (Phase-2 code review): the prior docstring said
+        "P1 keeps this minimal — rate-limit hardening and retry policy
+        land in Phase 2's OrderGuard". A future contributor reading
+        that as "cancel_order is just not done yet" could plausibly
+        add a retry decorator, silently breaking the kill switch's
+        failure-tolerance contract. This docstring now matches the
+        cancel_all_open_orders shape so the invariant is load-bearing
+        in both places.
         """
         await asyncio.to_thread(self._client.cancel_order_by_id, broker_order_id)
         return True
