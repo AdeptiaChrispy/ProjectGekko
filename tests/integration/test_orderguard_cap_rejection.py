@@ -247,8 +247,13 @@ def _patch_seams(
     strategy: Strategy,
     proposal: TradeProposal,
     market_open: bool = True,
+    dm_capture: list[dict[str, Any]] | None = None,
 ) -> None:
-    """Wire executor + checks seams onto a single in-memory engine + broker."""
+    """Wire executor + checks seams onto a single in-memory engine + broker.
+
+    :param dm_capture: Optional list to capture Slack DM block payloads
+        from the cap_rejection branch (plan 02-05 Task 3 extension).
+    """
     from gekko.execution import executor
     from gekko.execution.checks import _hard_caps as hc_mod
     from gekko.execution.checks import _kill_switch as ks_mod
@@ -266,6 +271,21 @@ def _patch_seams(
     )
     monkeypatch.setattr(executor, "is_market_open", lambda *a, **k: market_open)
     monkeypatch.setattr(mh_mod, "is_market_open", lambda *a, **k: market_open)
+
+    # Stub the Slack DM seams so unit tests don't hit Slack.
+    async def _noop_dm(user_id: str, text: str) -> None:
+        return None
+
+    async def _capture_blocks(
+        user_id: str, *, blocks: list[dict[str, Any]], fallback: str = ""
+    ) -> None:
+        if dm_capture is not None:
+            dm_capture.append(
+                {"user_id": user_id, "blocks": blocks, "fallback": fallback}
+            )
+
+    monkeypatch.setattr(executor, "_send_slack_dm", _noop_dm)
+    monkeypatch.setattr(executor, "_send_slack_dm_blocks", _capture_blocks)
 
     def _fake_build_broker(
         user_id: str,
@@ -548,3 +568,79 @@ async def test_cap_rejection_kill_active_end_to_end(
         proposal_id=proposal_id,
         expected_reject_code="kill_active",
     )
+
+
+# ---------------------------------------------------------------------------
+# 6. Plan 02-05 Task 3 — cap_rejection now emits Slack DM rejection card
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cap_rejection_emits_orderguard_slack_dm_card(
+    temp_sqlcipher_db: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After cap_rejection: Slack DM with OrderGuard rejection card sent.
+
+    Plan 02-05 Task 3 extension: the executor's cap_rejection handler now
+    calls ``build_orderguard_rejection_card(...)`` and sends the DM via
+    ``_send_slack_dm_blocks`` AFTER the audit write completes (PATTERNS §4
+    anti-pattern row 14 — DM outside transaction).
+    """
+    from gekko.audit import log as _audit_log
+    from gekko.execution import executor
+
+    _audit_log._append_locks.clear()
+    sf = make_session_factory(temp_sqlcipher_db)
+    user_id = "test-user"
+
+    # Use the universe-reject path (simplest — proposal targets TSLA but
+    # strategy.watchlist = [NVDA]).
+    tp = _make_trade_proposal(ticker="TSLA")
+    strategy = _make_strategy(watchlist=["NVDA"])
+    proposal_id = await _seed_chain(
+        sf, tp=tp, strategy=strategy, user_id=user_id
+    )
+
+    dms: list[dict[str, Any]] = []
+    broker = _success_broker(is_paper=True)
+    _patch_seams(
+        monkeypatch,
+        sf=sf,
+        broker=broker,
+        strategy=strategy,
+        proposal=tp,
+        dm_capture=dms,
+    )
+
+    await executor.execute_proposal(proposal_id, user_id)
+
+    broker.place_order.assert_not_awaited()
+
+    # Audit chain still intact.
+    await _assert_cap_rejection_chain(
+        sf,
+        user_id=user_id,
+        proposal_id=proposal_id,
+        expected_reject_code="universe",
+    )
+
+    # Slack DM landed with the rejection card shape (UI-SPEC §4a).
+    assert len(dms) == 1, (
+        f"expected exactly 1 OrderGuard rejection DM, got {len(dms)}"
+    )
+    dm = dms[0]
+    blocks = dm["blocks"]
+    assert isinstance(blocks, list)
+    # Header block
+    assert blocks[0]["type"] == "header"
+    assert "REJECTED BY ORDERGUARD" in blocks[0]["text"]["text"]
+    # Field block carries reject_code + reject_reason + ticker + strategy + proposal.
+    field_block = blocks[1]
+    assert field_block["type"] == "section"
+    field_texts = " | ".join(f["text"] for f in field_block["fields"])
+    assert "universe" in field_texts
+    assert "TSLA" in field_texts
+    assert "og-test" in field_texts
+    # Explainer block.
+    assert blocks[2]["type"] == "section"
+    assert "deterministic Python firewall" in blocks[2]["text"]["text"]

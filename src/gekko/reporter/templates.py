@@ -43,9 +43,46 @@ PAPER_BANNER: str = "🟢 PAPER"
 #: (Plan 01-05). Kept here for forward-compatibility with the P2 OrderGuard.
 LIVE_BANNER: str = "🔴 LIVE"
 
+# ---------------------------------------------------------------------------
+# Phase 2 — UI-SPEC §"Banner & Section Headers" + §4a constants (plan 02-05)
+# ---------------------------------------------------------------------------
+
+#: Strong-form live banner (UI-SPEC §"Banner & Section Headers"). Replaces
+#: the placeholder LIVE_BANNER for the dashboard's banner-live-strong CSS
+#: class. Plan 02-06 wires the conditional in base.html.j2.
+LIVE_BANNER_STRONG: str = "[LIVE — REAL MONEY] Alpaca live trading is armed."
+
+#: Sticky red banner copy shown when kill_active=True (UI-SPEC §2c).
+#: Format-string for in-process kill; the boot-restored variant has its
+#: own constant below.
+KILL_ACTIVE_BANNER: str = (
+    "🚫 KILL ACTIVE — no orders will fire. "
+    "Cancelled {n_cancelled}/{n_total} open orders."
+)
+
+#: Boot-restored variant shown when the lifespan check finds kill_active=True
+#: on startup (D-36).
+KILL_ACTIVE_BANNER_BOOT_RESTORED: str = (
+    "🚫 KILL ACTIVE — restored from previous session. UNKILL to resume."
+)
+
+#: Slack Block Kit header for the OrderGuard rejection card (UI-SPEC §4a).
+ORDERGUARD_REJECTION_HEADER: str = "🔴 [REJECTED BY ORDERGUARD]"
+
+#: Slack Block Kit explainer block for the rejection card (UI-SPEC §4a).
+ORDERGUARD_REJECTION_EXPLAINER: str = (
+    "This proposal will not be executed. OrderGuard is a deterministic "
+    "Python firewall — it ran BEFORE any broker call. No order was sent."
+)
+
 
 __all__: tuple[str, ...] = (
+    "KILL_ACTIVE_BANNER",
+    "KILL_ACTIVE_BANNER_BOOT_RESTORED",
     "LIVE_BANNER",
+    "LIVE_BANNER_STRONG",
+    "ORDERGUARD_REJECTION_EXPLAINER",
+    "ORDERGUARD_REJECTION_HEADER",
     "PAPER_BANNER",
     "REG_01_DISCLOSURE",
     "UNKNOWN_FIELD_PLACEHOLDER",

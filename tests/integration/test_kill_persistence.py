@@ -143,6 +143,183 @@ async def test_kill_state_survives_process_restart(
         await engine_2.dispose()
 
 
+# ---------------------------------------------------------------------------
+# FastAPI lifespan boot-time DM (Plan 02-05 Task 3 / D-36)
+# ---------------------------------------------------------------------------
+
+
+async def _setup_lifespan_env(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    data_dir: Path,
+    user_id: str,
+) -> None:
+    """Seed env + passphrase + stub heavy lifespan side effects."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-anthropic")
+    monkeypatch.setenv("ALPACA_PAPER_API_KEY", "test-alpaca-key")
+    monkeypatch.setenv("ALPACA_PAPER_SECRET_KEY", "test-alpaca-secret")
+    monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test-bot")
+    monkeypatch.setenv("SLACK_SIGNING_SECRET", "test-signing")
+    monkeypatch.setenv("SLACK_USER_ID", "U_TEST_USER")
+    monkeypatch.setenv("GEKKO_USER_ID", user_id)
+    monkeypatch.setenv("GEKKO_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("GEKKO_DB_PASSPHRASE", _TEST_PASSPHRASE)
+
+    from gekko.config import get_settings
+
+    get_settings.cache_clear()
+    from gekko.vault.passphrase import set_passphrase
+
+    set_passphrase(_TEST_PASSPHRASE)
+
+    # Stub sync engine (the lifespan only needs it for the scheduler stub).
+    from gekko.db import engine as _engine_mod
+
+    monkeypatch.setattr(
+        _engine_mod, "get_sync_engine", lambda _p, _pw: MagicMock()
+    )
+
+    class _StubScheduler:
+        def start(self) -> None:
+            return None
+
+        def shutdown(self, wait: bool = False) -> None:
+            return None
+
+    from gekko.scheduler import jobs as _jobs_mod
+
+    monkeypatch.setattr(
+        _jobs_mod, "build_scheduler", lambda _s: _StubScheduler()
+    )
+
+    class _StubFillStream:
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+
+        def start(self) -> None:
+            return None
+
+        async def stop(self) -> None:
+            return None
+
+    from gekko.brokers import stream as _stream_mod
+
+    monkeypatch.setattr(_stream_mod, "AlpacaFillStream", _StubFillStream)
+
+
+@pytest.mark.asyncio
+async def test_lifespan_boot_time_kill_active_dms_operator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When users.kill_active=True at startup, lifespan DMs + sets app.state.
+
+    Simulates the cross-restart scenario at the FastAPI app level:
+      1. Seed user row with kill_active=True (simulates a prior kill)
+      2. Invoke the FastAPI lifespan against this DB
+      3. Assert: app.state.kill_active=True AND _send_slack_dm was called
+         with the "Restarted with kill_active=ON" boot DM
+    """
+    user_id = "test-user"
+    data_dir = tmp_path / "gekko-data"
+    data_dir.mkdir()
+    db_path = data_dir / f"{user_id}.db"
+
+    engine = get_async_engine(db_path, _TEST_PASSPHRASE)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    sf = make_session_factory(engine)
+    now = datetime.now(UTC).isoformat()
+    async with sf() as session, session.begin():
+        session.add(
+            User(
+                user_id=user_id,
+                created_at=now,
+                kill_active=True,
+                kill_active_since=now,
+                kill_active_reason="prior-process",
+            )
+        )
+    await engine.dispose()
+
+    await _setup_lifespan_env(monkeypatch, data_dir=data_dir, user_id=user_id)
+
+    # Capture the boot-time DM.
+    dms: list[tuple[str, str]] = []
+
+    async def _capture_dm(uid: str, text: str) -> None:
+        dms.append((uid, text))
+
+    from gekko.execution import executor
+
+    monkeypatch.setattr(executor, "_send_slack_dm", _capture_dm)
+
+    # Build the app + drive the lifespan.
+    from fastapi import FastAPI
+    from gekko.dashboard import app as dashboard_app
+
+    app = FastAPI(lifespan=dashboard_app.lifespan)
+
+    async with app.router.lifespan_context(app):
+        assert app.state.kill_active is True, (
+            "lifespan must set app.state.kill_active=True when DB column is True"
+        )
+        assert app.state.kill_active_since is not None
+        assert len(dms) == 1, (
+            f"expected boot-time kill DM, got {len(dms)}: {dms!r}"
+        )
+        uid, text = dms[0]
+        assert uid == user_id
+        assert "Restarted with kill_active=ON" in text
+        assert "unkill" in text.lower()
+
+
+@pytest.mark.asyncio
+async def test_lifespan_no_dm_when_kill_inactive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When kill_active=False at startup, lifespan DOES NOT DM."""
+    user_id = "test-user"
+    data_dir = tmp_path / "gekko-data"
+    data_dir.mkdir()
+    db_path = data_dir / f"{user_id}.db"
+
+    engine = get_async_engine(db_path, _TEST_PASSPHRASE)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    sf = make_session_factory(engine)
+    now = datetime.now(UTC).isoformat()
+    async with sf() as session, session.begin():
+        session.add(
+            User(
+                user_id=user_id,
+                created_at=now,
+                kill_active=False,
+            )
+        )
+    await engine.dispose()
+
+    await _setup_lifespan_env(monkeypatch, data_dir=data_dir, user_id=user_id)
+
+    dms: list[tuple[str, str]] = []
+
+    async def _capture_dm(uid: str, text: str) -> None:
+        dms.append((uid, text))
+
+    from gekko.execution import executor
+
+    monkeypatch.setattr(executor, "_send_slack_dm", _capture_dm)
+
+    from fastapi import FastAPI
+    from gekko.dashboard import app as dashboard_app
+
+    app = FastAPI(lifespan=dashboard_app.lifespan)
+    async with app.router.lifespan_context(app):
+        assert app.state.kill_active is False
+        assert dms == [], (
+            f"expected NO DM when kill_active=False, got {dms!r}"
+        )
+
+
 @pytest.mark.asyncio
 async def test_kill_state_cleared_only_by_unkill(
     restartable_db: Path, monkeypatch: pytest.MonkeyPatch

@@ -65,6 +65,14 @@ def _make_dummy_broker_class() -> type:
         async def cancel_order(self, broker_order_id: str) -> bool:
             return True
 
+        async def get_orders_open(self) -> list[dict[str, Any]]:
+            # Phase-2 plan 02-05: kill switch.
+            return []
+
+        async def cancel_all_open_orders(self) -> list[dict[str, Any]]:
+            # Phase-2 plan 02-05: kill switch batch cancel.
+            return []
+
     return _DummyBroker
 
 

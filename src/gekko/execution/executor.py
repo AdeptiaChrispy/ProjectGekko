@@ -179,6 +179,33 @@ async def _send_slack_dm(user_id: str, text: str) -> None:
     )
 
 
+async def _send_slack_dm_blocks(
+    user_id: str, *, blocks: list[dict[str, Any]], fallback: str = ""
+) -> None:
+    """Send a Slack Block Kit DM addressed to the configured operator.
+
+    Plan 02-05 Task 3 — parallel to :func:`_send_slack_dm` for blocks-shaped
+    payloads (OrderGuard rejection card + boot-time kill DM card variants).
+    Honors the identity-split fix from quick task 260612-nlv: the
+    ``user_id`` argument is the INTERNAL gekko_user_id; Slack's
+    ``chat.postMessage`` requires :attr:`Settings.slack_user_id`.
+
+    :param user_id: Internal gekko_user_id (ignored at the channel layer
+        but accepted for caller-API symmetry with :func:`_send_slack_dm`).
+    :param blocks: Block Kit block list.
+    :param fallback: Text fallback for notification preview + screen
+        readers. Required when ``blocks=`` is set per Slack's API.
+    """
+    from gekko.slack.app import slack_app
+
+    settings = get_settings()
+    await slack_app.client.chat_postMessage(
+        channel=settings.slack_user_id,
+        blocks=blocks,
+        text=fallback or "OrderGuard rejection",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Strategy hydration helper (Plan 02-02 Task 3)
 # ---------------------------------------------------------------------------
@@ -387,6 +414,29 @@ async def execute_proposal(proposal_id: str, user_id: str) -> None:
                     proposal_id,
                     from_status="APPROVED",
                     to_status="FAILED",
+                )
+            # Plan 02-05 Task 3: send the rejection Slack DM AFTER the
+            # audit-write transaction completes (PATTERNS §4 anti-pattern
+            # row 14 — DM outside transaction). Mirrors the on_fill_event
+            # pattern at lines 548-583 below.
+            try:
+                from gekko.reporter.slack import (
+                    build_orderguard_rejection_card,
+                )
+
+                blocks = build_orderguard_rejection_card(
+                    reject_code=exc.reject_code,
+                    reject_reason=exc.reject_reason,
+                    ticker=tp.ticker,
+                    strategy_name=tp.strategy_name,
+                    proposal_id=proposal_id,
+                )
+                await _send_slack_dm_blocks(user_id, blocks=blocks)
+            except Exception:  # noqa: BLE001 — DM failure must not abort flow
+                log.exception(
+                    "executor.cap_rejection.dm_failed",
+                    proposal_id=proposal_id,
+                    reject_code=exc.reject_code,
                 )
             return
         except BrokerOrderError as exc:

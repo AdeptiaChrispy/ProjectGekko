@@ -46,6 +46,8 @@ from typing import Any
 
 from gekko.reporter.templates import (
     LIVE_BANNER,
+    ORDERGUARD_REJECTION_EXPLAINER,
+    ORDERGUARD_REJECTION_HEADER,
     PAPER_BANNER,
     REG_01_DISCLOSURE,
     UNKNOWN_FIELD_PLACEHOLDER,
@@ -389,6 +391,77 @@ def build_fill_confirmation(
     )
 
 
+def build_orderguard_rejection_card(
+    reject_code: str,
+    reject_reason: str,
+    ticker: str,
+    strategy_name: str,
+    proposal_id: str,
+) -> list[dict[str, Any]]:
+    """Render the OrderGuard rejection Block Kit DM card — UI-SPEC §4a.
+
+    Plan 02-05 Task 3: the executor's ``cap_rejection`` handler (extended
+    in this plan) builds this card AFTER the audit-write transaction
+    completes (PATTERNS §4 anti-pattern row 14 — DM outside transaction)
+    and sends it via ``_send_slack_dm``.
+
+    Card shape (UI-SPEC §4a verbatim):
+
+      * Header: 🔴 [REJECTED BY ORDERGUARD]
+      * Section: reject_code + reject_reason + ticker + strategy + proposal_id
+      * Section: explainer ("OrderGuard is a deterministic Python firewall…")
+
+    Every interpolated value routes through ``_escape_mrkdwn`` per UI-SPEC
+    §"Slack Block Kit Parallels Summary" consistency lock — even though
+    ``reject_code`` / ``reject_reason`` are deterministic Python strings
+    (the OrderGuardRejected error class produces stable codes), the same
+    render path applies for defense in depth.
+
+    :param reject_code: Stable machine-readable code from D-29 / D-30
+        (``"universe"``, ``"hard_cap_position_pct"``, ``"qty_price_drift"``,
+        ``"paper_live_mismatch_broker"``, ``"kill_active"``, ``"pdt_rule_local"``,
+        ``"t1_settlement"``).
+    :param reject_reason: Human-readable explanation.
+    :param ticker: Symbol the rejected proposal targeted.
+    :param strategy_name: Strategy slug.
+    :param proposal_id: Proposal primary key for traceability.
+    :returns: Block Kit block list ready for ``chat_postMessage(blocks=...)``.
+    """
+    code_safe = _escape_mrkdwn(reject_code)
+    reason_safe = _escape_mrkdwn(reject_reason)
+    ticker_safe = _escape_mrkdwn(ticker)
+    strategy_safe = _escape_mrkdwn(strategy_name)
+    proposal_safe = _escape_mrkdwn(proposal_id)
+
+    return [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": ORDERGUARD_REJECTION_HEADER,
+                "emoji": True,
+            },
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": f"*Reject code:* {code_safe}"},
+                {"type": "mrkdwn", "text": f"*Reject reason:* {reason_safe}"},
+                {"type": "mrkdwn", "text": f"*Ticker:* {ticker_safe}"},
+                {"type": "mrkdwn", "text": f"*Strategy:* {strategy_safe}"},
+                {"type": "mrkdwn", "text": f"*Proposal ID:* {proposal_safe}"},
+            ],
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": ORDERGUARD_REJECTION_EXPLAINER,
+            },
+        },
+    ]
+
+
 async def post_run_result(
     user_id: str,
     result: dict[str, Any],
@@ -449,6 +522,7 @@ async def post_run_result(
 __all__: tuple[str, ...] = (
     "build_fill_confirmation",
     "build_no_action_message",
+    "build_orderguard_rejection_card",
     "build_proposal_card",
     "post_run_result",
 )

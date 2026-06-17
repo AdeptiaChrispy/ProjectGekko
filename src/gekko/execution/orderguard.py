@@ -144,6 +144,17 @@ class OrderGuard(Brokerage):
     async def cancel_order(self, broker_order_id: str) -> bool:
         return await self._wrapped.cancel_order(broker_order_id)
 
+    async def get_orders_open(self) -> list[dict[str, Any]]:
+        # Phase-2 plan 02-05: kill switch reads through OrderGuard transparently
+        # — passthrough to the wrapped broker, no policy decision applies here.
+        return await self._wrapped.get_orders_open()
+
+    async def cancel_all_open_orders(self) -> list[dict[str, Any]]:
+        # Phase-2 plan 02-05: pure passthrough to the wrapped broker. The
+        # kill switch's `asyncio.gather` + 4s timeout owns failure tolerance;
+        # OrderGuard does NOT add retry / policy here per RESEARCH §6.
+        return await self._wrapped.cancel_all_open_orders()
+
     # ------------------------------------------------------------------
     # The load-bearing override
     # ------------------------------------------------------------------

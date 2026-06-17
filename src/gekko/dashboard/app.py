@@ -84,6 +84,53 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.engine = get_async_engine(db_path, passphrase)
     app.state.sync_engine = get_sync_engine(db_path, passphrase)
 
+    # 1b. Boot-time kill_active check (D-36 / plan 02-05 Task 3).
+    # Reads users.kill_active BEFORE the scheduler starts emitting jobs.
+    # If True, DM the operator + set app.state.kill_active=True so the
+    # banner renders on the first request without waiting for the FastAPI
+    # dependency's TTL cache miss.
+    app.state.kill_active = False
+    app.state.kill_active_since = None
+    try:
+        from sqlalchemy import select as _select
+
+        from gekko.db.models import User
+        from gekko.db.session import make_session_factory
+
+        sf_boot = make_session_factory(app.state.engine)
+        async with sf_boot() as session:
+            row = (
+                await session.execute(
+                    _select(User).where(User.user_id == user_id)
+                )
+            ).scalar_one_or_none()
+            if row is not None and row.kill_active:
+                app.state.kill_active = True
+                app.state.kill_active_since = row.kill_active_since
+                log.warning(
+                    "dashboard.lifespan.kill_active_on_restart",
+                    user_id=user_id,
+                    kill_active_since=row.kill_active_since,
+                )
+                try:
+                    from gekko.execution.executor import _send_slack_dm
+
+                    await _send_slack_dm(
+                        user_id,
+                        "🚫 Restarted with kill_active=ON; no orders will "
+                        "fire until `/gekko unkill CONFIRM`.",
+                    )
+                except Exception:  # noqa: BLE001
+                    log.exception(
+                        "dashboard.lifespan.kill_active_dm_failed",
+                        user_id=user_id,
+                    )
+    except Exception:  # noqa: BLE001
+        log.exception(
+            "dashboard.lifespan.kill_active_check_failed",
+            user_id=user_id,
+        )
+
     # 2. Scheduler.
     app.state.scheduler = build_scheduler(app.state.sync_engine)
     app.state.scheduler.start()
