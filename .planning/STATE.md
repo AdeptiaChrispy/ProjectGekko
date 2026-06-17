@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Safety & Trust
 status: executing
-last_updated: "2026-06-16T23:44:40.322Z"
-last_activity: 2026-06-16 -- Plan 02-03 complete (Wave-3 PDT/T+1 BLOCK + wash-sale FLAG + tenacity GETs + AST gate; 522 unit + 37 integration tests pass)
+last_updated: "2026-06-16T17:00:00.000Z"
+last_activity: 2026-06-16 -- Plan 02-05 complete (kill switch code+tests landed; manual 5s SLA + restart + dashboard demos deferred to operator per 01-09 pattern)
 progress:
   total_phases: 2
   completed_phases: 1
   total_plans: 16
   completed_plans: 13
-  percent: 56
+  percent: 81
 ---
 
 # Project State: Project Gekko

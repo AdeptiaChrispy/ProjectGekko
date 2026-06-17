@@ -75,7 +75,7 @@ See `milestones/v1.0-ROADMAP.md` for the full archived snapshot (with detailed p
   4. Paper credentials cannot place live orders and vice versa — OrderGuard validates env-credential pairing and hard-rejects mismatches, with a red banner indicating live mode on every Slack message and UI surface
   5. User can promote a paper strategy to live, place a small real-money trade through the full HITL flow, and see PDT-rule awareness, wash-sale flagging, market-hours guard, and broker rate-limit backoff all enforce correctly without manual intervention
 
-**Plans:** 4/7 plans executed
+**Plans:** 5/7 plans executed
 Plans:
 **Wave 1**
 
@@ -92,7 +92,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 02-05-PLAN.md — Kill switch (DB persistence + 3 surfaces + 5s SLA + boot-time check + rejection card)
+- [x] 02-05-PLAN.md — Kill switch (DB persistence + 3 surfaces + 5s SLA + boot-time check + rejection card)
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
@@ -231,7 +231,7 @@ Plans:
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 1. Foundation & Vertical Slice | v1.0 | 9/9 | Complete ✅ | 2026-06-15 |
-| 2. OrderGuard & Real-Money Alpaca Live | v2.0 | 4/7 | In Progress|  |
+| 2. OrderGuard & Real-Money Alpaca Live | v2.0 | 5/7 | In Progress|  |
 | 3. Production HITL UX | v2.0 | 0/0 | Not started | - |
 | 4. Agent Architecture & Cost Bounds | v2.0 | 0/0 | Not started | - |
 | 5. Trust Ladder | v2.0 | 0/0 | Not started | - |

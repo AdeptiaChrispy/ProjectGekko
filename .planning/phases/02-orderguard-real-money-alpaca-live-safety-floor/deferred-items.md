@@ -52,6 +52,32 @@ and have no causal relation to OrderGuard).
   pytest conftest fixture would fix all three in one swoop. Out of
   scope for plan 02-02.
 
+## Manual demos deferred (Plan 02-05 kill switch)
+
+### Demo A — 5-second SLA verification (VALIDATION.md Manual-Only §2)
+
+- **Plan:** 02-05 Task 4
+- **Reason for deferral:** wall-clock evidence required; cannot be cassette-replayed. Operator paused 2026-06-16 with code/tests landed (commits `5dc1da5`, `31278b9`, `163f975`) — same pattern as Phase-1 Plan 01-09 Task 5.
+- **Demo steps:** see 02-05-SUMMARY.md §"Manual — DEFERRED to operator" Demo A.
+- **Expected outcome:** ≤5s from `/gekko kill CONFIRM` receipt to `🚫 Kill ACTIVE. Cancelled X/Y...` DM in 9/10 trials. Cancelled-count matches placed-count. `gekko audit dump --event-type kill_switch` shows the action='kill' + action='kill_complete' event pair with timing payload.
+- **Owner:** operator. Reply with `demo_passed` + audit-dump evidence to close.
+
+### Demo B — Cross-restart persistence (VALIDATION.md Manual-Only §3)
+
+- **Plan:** 02-05 Task 4
+- **Reason for deferral:** requires actual Ctrl-C of `gekko serve` + restart. Cannot be unit-tested.
+- **Demo steps:** see 02-05-SUMMARY.md §"Manual — DEFERRED to operator" Demo B.
+- **Expected outcome:** boot lifespan logs `kill_active_on_restart=True`, DMs operator, dashboard shows red `KILL ACTIVE` banner; new `/gekko run` rejects with `reject_code="kill_active"` + DM with rejection card.
+- **Owner:** operator. Reply with `demo_passed` confirmation to close.
+
+### Demo C — Dashboard typed-KILL modal flow
+
+- **Plan:** 02-05 Task 4
+- **Reason for deferral:** browser DOM interaction; requires real Chrome session.
+- **Demo steps:** see 02-05-SUMMARY.md §"Manual — DEFERRED to operator" Demo C.
+- **Expected outcome:** typed `kill` rejected with 400, typed `KILL` accepted with HTMX modal-close swap + banner-render, mirror DM in Slack; UNKILL flow symmetric.
+- **Owner:** operator. Reply with `demo_passed` confirmation to close.
+
 ## Notes
 
 - This file should be flushed (entries resolved or escalated to a fresh plan)
