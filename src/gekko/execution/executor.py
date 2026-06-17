@@ -680,7 +680,25 @@ async def on_fill_event(payload: dict[str, Any], *, user_id: str) -> None:
                 return
             strategy_id = row.strategy_id
             proposal_id = row.proposal_id
-            ticker = payload.get("ticker") or row.payload_json[:0] or ""
+
+            # CR-01 fix: parse the persisted TradeProposal once so we have
+            # the canonical ticker (and downstream the strategy_name for the
+            # first-live stamp) regardless of broker-payload shape. The
+            # previous expression ``row.payload_json[:0]`` was the empty-
+            # prefix slice — always ``""`` — which silently dropped the
+            # ticker from the fill audit event whenever the broker payload
+            # omitted it, breaking the wash-sale 30-day lookback and the
+            # PDT round-trip correlation (both bucket by ticker).
+            try:
+                tp_persisted = TradeProposal.model_validate_json(
+                    row.payload_json
+                )
+                persisted_ticker = tp_persisted.ticker
+            except Exception:  # noqa: BLE001 — defensive
+                tp_persisted = None
+                persisted_ticker = ""
+
+            ticker = payload.get("ticker") or persisted_ticker
 
             fill_payload: dict[str, Any] = normalize_decimals(
                 {
@@ -714,12 +732,11 @@ async def on_fill_event(payload: dict[str, Any], *, user_id: str) -> None:
             # The stamp closes the HITL-06 dual-channel gate per
             # strategy: subsequent live trades skip AWAITING_2ND_CHANNEL.
             if row.account_mode == "LIVE":
-                try:
-                    tp_for_strategy = TradeProposal.model_validate_json(
-                        row.payload_json
-                    )
-                    live_strategy_name_to_stamp = tp_for_strategy.strategy_name
-                except Exception:  # noqa: BLE001 — defensive
+                # CR-01 fix: reuse the already-parsed TradeProposal from
+                # above rather than re-parsing payload_json.
+                if tp_persisted is not None:
+                    live_strategy_name_to_stamp = tp_persisted.strategy_name
+                else:
                     live_strategy_name_to_stamp = None
                 fill_ts = payload.get("ts") or datetime.now(UTC).isoformat()
 
