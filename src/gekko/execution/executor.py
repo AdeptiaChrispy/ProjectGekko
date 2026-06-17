@@ -399,6 +399,28 @@ async def execute_proposal(proposal_id: str, user_id: str) -> None:
                     from_status=entry_status,
                     to_status="FAILED",
                 )
+            # WR-02 fix: DM the operator AFTER the audit transaction
+            # commits. Without this, an operator who just clicked
+            # Approve has no visible signal that the order silently
+            # went to FAILED — they will check Slack for a fill
+            # confirmation that never arrives. Mirrors the
+            # BrokerOrderError + OrderGuardRejected paths below which
+            # both DM. Best-effort: DM failure must not abort the
+            # already-committed state transition.
+            try:
+                await _send_slack_dm(
+                    user_id,
+                    (
+                        f"Order for `{tp.ticker}` deferred — NYSE not in "
+                        "regular trading hours. Proposal moved to "
+                        "FAILED. (P7 will add scheduled retry.)"
+                    ),
+                )
+            except Exception:  # noqa: BLE001
+                log.exception(
+                    "executor.market_closed.dm_failed",
+                    proposal_id=proposal_id,
+                )
             return
 
         # ---- 3. Construct the OrderRequest with the persisted COID. -------
