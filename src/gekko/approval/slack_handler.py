@@ -145,9 +145,18 @@ async def _approve_workflow(
             slack_user_id=slack_user_id,
             configured_user_id=settings.slack_user_id,
         )
-        await client.chat_postMessage(
-            channel=slack_user_id,
-            text="You are not the owner of this proposal.",
+        # WR-06 fix: route through the _send_slack_dm identity-split
+        # seam (PATTERNS §10) so the gekko_user_id -> slack_user_id
+        # translation happens in exactly one place. The DM lands in
+        # the configured operator's channel (settings.slack_user_id) —
+        # in the per-user single-operator runtime this is exactly who
+        # should be notified that someone else attempted to click
+        # their approve button.
+        from gekko.execution.executor import _send_slack_dm
+
+        await _send_slack_dm(
+            gekko_user_id,
+            "You are not the owner of this proposal.",
         )
         return
 
@@ -170,9 +179,12 @@ async def _approve_workflow(
         async with sf() as session, session.begin():
             row = await session.get(ProposalRow, decision_id)
             if row is None:
-                await client.chat_postMessage(
-                    channel=slack_user_id,
-                    text=f"Proposal `{decision_id}` not found.",
+                # WR-06 fix: route through the identity-split seam.
+                from gekko.execution.executor import _send_slack_dm
+
+                await _send_slack_dm(
+                    gekko_user_id,
+                    f"Proposal `{decision_id}` not found.",
                 )
                 return
             proposal_account_mode = row.account_mode
@@ -294,9 +306,12 @@ async def _approve_workflow(
         asyncio.create_task(
             execute_proposal(decision_id, gekko_user_id)
         )
-        await client.chat_postMessage(
-            channel=slack_user_id,
-            text=f"Approved `{decision_id}`. Placing order…",
+        # WR-06 fix: route through the identity-split seam (PATTERNS §10).
+        from gekko.execution.executor import _send_slack_dm
+
+        await _send_slack_dm(
+            gekko_user_id,
+            f"Approved `{decision_id}`. Placing order…",
         )
     except Exception:
         log.exception(
@@ -347,9 +362,12 @@ async def _reject_workflow(
             slack_user_id=slack_user_id,
             configured_user_id=settings.slack_user_id,
         )
-        await client.chat_postMessage(
-            channel=slack_user_id,
-            text="You are not the owner of this proposal.",
+        # WR-06 fix: route through identity-split seam (PATTERNS §10).
+        from gekko.execution.executor import _send_slack_dm
+
+        await _send_slack_dm(
+            gekko_user_id,
+            "You are not the owner of this proposal.",
         )
         return
 
@@ -358,17 +376,23 @@ async def _reject_workflow(
         async with sf() as session, session.begin():
             row = await session.get(ProposalRow, decision_id)
             if row is None:
-                await client.chat_postMessage(
-                    channel=slack_user_id,
-                    text=f"Proposal `{decision_id}` not found.",
+                # WR-06 fix: route through identity-split seam.
+                from gekko.execution.executor import _send_slack_dm
+
+                await _send_slack_dm(
+                    gekko_user_id,
+                    f"Proposal `{decision_id}` not found.",
                 )
                 return
             await reject_proposal(
                 session, decision_id, actor=slack_user_id
             )
-        await client.chat_postMessage(
-            channel=slack_user_id,
-            text=f"Rejected `{decision_id}`. No order will be placed.",
+        # WR-06 fix: route through identity-split seam.
+        from gekko.execution.executor import _send_slack_dm
+
+        await _send_slack_dm(
+            gekko_user_id,
+            f"Rejected `{decision_id}`. No order will be placed.",
         )
     except Exception:
         log.exception(
@@ -390,14 +414,19 @@ async def _reject_workflow(
 async def handle_edit_size_stub(
     *, ack: _AckFn, body: dict[str, Any], client: Any
 ) -> None:
-    """Edit-size button — deferred to Plan 03 (HITL UX hardening)."""
+    """Edit-size button — deferred to Plan 03 (HITL UX hardening).
+
+    WR-06 fix: DM routes through the ``_send_slack_dm`` identity-split
+    seam (PATTERNS §10) so this stub follows the same single-chokepoint
+    pattern as every other Slack DM path.
+    """
     await ack()
-    slack_user_id = body["user"]["id"]
-    await client.chat_postMessage(
-        channel=slack_user_id,
-        text=(
-            "Edit-size is coming in Phase 3. Click Approve or Reject for now."
-        ),
+    from gekko.execution.executor import _send_slack_dm
+
+    settings = get_settings()
+    await _send_slack_dm(
+        settings.gekko_user_id,
+        "Edit-size is coming in Phase 3. Click Approve or Reject for now.",
     )
     log.warning("feature.deferred", feature="edit_size", phase="P3")
 
@@ -405,12 +434,18 @@ async def handle_edit_size_stub(
 async def handle_escalate_stub(
     *, ack: _AckFn, body: dict[str, Any], client: Any
 ) -> None:
-    """Escalate-to-dashboard button — deferred to Plan 03."""
+    """Escalate-to-dashboard button — deferred to Plan 03.
+
+    WR-06 fix: DM routes through the ``_send_slack_dm`` identity-split
+    seam.
+    """
     await ack()
-    slack_user_id = body["user"]["id"]
-    await client.chat_postMessage(
-        channel=slack_user_id,
-        text="Escalation to the dashboard is coming in Phase 3.",
+    from gekko.execution.executor import _send_slack_dm
+
+    settings = get_settings()
+    await _send_slack_dm(
+        settings.gekko_user_id,
+        "Escalation to the dashboard is coming in Phase 3.",
     )
     log.warning(
         "feature.deferred", feature="escalate_to_dashboard", phase="P3"

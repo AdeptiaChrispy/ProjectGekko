@@ -531,47 +531,79 @@ async def test_handle_reject_does_not_invoke_executor(
 
 
 @pytest.mark.asyncio
-async def test_handle_edit_size_stub_acks_and_dms_deferred_message() -> None:
-    """Edit-size stub: ack first; sends 'coming in Phase 3' DM; logs deferred."""
+async def test_handle_edit_size_stub_acks_and_dms_deferred_message(
+    clean_settings_env: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Edit-size stub: ack first; sends 'coming in Phase 3' DM; logs deferred.
+
+    WR-06 fix: DM now flows through the ``_send_slack_dm`` identity-split
+    seam (PATTERNS §10) instead of a direct ``client.chat_postMessage``
+    call. The test captures the seam invocation.
+    """
     from gekko.approval import slack_handler
 
     events: list[str] = []
+    dms: list[tuple[str, str]] = []
+
+    async def _capture_dm(uid: str, text: str) -> None:
+        dms.append((uid, text))
+        events.append("dm")
+
+    monkeypatch.setattr(
+        "gekko.execution.executor._send_slack_dm", _capture_dm
+    )
+
     ack = AsyncMock(side_effect=lambda: events.append("ack"))
     client = MagicMock()
-    client.chat_postMessage = AsyncMock(
-        side_effect=lambda **_k: events.append("dm")
-    )
+    client.chat_postMessage = AsyncMock()  # must NOT be called
     body = {"actions": [{"value": "decision-xyz"}], "user": {"id": "U_TEST"}}
     await slack_handler.handle_edit_size_stub(
         ack=ack, body=body, client=client
     )
     assert events[0] == "ack"
     assert "dm" in events
-    # The DM mentioned Phase 3
-    call = client.chat_postMessage.await_args
-    text = call.kwargs.get("text", "")
+    # The DM mentioned Phase 3 and routed through the seam (not the bolt client).
+    assert client.chat_postMessage.await_count == 0
+    assert len(dms) == 1
+    _uid, text = dms[0]
     assert "Phase 3" in text or "phase 3" in text.lower()
 
 
 @pytest.mark.asyncio
-async def test_handle_escalate_stub_acks_and_dms_deferred_message() -> None:
-    """Escalate stub: ack first; sends 'coming in Phase 3' DM; logs deferred."""
+async def test_handle_escalate_stub_acks_and_dms_deferred_message(
+    clean_settings_env: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Escalate stub: ack first; sends 'coming in Phase 3' DM; logs deferred.
+
+    WR-06 fix: DM flows through the identity-split seam.
+    """
     from gekko.approval import slack_handler
 
     events: list[str] = []
+    dms: list[tuple[str, str]] = []
+
+    async def _capture_dm(uid: str, text: str) -> None:
+        dms.append((uid, text))
+        events.append("dm")
+
+    monkeypatch.setattr(
+        "gekko.execution.executor._send_slack_dm", _capture_dm
+    )
+
     ack = AsyncMock(side_effect=lambda: events.append("ack"))
     client = MagicMock()
-    client.chat_postMessage = AsyncMock(
-        side_effect=lambda **_k: events.append("dm")
-    )
+    client.chat_postMessage = AsyncMock()  # must NOT be called
     body = {"actions": [{"value": "decision-xyz"}], "user": {"id": "U_TEST"}}
     await slack_handler.handle_escalate_stub(
         ack=ack, body=body, client=client
     )
     assert events[0] == "ack"
     assert "dm" in events
-    call = client.chat_postMessage.await_args
-    text = call.kwargs.get("text", "")
+    assert client.chat_postMessage.await_count == 0
+    assert len(dms) == 1
+    _uid, text = dms[0]
     assert "Phase 3" in text or "phase 3" in text.lower()
 
 
@@ -581,7 +613,12 @@ async def test_handle_approve_refuses_cross_user_action(
     monkeypatch: pytest.MonkeyPatch,
     clean_settings_env: pytest.MonkeyPatch,
 ) -> None:
-    """V4 Access Control — if body.user.id != proposal.user_id, refuse + DM."""
+    """V4 Access Control — if body.user.id != proposal.user_id, refuse + DM.
+
+    WR-06 fix: the refusal DM now routes through the ``_send_slack_dm``
+    identity-split seam (PATTERNS §10) instead of a direct
+    ``client.chat_postMessage`` call.
+    """
     sf = make_session_factory(temp_sqlcipher_db)
     strategy_id = await _seed_user_and_strategy(sf, user_id="real-owner")
     proposal_id = uuid4().hex
@@ -600,9 +637,18 @@ async def test_handle_approve_refuses_cross_user_action(
 
     monkeypatch.setattr(slack_handler, "execute_proposal", fake_execute_proposal)
 
+    dms: list[tuple[str, str]] = []
+
+    async def _capture_dm(uid: str, text: str) -> None:
+        dms.append((uid, text))
+
+    monkeypatch.setattr(
+        "gekko.execution.executor._send_slack_dm", _capture_dm
+    )
+
     ack = AsyncMock()
     client = MagicMock()
-    client.chat_postMessage = AsyncMock()
+    client.chat_postMessage = AsyncMock()  # must NOT be called
 
     # Foreign Slack user clicks Approve on someone else's proposal
     body = {
@@ -615,7 +661,9 @@ async def test_handle_approve_refuses_cross_user_action(
 
     # Executor NOT called
     assert executor_called == []
-    # DM contains a "not the owner" message
-    call = client.chat_postMessage.await_args
-    text = call.kwargs.get("text", "")
+    # DM was sent through the seam (not the bolt client) and mentions
+    # "not the owner".
+    assert client.chat_postMessage.await_count == 0
+    assert len(dms) == 1
+    _uid, text = dms[0]
     assert "not the owner" in text.lower() or "not authorized" in text.lower()
