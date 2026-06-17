@@ -132,7 +132,11 @@ async def test_slash_unkill_no_arg_responds_with_warn(
     monkeypatch: pytest.MonkeyPatch,
     clean_settings_env: pytest.MonkeyPatch,
 ) -> None:
-    """`/gekko unkill` (no CONFIRM) returns the unkill warn DM."""
+    """`/gekko unkill` (no UNKILL) returns the unkill warn DM.
+
+    WR-01 fix: the unkill token is now ``UNKILL`` (not ``CONFIRM``) to
+    match the CLI + spec invariant #6. The warn message reflects that.
+    """
     from gekko.slack import commands
 
     fired: list[Any] = []
@@ -152,7 +156,7 @@ async def test_slash_unkill_no_arg_responds_with_warn(
     )
 
     body = str(respond.await_args)
-    assert "unkill confirm" in body.lower()
+    assert "unkill unkill" in body.lower()
     await asyncio.sleep(0.05)
     assert fired == []
 
@@ -162,7 +166,11 @@ async def test_slash_unkill_confirm_fires_execute_unkill(
     monkeypatch: pytest.MonkeyPatch,
     clean_settings_env: pytest.MonkeyPatch,
 ) -> None:
-    """`/gekko unkill CONFIRM` schedules ``_execute_unkill``."""
+    """`/gekko unkill UNKILL` schedules ``_execute_unkill``.
+
+    WR-01 fix: the unkill literal token is now ``UNKILL`` (not
+    ``CONFIRM``) to align with the CLI + spec invariant #6.
+    """
     from gekko.slack import commands
 
     fired: list[dict[str, Any]] = []
@@ -176,7 +184,7 @@ async def test_slash_unkill_confirm_fires_execute_unkill(
 
     ack = AsyncMock()
     respond = AsyncMock()
-    command = {"text": "unkill CONFIRM", "user_id": "U_TEST_USER"}
+    command = {"text": "unkill UNKILL", "user_id": "U_TEST_USER"}
     await commands.handle_gekko_command(
         ack=ack, command=command, respond=respond
     )

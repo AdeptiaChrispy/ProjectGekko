@@ -36,7 +36,7 @@ _HELP_TEXT: str = (
     "• `/gekko run <strategy-name>` — kick off a one-off agent run for "
     "the named strategy.\n"
     "• `/gekko kill CONFIRM` — halt all trading immediately (two-step).\n"
-    "• `/gekko unkill CONFIRM` — resume trading after a kill.\n"
+    "• `/gekko unkill UNKILL` — resume trading after a kill.\n"
     "Strategies are managed in the dashboard or via the chat compiler."
 )
 
@@ -53,15 +53,20 @@ _KILL_MISMATCH_TEXT: str = (
     "Other input is ignored."
 )
 
-#: Two-step warning shown when the user types ``/gekko unkill`` without ``CONFIRM``.
+#: Two-step warning shown when the user types ``/gekko unkill`` without ``UNKILL``.
+#: WR-01 fix: literal token aligned with the spec invariant #6
+#: (``/gekko kill CONFIRM`` / ``/gekko unkill UNKILL``) and with the CLI
+#: (``cli.py`` requires ``UNKILL``). Previously CONFIRM was used for
+#: both, causing copy drift between surfaces and breaking operator
+#: muscle memory under stress.
 _UNKILL_WARN_TEXT: str = (
-    "⚠️ Type `/gekko unkill CONFIRM` to resume trading. "
+    "⚠️ Type `/gekko unkill UNKILL` to resume trading. "
     "Note: previously-cancelled orders are NOT restored."
 )
 
-#: Shown when ``/gekko unkill <arg>`` is anything other than ``CONFIRM``.
+#: Shown when ``/gekko unkill <arg>`` is anything other than ``UNKILL``.
 _UNKILL_MISMATCH_TEXT: str = (
-    "Type `/gekko unkill CONFIRM` exactly to resume trading. "
+    "Type `/gekko unkill UNKILL` exactly to resume trading. "
     "Other input is ignored."
 )
 
@@ -294,9 +299,15 @@ async def _handle_unkill_command(
 ) -> None:
     """Two-step Slack unkill flow per UI-SPEC §2 Slack parallel.
 
-    Symmetric with ``/gekko kill`` — requires the literal ``CONFIRM``
-    argument. Per UI-SPEC the unkill DOES NOT restore previously-cancelled
-    orders; the warn message includes that.
+    WR-01 fix: requires the literal ``UNKILL`` argument (matching the
+    CLI ``gekko unkill UNKILL`` token and the spec invariant #6 — two
+    distinct tokens, one per surface). Previously this required
+    ``CONFIRM`` symmetric with ``/gekko kill``; the asymmetry was
+    intentional in the spec so muscle memory cleanly distinguishes the
+    two destructive operations.
+
+    Per UI-SPEC the unkill DOES NOT restore previously-cancelled orders;
+    the warn message includes that.
     """
     from gekko.config import get_settings
 
@@ -306,7 +317,7 @@ async def _handle_unkill_command(
         await respond(_UNKILL_WARN_TEXT)
         return
 
-    if args[0].strip().upper() != "CONFIRM":
+    if args[0].strip().upper() != "UNKILL":
         await respond(_UNKILL_MISMATCH_TEXT)
         return
 
