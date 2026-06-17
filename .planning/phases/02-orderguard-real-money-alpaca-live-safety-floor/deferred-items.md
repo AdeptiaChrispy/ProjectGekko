@@ -78,6 +78,23 @@ and have no causal relation to OrderGuard).
 - **Expected outcome:** typed `kill` rejected with 400, typed `KILL` accepted with HTMX modal-close swap + banner-render, mirror DM in Slack; UNKILL flow symmetric.
 - **Owner:** operator. Reply with `demo_passed` confirmation to close.
 
+## Manual demos deferred (Plan 02-07 walking-skeleton — real $1 trade)
+
+### Demo D — Real $1 first-live trade end-to-end (VALIDATION.md Manual-Only §1)
+
+- **Plan:** 02-07 Task 3
+- **Reason for deferral:** requires real Alpaca LIVE credentials + real money + Cloudflared/ngrok/Tailscale tunnel + real Slack + real Chrome browser session. No cassette can replicate the broker-side fill confirmation on real money.
+- **Demo steps:** see `README.md` §"Phase 2 — Walking-skeleton demo (OrderGuard + Real-Money Alpaca Live)" + 02-07-SUMMARY.md §"Manual — DEFERRED to operator"
+- **Expected outcome:**
+  - Dedicated `🔴 FIRST LIVE TRADE — DUAL CONFIRM REQUIRED` Slack card with URL-button only (no inline Approve/Reject)
+  - Dashboard `/live-confirm/{proposal_id}` full-page template with 2 checkboxes + 5s read timer
+  - `🔴 LIVE: Filled ...` fill DM
+  - `gekko audit verify` returns "Chain intact across N events" (N ≥ 28: Phase-1 22 + Phase-2 first-live 6+)
+  - `gekko audit dump --limit 10` shows the 6-event first-live chain: decision → proposal → approval[awaiting_2nd_channel] → approval[second_channel] → order_submitted → fill
+  - Second `/gekko run` on same strategy uses REGULAR single-channel HITL card (no dashboard step)
+  - Kill switch fires within 5s, banner stacks above red live banner
+- **Owner:** operator. Reply with `demo_passed` + audit-dump evidence + broker_order_id + wall-clock fill latency to close.
+
 ## Notes
 
 - This file should be flushed (entries resolved or escalated to a fresh plan)

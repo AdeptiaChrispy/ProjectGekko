@@ -46,7 +46,7 @@ See `milestones/v1.0-ROADMAP.md` for the full archived snapshot (with detailed p
 
 ### 🚧 v2.0 Safety & Trust (Planned)
 
-- [ ] **Phase 2: OrderGuard & Real-Money Alpaca Live (Safety Floor)** — Non-LLM cap-enforcement layer; first real money flows (still HITL). CONTEXT.md captured 2026-06-11 (commit `3ca0b06`); ready for `/gsd-plan-phase 2`.
+- [x] **Phase 2: OrderGuard & Real-Money Alpaca Live (Safety Floor)** — Non-LLM cap-enforcement layer; first real money flows (still HITL). CONTEXT.md captured 2026-06-11 (commit `3ca0b06`); ready for `/gsd-plan-phase 2`. (completed 2026-06-17)
 - [ ] **Phase 3: Production HITL UX (Slack Block Kit + Dashboard Fallback)** — Idempotent approval flow, quiet hours, timeout=REJECT, first-live gate. Carry-forward item from v1.0: executor-error → Slack notification.
 - [ ] **Phase 4: Agent Architecture & Cost Bounds** — Research/decision separation, prompt-injection defense, two-tier cost ceiling.
 - [ ] **Phase 5: Trust Ladder (Per-Strategy Promotion & Portfolio Caps)** — Propose-only → auto-within-caps; portfolio-level caps; capital scaling rung; anomaly demotion.
@@ -75,7 +75,7 @@ See `milestones/v1.0-ROADMAP.md` for the full archived snapshot (with detailed p
   4. Paper credentials cannot place live orders and vice versa — OrderGuard validates env-credential pairing and hard-rejects mismatches, with a red banner indicating live mode on every Slack message and UI surface
   5. User can promote a paper strategy to live, place a small real-money trade through the full HITL flow, and see PDT-rule awareness, wash-sale flagging, market-hours guard, and broker rate-limit backoff all enforce correctly without manual intervention
 
-**Plans:** 6/7 plans executed
+**Plans:** 7/7 plans complete
 Plans:
 **Wave 1**
 
@@ -100,7 +100,7 @@ Plans:
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
-- [ ] 02-07-PLAN.md — Walking-skeleton cassette test + README demo recipe + manual  real-money demo
+- [x] 02-07-PLAN.md — Walking-skeleton cassette test + README demo recipe + manual  real-money demo
 
 ### Phase 3: Production HITL UX (Slack Block Kit + Dashboard Fallback)
 
@@ -231,7 +231,7 @@ Plans:
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 1. Foundation & Vertical Slice | v1.0 | 9/9 | Complete ✅ | 2026-06-15 |
-| 2. OrderGuard & Real-Money Alpaca Live | v2.0 | 5/7 | In Progress|  |
+| 2. OrderGuard & Real-Money Alpaca Live | v2.0 | 7/7 | Complete   | 2026-06-17 |
 | 3. Production HITL UX | v2.0 | 0/0 | Not started | - |
 | 4. Agent Architecture & Cost Bounds | v2.0 | 0/0 | Not started | - |
 | 5. Trust Ladder | v2.0 | 0/0 | Not started | - |
