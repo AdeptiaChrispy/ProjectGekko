@@ -660,13 +660,17 @@ async def test_phase2_walking_skeleton_promote_paper_to_live_end_to_end(
         breaks = await walk_chain(session, _USER_ID)
 
     # Build a subset of TRADE-RELATED events for the 6-event chain
-    # assertion. The chain also contains `error`-typed audit events from
-    # store_live_credentials + promote_strategy_to_live + stamp_first_live_
-    # trade (all per D-14 since _EVENT_TYPES doesn't include a dedicated
-    # credentials_added / strategy_promoted / first_live_trade_stamped
-    # slot). Those error events are not part of the documented 6-event
-    # chain but ARE part of the persisted history; they only add to the
-    # chain length and DO NOT break the hash chain.
+    # assertion. The chain also contains the Phase-2 credential /
+    # promotion events from store_live_credentials
+    # (``credentials_added``), promote_strategy_to_live
+    # (``live_mode_promoted``), and stamp_first_live_trade
+    # (``first_live_trade_confirmed``). Per BL-01 these are now their
+    # own first-class event types in D-14 (previously written as
+    # ``event_type="error"`` with a payload ``context`` discriminator;
+    # Alembic 0003 extended ``ck_event_type`` to accept them). They
+    # are not part of the documented 6-event trade chain but ARE part
+    # of the persisted history; they only add to the chain length and
+    # DO NOT break the hash chain.
     trade_event_types = [
         e.event_type
         for e in events
@@ -698,8 +702,10 @@ async def test_phase2_walking_skeleton_promote_paper_to_live_end_to_end(
     assert second_approval_payload["payload"].get("second_channel") is True
 
     # walk_chain over the FULL persisted history must still return []
-    # — the credentials/promotion/stamp `error` events live on the chain
-    # alongside the trade events and the SHA-256 chain must hold.
+    # — the credentials/promotion/stamp Phase-2 events (BL-01:
+    # ``credentials_added``, ``live_mode_promoted``,
+    # ``first_live_trade_confirmed``) live on the chain alongside the
+    # trade events and the SHA-256 chain must hold.
     assert breaks == [], (
         f"SHA-256 audit chain broken at row(s): {breaks}. Full chain types: "
         f"{[e.event_type for e in events]}"

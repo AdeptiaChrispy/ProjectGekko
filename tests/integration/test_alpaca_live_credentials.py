@@ -210,7 +210,15 @@ async def test_duplicate_live_credential_insert_raises_integrity_error(
 async def test_store_emits_credentials_added_audit_event(
     seeded_user_engine: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Audit event with context='credentials.added' lands in the chain."""
+    """Audit event with event_type='credentials_added' lands in the chain.
+
+    BL-01 fix (Phase-2 code review): the audit event was previously written
+    with ``event_type="error"`` + a ``"context": "credentials.added"``
+    payload discriminator (a workaround for the D-14 vocabulary not
+    carrying ``credentials_added``). The Alembic 0003 migration extends
+    ``ck_event_type`` and the writer now uses the proper event_type
+    directly. This test reflects the new contract.
+    """
     from gekko.db.models import Event as EventRow
 
     sf = make_session_factory(seeded_user_engine)
@@ -231,7 +239,7 @@ async def test_store_emits_credentials_added_audit_event(
         )
     assert len(events) >= 1
     creds_events = [
-        e for e in events if '"credentials.added"' in e.payload_json
+        e for e in events if e.event_type == "credentials_added"
     ]
     assert len(creds_events) == 1
     # Confirm the audit payload does NOT contain the key value.

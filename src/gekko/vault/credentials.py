@@ -87,12 +87,15 @@ async def store_live_credentials(
     SQLCipher whole-DB encryption is the at-rest defense (see module
     docstring).
 
-    Emits an ``error`` audit event with a ``credentials.added`` context
-    marker — the existing ``_EVENT_TYPES`` tuple (D-14) does NOT include
-    ``credentials_added``, so we surface the event via the ``error`` slot
-    with a structured payload describing the addition. The payload
-    DELIBERATELY excludes the key value (only ``kind`` and a non-sensitive
+    Emits a ``credentials_added`` audit event. The payload DELIBERATELY
+    excludes the key value (only ``kind`` and a non-sensitive
     ``has_key=True`` marker land in the audit log).
+
+    BL-01 fix (Phase-2 code review): previously this wrote
+    ``event_type="error"`` with a ``context="credentials.added"``
+    discriminator, polluting the error bucket. ``_EVENT_TYPES`` now
+    carries ``credentials_added`` directly (Alembic 0003 extended
+    ``ck_event_type`` to accept it).
 
     :param user_id: Per-user DB scope (D-21).
     :param api_key: Alpaca live API key. PLAINTEXT — must NEVER be logged
@@ -116,19 +119,17 @@ async def store_live_credentials(
                     created_at=now_iso,
                 )
             )
-            # Audit the addition. Per D-14 the only fitting event_type is
-            # ``error`` (the closest open slot for non-fatal-info audit
-            # surfaces; ``credentials_added`` is not in _EVENT_TYPES and
-            # extending the tuple is out of scope here). The payload's
-            # ``context`` marker disambiguates from genuine errors.
+            # Audit the addition. BL-01 fix: now uses the dedicated
+            # ``credentials_added`` event_type (added to D-14 in the
+            # Alembic 0003 migration) instead of the prior workaround
+            # of ``event_type="error"`` + ``context="credentials.added"``.
             await append_event(
                 session,
                 user_id=user_id,
                 strategy_id=None,
-                event_type="error",
+                event_type="credentials_added",
                 payload=normalize_decimals(
                     {
-                        "context": "credentials.added",
                         "broker": "alpaca",
                         "kind": "alpaca_live",
                         "has_key": True,

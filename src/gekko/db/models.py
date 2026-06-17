@@ -68,6 +68,16 @@ _ACCOUNT_MODES: tuple[str, ...] = ("PAPER", "LIVE")
 _BROKER_CREDENTIAL_KINDS: tuple[str, ...] = ("alpaca_paper", "alpaca_live")
 
 #: Allowed values for ``Event.event_type`` (D-14 vocabulary).
+#:
+#: BL-01 (Phase-2 review fix): extends D-14 with the four credential /
+#: promotion event types promised by the Phase-2 plan but missing from
+#: the original Phase-1 tuple. Prior to this fix, ``vault/credentials``
+#: and ``strategy/promotion`` were forced to write these as
+#: ``event_type="error"`` with a ``context`` discriminator in the
+#: payload — polluting the error bucket and breaking the
+#: "filter on event_type" forensic story. The Alembic migration that
+#: drops + recreates ``ck_event_type`` to accept these values is
+#: tracked separately.
 _EVENT_TYPES: tuple[str, ...] = (
     "decision",
     "proposal",
@@ -77,6 +87,10 @@ _EVENT_TYPES: tuple[str, ...] = (
     "fill",
     "kill_switch",
     "cap_rejection",
+    "credentials_added",
+    "live_mode_promoted",
+    "live_mode_demoted",
+    "first_live_trade_confirmed",
     "error",
 )
 

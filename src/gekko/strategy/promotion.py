@@ -77,8 +77,10 @@ async def promote_strategy_to_live(
     live-eligible strategy refreshes ``live_promoted_at`` without
     changing anything else.
 
-    Emits an audit event with ``context="strategy.promoted_to_live"`` so
-    the chain captures who/when.
+    Emits a ``live_mode_promoted`` audit event so the chain captures
+    who/when (BL-01 fix: previously written as ``event_type="error"``
+    with a ``context="strategy.promoted_to_live"`` discriminator; the
+    Phase-2 D-14 vocabulary now carries ``live_mode_promoted`` directly).
     """
     sf, engine = _get_session_factory(user_id)
     try:
@@ -104,10 +106,9 @@ async def promote_strategy_to_live(
                 session,
                 user_id=user_id,
                 strategy_id=None,
-                event_type="error",
+                event_type="live_mode_promoted",
                 payload=normalize_decimals(
                     {
-                        "context": "strategy.promoted_to_live",
                         "strategy_name": strategy_name,
                         "live_promoted_at": now_iso,
                     }
@@ -149,14 +150,15 @@ async def demote_strategy_from_live(
                 )
                 return
             existing.live_mode_eligible = False
+            # BL-01 fix: dedicated ``live_mode_demoted`` event_type
+            # replaces the prior ``event_type="error"`` workaround.
             await append_event(
                 session,
                 user_id=user_id,
                 strategy_id=None,
-                event_type="error",
+                event_type="live_mode_demoted",
                 payload=normalize_decimals(
                     {
-                        "context": "strategy.demoted_from_live",
                         "strategy_name": strategy_name,
                     }
                 ),
@@ -213,14 +215,16 @@ async def stamp_first_live_trade(
             else:
                 # Already stamped — no-op.
                 return
+            # BL-01 fix: dedicated ``first_live_trade_confirmed``
+            # event_type replaces the prior ``event_type="error"`` +
+            # ``context="strategy.first_live_trade_stamped"`` workaround.
             await append_event(
                 session,
                 user_id=user_id,
                 strategy_id=None,
-                event_type="error",
+                event_type="first_live_trade_confirmed",
                 payload=normalize_decimals(
                     {
-                        "context": "strategy.first_live_trade_stamped",
                         "strategy_name": strategy_name,
                         "fill_ts": fill_ts,
                     }
