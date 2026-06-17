@@ -35,7 +35,34 @@ _HELP_TEXT: str = (
     "*Gekko commands*\n"
     "• `/gekko run <strategy-name>` — kick off a one-off agent run for "
     "the named strategy.\n"
+    "• `/gekko kill CONFIRM` — halt all trading immediately (two-step).\n"
+    "• `/gekko unkill CONFIRM` — resume trading after a kill.\n"
     "Strategies are managed in the dashboard or via the chat compiler."
+)
+
+#: Two-step warning shown when the user types ``/gekko kill`` without ``CONFIRM``.
+_KILL_WARN_TEXT: str = (
+    "⚠️ Type `/gekko kill CONFIRM` within 60 seconds to halt all trading. "
+    "This cancels all open orders across every strategy. "
+    "Kill state persists across process restarts."
+)
+
+#: Shown when ``/gekko kill <arg>`` is anything other than ``CONFIRM``.
+_KILL_MISMATCH_TEXT: str = (
+    "Type `/gekko kill CONFIRM` exactly to halt trading. "
+    "Other input is ignored."
+)
+
+#: Two-step warning shown when the user types ``/gekko unkill`` without ``CONFIRM``.
+_UNKILL_WARN_TEXT: str = (
+    "⚠️ Type `/gekko unkill CONFIRM` to resume trading. "
+    "Note: previously-cancelled orders are NOT restored."
+)
+
+#: Shown when ``/gekko unkill <arg>`` is anything other than ``CONFIRM``.
+_UNKILL_MISMATCH_TEXT: str = (
+    "Type `/gekko unkill CONFIRM` exactly to resume trading. "
+    "Other input is ignored."
 )
 
 #: Usage text shown when the user types ``/gekko run`` with no strategy.
@@ -106,6 +133,14 @@ async def handle_gekko_command(
 
     parts = text.split()
     subcommand = parts[0].lower()
+
+    if subcommand == "kill":
+        await _handle_kill_command(respond=respond, args=parts[1:])
+        return
+
+    if subcommand == "unkill":
+        await _handle_unkill_command(respond=respond, args=parts[1:])
+        return
 
     if subcommand != "run":
         await respond(_HELP_TEXT)
@@ -201,6 +236,121 @@ async def _post_error_dm(slack_user_id: str, strategy_name: str) -> None:
         )
     except Exception:  # noqa: BLE001
         log.exception("slack.error_dm.failed", slack_user_id=slack_user_id)
+
+
+# ---------------------------------------------------------------------------
+# /gekko kill + /gekko unkill — Plan 02-05 Task 2 (D-38 / EXEC-06)
+# ---------------------------------------------------------------------------
+
+
+async def _handle_kill_command(
+    *, respond: _RespondFn, args: list[str]
+) -> None:
+    """Two-step Slack kill flow per UI-SPEC §2 Slack parallel.
+
+    * ``/gekko kill`` (no arg) → warn the operator + ask for CONFIRM
+    * ``/gekko kill CONFIRM`` → fire ``_execute_kill`` in the background
+    * ``/gekko kill <anything-else>`` → reject with the mismatch message
+
+    The cross-user defense + ``await ack()`` ran in the parent dispatcher
+    before we got here, so this handler is reachable only for the
+    configured operator.
+    """
+    from gekko.config import get_settings
+
+    settings = get_settings()
+
+    if not args:
+        await respond(_KILL_WARN_TEXT)
+        return
+
+    if args[0].strip().upper() != "CONFIRM":
+        await respond(_KILL_MISMATCH_TEXT)
+        return
+
+    # CONFIRM was typed — fire-and-forget the background kill. The DM
+    # with the tally is sent by `_execute_kill` itself via the executor's
+    # `_send_slack_dm` seam (identity-split safe).
+    asyncio.create_task(
+        _execute_kill_background(
+            user_id=settings.gekko_user_id, source="slack"
+        )
+    )
+
+    await respond(
+        "🚫 Halting all trading… the bot will DM you when the cancel "
+        "sweep completes (5-second SLA)."
+    )
+
+    log.info(
+        "slack.kill.confirmed",
+        gekko_user_id=settings.gekko_user_id,
+        source="slack",
+    )
+
+
+async def _handle_unkill_command(
+    *, respond: _RespondFn, args: list[str]
+) -> None:
+    """Two-step Slack unkill flow per UI-SPEC §2 Slack parallel.
+
+    Symmetric with ``/gekko kill`` — requires the literal ``CONFIRM``
+    argument. Per UI-SPEC the unkill DOES NOT restore previously-cancelled
+    orders; the warn message includes that.
+    """
+    from gekko.config import get_settings
+
+    settings = get_settings()
+
+    if not args:
+        await respond(_UNKILL_WARN_TEXT)
+        return
+
+    if args[0].strip().upper() != "CONFIRM":
+        await respond(_UNKILL_MISMATCH_TEXT)
+        return
+
+    asyncio.create_task(
+        _execute_unkill_background(
+            user_id=settings.gekko_user_id, source="slack"
+        )
+    )
+
+    await respond(
+        "✅ Resuming trading… the bot will DM you when unkill completes."
+    )
+
+    log.info(
+        "slack.unkill.confirmed",
+        gekko_user_id=settings.gekko_user_id,
+        source="slack",
+    )
+
+
+async def _execute_kill_background(*, user_id: str, source: str) -> None:
+    """Background wrapper for ``_execute_kill`` — catches errors so create_task
+    doesn't drop them silently. PATTERNS §5d.
+    """
+    try:
+        from gekko.execution.kill_switch import _execute_kill
+
+        await _execute_kill(user_id=user_id, source=source, reason="manual")
+    except Exception:  # noqa: BLE001
+        log.exception(
+            "slack.kill.background_failed", user_id=user_id, source=source
+        )
+
+
+async def _execute_unkill_background(*, user_id: str, source: str) -> None:
+    """Background wrapper for ``_execute_unkill``. PATTERNS §5d."""
+    try:
+        from gekko.execution.kill_switch import _execute_unkill
+
+        await _execute_unkill(user_id=user_id, source=source)
+    except Exception:  # noqa: BLE001
+        log.exception(
+            "slack.unkill.background_failed", user_id=user_id, source=source
+        )
 
 
 __all__: tuple[str, ...] = ("handle_gekko_command", "trigger_strategy_run")

@@ -1,0 +1,49 @@
+{#
+  Kill switch confirmation modal — Plan 02-05 Task 2 / UI-SPEC §2b.
+
+  HTMX-loaded fragment served from GET /kill/confirm-modal. Mounts into
+  #modal-mount in base.html.j2 via hx-target="#modal-mount" hx-swap="innerHTML".
+
+  CSP invariant (PATTERNS §4 anti-pattern row 7): NO inline <script> and
+  NO onclick= attributes. All interactivity flows through HTMX hx-*
+  attributes interpreted by the vendored htmx.min.js.
+
+  Server-side defense (RESEARCH §3 + UI-SPEC §2b "Recommended Phase 2
+  implementation"): the form POSTs to /kill, the route validates that
+  `confirm.strip().upper() == "KILL"` and raises HTTPException(400) on
+  mismatch. Client-side disable is polish only.
+#}
+<div class="modal-backdrop" id="kill-modal" role="dialog" aria-modal="true" aria-labelledby="kill-modal-headline">
+  <div class="modal">
+    <div class="modal-headline" id="kill-modal-headline">Halt all trading</div>
+    <div class="modal-body">
+      This cancels all open orders across all strategies and halts every
+      paper and live strategy. The kill state persists across process
+      restarts. To resume, you must explicitly UNKILL.
+      <br><br>
+      <strong>Type KILL below to confirm.</strong>
+    </div>
+    <form hx-post="/kill"
+          hx-target="#kill-banner-mount"
+          hx-swap="outerHTML"
+          hx-disabled-elt="find button[type='submit']">
+      <label for="kill-confirm-input">Confirmation</label>
+      <input type="text"
+             id="kill-confirm-input"
+             name="confirm"
+             required
+             pattern="^KILL$"
+             autocomplete="off"
+             autofocus>
+      <div class="modal-actions mt-4">
+        <a hx-get="/modal/close"
+           hx-target="#modal-mount"
+           hx-swap="innerHTML"
+           aria-label="Cancel and close modal">Cancel</a>
+        <button type="submit" class="btn-kill" hx-disable-elt="this">
+          Confirm — halt all trading
+        </button>
+      </div>
+    </form>
+  </div>
+</div>

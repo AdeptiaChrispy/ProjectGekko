@@ -545,6 +545,91 @@ def strategy_create(
 
 
 # ---------------------------------------------------------------------------
+# `gekko kill` / `gekko unkill` — Plan 02-05 Task 2 (D-38 / EXEC-06)
+# ---------------------------------------------------------------------------
+
+
+@app.command("kill")
+def kill() -> None:
+    """Halt all trading immediately (typed-KILL confirmation).
+
+    Recovery surface when Slack + dashboard are wedged (D-38). The kill
+    state is global and persistent — survives process restart per D-36.
+    Resume requires explicit ``gekko unkill``.
+
+    Per UI-SPEC §2b copywriting: ``KILL`` is the only single-word CTA
+    reserved for the kill switch. Operator must type the literal
+    ``KILL`` exactly (uppercase) to confirm.
+    """
+    from gekko.config import get_settings
+    from gekko.execution.kill_switch import _execute_kill
+    from gekko.logging_config import configure_logging
+    from gekko.vault.passphrase import get_passphrase, prompt_passphrase
+
+    configure_logging()
+    settings = get_settings()
+
+    typer.echo("This cancels all open orders across all strategies.")
+    typer.echo(
+        "Kill state persists across process restarts. "
+        "Resume requires `gekko unkill`."
+    )
+    ack = typer.prompt('Type "KILL" to confirm')
+    if ack.strip() != "KILL":
+        typer.echo("Aborted — typed confirmation not matched.")
+        raise typer.Exit(code=1)
+
+    try:
+        get_passphrase()
+    except RuntimeError:
+        prompt_passphrase()
+
+    tally = asyncio.run(
+        _execute_kill(
+            user_id=settings.gekko_user_id, source="cli", reason="manual"
+        )
+    )
+    typer.echo(
+        f"Kill ACTIVE. Cancelled {tally['cancelled']}/{tally['total']}; "
+        f"{tally.get('pending', 0)} pending; "
+        f"{tally.get('failed', 0)} failed."
+    )
+
+
+@app.command("unkill")
+def unkill() -> None:
+    """Resume trading after a kill (typed-UNKILL confirmation).
+
+    Note: previously-cancelled orders are NOT restored.
+    """
+    from gekko.config import get_settings
+    from gekko.execution.kill_switch import _execute_unkill
+    from gekko.logging_config import configure_logging
+    from gekko.vault.passphrase import get_passphrase, prompt_passphrase
+
+    configure_logging()
+    settings = get_settings()
+
+    typer.echo(
+        "Note: previously-cancelled orders are NOT restored by unkill."
+    )
+    ack = typer.prompt('Type "UNKILL" to confirm')
+    if ack.strip() != "UNKILL":
+        typer.echo("Aborted — typed confirmation not matched.")
+        raise typer.Exit(code=1)
+
+    try:
+        get_passphrase()
+    except RuntimeError:
+        prompt_passphrase()
+
+    asyncio.run(
+        _execute_unkill(user_id=settings.gekko_user_id, source="cli")
+    )
+    typer.echo("Kill cleared — new orders will fire again.")
+
+
+# ---------------------------------------------------------------------------
 # `gekko audit verify` / `dump`
 # ---------------------------------------------------------------------------
 

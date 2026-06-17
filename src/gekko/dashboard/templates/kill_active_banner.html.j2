@@ -1,0 +1,38 @@
+{#
+  Kill-active banner — Plan 02-05 Task 2 / UI-SPEC §2c.
+
+  Appears when ``request.state.kill_active`` is True. Stacked BELOW the
+  live/paper banner (z-index 49 vs 50). ARIA assertive — kill-active is
+  the highest-stakes state and interrupts screen-reader queue.
+
+  Two copy variants:
+   * "boot-restored" — shown when kill_active_since indicates the kill was
+     restored from a prior process restart (UI-SPEC §"Banner & Section Headers").
+   * default — shown after an in-process kill, includes the n_cancelled/n_total
+     tally when available.
+
+  This template is also returned as the HTMX response body when POST /kill
+  succeeds, swapping into the empty #kill-banner-mount placeholder.
+#}
+<div id="kill-banner-mount">
+  <div class="banner-kill"
+       role="alert"
+       aria-live="assertive"
+       aria-atomic="true">
+    {% if boot_restored %}
+      🚫 KILL ACTIVE — restored from previous session. UNKILL to resume.
+    {% elif n_total is defined and n_cancelled is defined %}
+      🚫 KILL ACTIVE — no orders will fire. Cancelled {{ n_cancelled }}/{{ n_total }} open orders.
+    {% else %}
+      🚫 KILL ACTIVE — no orders will fire.
+    {% endif %}
+    <button class="btn-kill"
+            hx-get="/unkill/confirm-modal"
+            hx-target="#modal-mount"
+            hx-swap="innerHTML"
+            aria-label="Open unkill confirmation. Resumes all trading."
+            style="margin-left: 16px;">
+      UNKILL
+    </button>
+  </div>
+</div>

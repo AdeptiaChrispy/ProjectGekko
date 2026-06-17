@@ -289,4 +289,157 @@ async def _run_and_post_dashboard(user_id: str, strategy_name: str) -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# Kill switch routes — Plan 02-05 Task 2 (D-38 / EXEC-06 / UI-SPEC §2b)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/kill/confirm-modal", response_class=HTMLResponse)
+async def kill_confirm_modal(request: Request) -> HTMLResponse:
+    """Return the kill-confirmation modal HTMX fragment (UI-SPEC §2b)."""
+    return templates.TemplateResponse(
+        "kill_modal.html.j2", {"request": request}
+    )
+
+
+@router.get("/unkill/confirm-modal", response_class=HTMLResponse)
+async def unkill_confirm_modal(request: Request) -> HTMLResponse:
+    """Return the unkill-confirmation modal HTMX fragment."""
+    return templates.TemplateResponse(
+        "unkill_modal.html.j2", {"request": request}
+    )
+
+
+@router.get("/modal/close", response_class=HTMLResponse)
+async def modal_close() -> HTMLResponse:
+    """Return empty HTML to clear ``#modal-mount`` (CSP-safer modal close).
+
+    Per UI-SPEC §2b "Alternative (safer per CSP audit)" — the Cancel link
+    in the kill/unkill modal targets this endpoint with hx-swap="innerHTML"
+    to clear the modal-mount slot. Avoids the ``hx-on`` route since
+    it relies on htmx's inline-handler interpretation.
+    """
+    return HTMLResponse("")
+
+
+@router.post("/kill", response_class=HTMLResponse)
+async def kill_endpoint(
+    request: Request, confirm: str = Form(...)
+) -> HTMLResponse:
+    """POST /kill — operator submitted the typed-KILL form.
+
+    Server-side gate: ``confirm.strip().upper() == "KILL"``. Otherwise
+    raise HTTPException(400). Fires ``_execute_kill`` in the background
+    (the cancel sweep + audit + DM run for up to 5s) and returns the
+    ``kill_active_banner.html.j2`` partial that HTMX swaps into
+    ``#kill-banner-mount``.
+    """
+    # Case-sensitive gate: UI-SPEC §2b "Type KILL exactly (uppercase)".
+    if confirm.strip() != "KILL":
+        raise HTTPException(
+            status_code=400,
+            detail="Type KILL exactly (uppercase) to confirm.",
+        )
+
+    settings = get_settings()
+    asyncio.create_task(
+        _execute_kill_background(
+            user_id=settings.gekko_user_id, source="dashboard"
+        )
+    )
+    # Flag the app-state cache as dirty so subsequent renders pick up the
+    # new state without waiting for the 60s TTL to expire.
+    try:
+        request.app.state.kill_active = True
+        request.state.kill_active = True
+    except Exception:  # noqa: BLE001 — best-effort cache hint
+        pass
+    return templates.TemplateResponse(
+        "kill_active_banner.html.j2",
+        {
+            "request": request,
+            "n_cancelled": 0,
+            "n_total": 0,
+            "boot_restored": False,
+        },
+    )
+
+
+@router.post("/unkill", response_class=HTMLResponse)
+async def unkill_endpoint(
+    request: Request, confirm: str = Form(...)
+) -> HTMLResponse:
+    """POST /unkill — operator submitted the typed-UNKILL form."""
+    # Case-sensitive gate: UI-SPEC §2b symmetric "Type UNKILL exactly".
+    if confirm.strip() != "UNKILL":
+        raise HTTPException(
+            status_code=400,
+            detail="Type UNKILL exactly (uppercase) to confirm.",
+        )
+
+    settings = get_settings()
+    asyncio.create_task(
+        _execute_unkill_background(
+            user_id=settings.gekko_user_id, source="dashboard"
+        )
+    )
+    try:
+        request.app.state.kill_active = False
+        request.state.kill_active = False
+    except Exception:  # noqa: BLE001
+        pass
+    # Return an empty kill-banner-mount placeholder so HTMX swaps the
+    # red banner away.
+    return HTMLResponse('<div id="kill-banner-mount"></div>')
+
+
+@router.get("/kill/state", response_class=HTMLResponse)
+async def kill_state(request: Request) -> HTMLResponse:
+    """HTMX-poll endpoint for the in-flight kill tally (UI-SPEC §2b).
+
+    The kill modal's loading affordance polls this every 1s via
+    ``hx-trigger="every 1s"``. Returns a small text fragment with the
+    current tally — or "Cancelling…" if still in flight.
+    """
+    settings = get_settings()
+    from gekko.execution.kill_switch import is_active as _is_kill_active
+
+    active = await _is_kill_active(settings.gekko_user_id)
+    if active:
+        return HTMLResponse("Kill ACTIVE — cancel sweep complete.")
+    return HTMLResponse("Setting kill_active=true…")
+
+
+async def _execute_kill_background(*, user_id: str, source: str) -> None:
+    """Background wrapper around ``_execute_kill`` (PATTERNS §5d shape)."""
+    from gekko.logging_config import get_logger
+    from gekko.execution.kill_switch import _execute_kill
+
+    log = get_logger(__name__)
+    try:
+        await _execute_kill(user_id=user_id, source=source, reason="manual")
+    except Exception:
+        log.exception(
+            "dashboard.kill.background_failed",
+            user_id=user_id,
+            source=source,
+        )
+
+
+async def _execute_unkill_background(*, user_id: str, source: str) -> None:
+    """Background wrapper around ``_execute_unkill`` (PATTERNS §5d shape)."""
+    from gekko.execution.kill_switch import _execute_unkill
+    from gekko.logging_config import get_logger
+
+    log = get_logger(__name__)
+    try:
+        await _execute_unkill(user_id=user_id, source=source)
+    except Exception:
+        log.exception(
+            "dashboard.unkill.background_failed",
+            user_id=user_id,
+            source=source,
+        )
+
+
 __all__: tuple[str, ...] = ("router",)

@@ -1,0 +1,41 @@
+{#
+  Unkill confirmation modal — Plan 02-05 Task 2 / UI-SPEC §2b symmetric.
+
+  HTMX-loaded fragment served from GET /unkill/confirm-modal. Same CSP
+  invariants as kill_modal.html.j2 — NO inline <script>, no onclick.
+#}
+<div class="modal-backdrop" id="unkill-modal" role="dialog" aria-modal="true" aria-labelledby="unkill-modal-headline">
+  <div class="modal">
+    <div class="modal-headline" id="unkill-modal-headline">Resume trading</div>
+    <div class="modal-body">
+      This resumes paper and live trading from the killed state.
+      <br><br>
+      <strong>Note:</strong> previously-cancelled orders are NOT restored.
+      Open orders that were sweep-cancelled stay cancelled.
+      <br><br>
+      <strong>Type UNKILL below to confirm.</strong>
+    </div>
+    <form hx-post="/unkill"
+          hx-target="#kill-banner-mount"
+          hx-swap="outerHTML"
+          hx-disabled-elt="find button[type='submit']">
+      <label for="unkill-confirm-input">Confirmation</label>
+      <input type="text"
+             id="unkill-confirm-input"
+             name="confirm"
+             required
+             pattern="^UNKILL$"
+             autocomplete="off"
+             autofocus>
+      <div class="modal-actions mt-4">
+        <a hx-get="/modal/close"
+           hx-target="#modal-mount"
+           hx-swap="innerHTML"
+           aria-label="Cancel and close modal">Cancel</a>
+        <button type="submit" class="btn-kill" hx-disable-elt="this">
+          Confirm — resume trading
+        </button>
+      </div>
+    </form>
+  </div>
+</div>

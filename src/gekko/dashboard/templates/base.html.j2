@@ -29,14 +29,51 @@
   <script src="/static/htmx.min.js" defer></script>
 </head>
 <body class="min-h-screen flex flex-col">
-  {# Paper-vs-live banner — D-24: P1 is always PAPER. #}
-  <div class="banner-paper">PAPER</div>
+  {# Paper-vs-live banner — Phase-2 (plan 02-05) introduces request.state.banner_mode.
+     Plan 02-06 wires the live conditional via request.state; for plan 02-05 the
+     dependency resolves to "PAPER" unconditionally (no Phase-1 regression). #}
+  {% if request and request.state is defined and request.state.banner_mode is defined and request.state.banner_mode == "LIVE" %}
+    <div class="banner-live-strong" role="alert" aria-live="polite" aria-atomic="true">
+      [LIVE — REAL MONEY] Alpaca live trading is armed.
+    </div>
+  {% else %}
+    <div class="banner-paper">PAPER</div>
+  {% endif %}
+
+  {# Kill-active banner mount — populated when request.state.kill_active is True
+     (FastAPI dependency injects from app.state with 60s TTL per UI-SPEC §"Trigger logic").
+     The route POST /kill also targets #kill-banner-mount with hx-swap="outerHTML". #}
+  {% if request and request.state is defined and request.state.kill_active is defined and request.state.kill_active %}
+    {% include "kill_active_banner.html.j2" %}
+  {% else %}
+    <div id="kill-banner-mount"></div>
+  {% endif %}
 
   <header class="border-b bg-white p-4">
     <div class="max-w-3xl flex items-center justify-between">
       <a href="/strategies" class="text-xl font-semibold text-gray-900">Gekko</a>
-      <nav class="flex gap-4 text-sm">
+      <nav class="flex gap-4 text-sm items-center">
         <a href="/strategies">Strategies</a>
+        {# UI-SPEC §2a: KILL button always visible, top-right of header.
+           When kill_active=True, button re-labels to UNKILL and targets the
+           unkill modal route (state-of-button per UI-SPEC §2a). #}
+        {% if request and request.state is defined and request.state.kill_active is defined and request.state.kill_active %}
+          <button class="btn-kill"
+                  hx-get="/unkill/confirm-modal"
+                  hx-target="#modal-mount"
+                  hx-swap="innerHTML"
+                  aria-label="Open unkill confirmation. Resumes all trading.">
+            UNKILL
+          </button>
+        {% else %}
+          <button class="btn-kill"
+                  hx-get="/kill/confirm-modal"
+                  hx-target="#modal-mount"
+                  hx-swap="innerHTML"
+                  aria-label="Open kill switch confirmation. Stops all trading.">
+            KILL
+          </button>
+        {% endif %}
       </nav>
     </div>
   </header>
@@ -48,5 +85,8 @@
   <footer class="footer">
     Gekko is personal trade-execution tooling acting on your authored strategy. Not investment advice.
   </footer>
+
+  {# HTMX modal-mount slot — kill/unkill confirmation modals swap into here. #}
+  <div id="modal-mount"></div>
 </body>
 </html>

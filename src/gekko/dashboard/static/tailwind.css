@@ -162,3 +162,143 @@ a:hover { text-decoration: underline; }
 table { width: 100%; border-collapse: collapse; }
 th, td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid #e5e7eb; }
 th { font-weight: 600; color: #374151; background-color: #f9fafb; }
+
+/* ---------------------------------------------------------------------------
+ * Phase 2 — safety semantic tokens (Plan 02-05 + 02-06 / UI-SPEC §"Required
+ * Tailwind utility class additions").
+ *
+ * APPENDED block — do NOT modify the existing Phase-1 lines above.
+ * --------------------------------------------------------------------------- */
+
+.banner-live-strong { /* replaces the placeholder `.banner-live` in P1 */
+  background-color: #991b1b;
+  color: #ffffff;
+  text-align: center;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 10px 16px;
+  font-size: 14px;
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+.banner-kill {
+  background-color: #7f1d1d;
+  color: #ffffff;
+  text-align: center;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 10px 16px;
+  font-size: 14px;
+  position: sticky;
+  top: 40px; /* stacks below live banner when both active */
+  z-index: 49;
+}
+.btn-kill {
+  background-color: #dc2626;
+  color: #ffffff;
+  font-weight: 600;
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  min-height: 36px;
+  min-width: 80px;
+}
+.btn-kill:hover { background-color: #b91c1c; }
+.btn-kill:focus { outline: 2px solid #fca5a5; outline-offset: 2px; }
+
+.caution-block {
+  background-color: #fef3c7;
+  color: #92400e;
+  border-left: 4px solid #f59e0b;
+  padding: 12px 16px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.chip-live {
+  display: inline-block;
+  background-color: #991b1b;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.chip-rejected {
+  display: inline-block;
+  background-color: #fee2e2;
+  color: #991b1b;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Modal */
+.modal-backdrop {
+  position: fixed; inset: 0;
+  background-color: rgba(0,0,0,0.5);
+  z-index: 100;
+  display: flex; align-items: center; justify-content: center;
+}
+.modal {
+  background-color: #ffffff;
+  border-radius: 8px;
+  max-width: 480px;
+  width: 90%;
+  padding: 24px;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+}
+.modal-headline { font-size: 24px; font-weight: 600; line-height: 1.2; margin-bottom: 16px; }
+.modal-body { font-size: 16px; line-height: 1.5; margin-bottom: 24px; }
+.modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+/* Countdown bar (first-live confirm page) */
+.countdown-bar {
+  height: 4px;
+  background-color: #fee2e2;
+  border-radius: 2px;
+  overflow: hidden;
+  width: 100%;
+}
+.countdown-bar-fill {
+  height: 100%;
+  background-color: #dc2626;
+  transition: width 1s linear;
+}
+.countdown-numeral { font-size: 20px; font-weight: 600; line-height: 1; }
+
+/* Disabled state for the final confirm button */
+button:disabled, .btn-disabled {
+  background-color: #d1d5db;
+  color: #6b7280;
+  cursor: not-allowed;
+}
+button:disabled:hover, .btn-disabled:hover {
+  background-color: #d1d5db;
+}
+
+/* ARIA live region styling — visually identical to its surface */
+[aria-live] { /* no visual override — semantics-only */ }
+
+/* Loading spinner (HTMX hx-indicator class) */
+.htmx-indicator { display: none; }
+.htmx-request .htmx-indicator { display: inline-block; }
+.spinner {
+  display: inline-block;
+  width: 16px; height: 16px;
+  border: 2px solid #fee2e2;
+  border-top-color: #dc2626;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
