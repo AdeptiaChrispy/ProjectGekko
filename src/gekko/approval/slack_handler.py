@@ -161,6 +161,11 @@ async def _approve_workflow(
         # window per BLOCKER #5.
         proposal_account_mode: str | None = None
         strategy_name_snapshot: str | None = None
+        # CR-02 fix: snapshot payload_json INSIDE the transaction so the
+        # first-live DM block (which fires after the with-block commits)
+        # can re-parse the TradeProposal without lazy-loading from a
+        # detached/expired SQLAlchemy row.
+        payload_json_snapshot: str | None = None
         is_live_first: bool = False
         async with sf() as session, session.begin():
             row = await session.get(ProposalRow, decision_id)
@@ -171,6 +176,7 @@ async def _approve_workflow(
                 )
                 return
             proposal_account_mode = row.account_mode
+            payload_json_snapshot = row.payload_json
             # Pull strategy_name from the persisted TradeProposal payload
             # so we can look up StrategyMetadata.
             from gekko.schemas.proposal import TradeProposal as _TP
@@ -225,23 +231,61 @@ async def _approve_workflow(
                 )
 
         if is_live_first:
-            # DM the operator the dashboard URL — AFTER the transaction
-            # commits so the row state on disk matches what the dashboard
-            # route will see. Read dashboard_url from settings (fallback
-            # to a sentinel string when unset so the message still
-            # rendsers).
+            # CR-02 fix: HITL-06 first-live DM now renders the rich
+            # build_first_live_card Block Kit (UI-SPEC §3a) and routes
+            # through the _send_slack_dm_blocks identity-split seam in
+            # gekko.execution.executor (invariant #8). The seam is the
+            # single chokepoint that does the gekko_user_id ->
+            # slack_user_id translation per quick-260612-nlv. Sending
+            # via client.chat_postMessage(channel=slack_user_id, ...)
+            # only worked because the cross-user check above forces
+            # slack_user_id == settings.slack_user_id; the seam makes
+            # the invariant load-bearing instead of latent.
+            #
+            # DM is sent AFTER the transaction commits so the row state
+            # on disk matches what the dashboard /live-confirm route
+            # will see.
             dashboard_url = getattr(
                 settings, "dashboard_url", "http://localhost:8000"
             )
-            await client.chat_postMessage(
-                channel=slack_user_id,
-                text=(
-                    f"⚠️ This is your FIRST live trade for "
-                    f"`{strategy_name_snapshot}`. To execute, also "
-                    f"click confirm in your dashboard at "
-                    f"{dashboard_url}/live-confirm/{decision_id}"
-                ),
-            )
+            # Re-parse the TP from the in-transaction payload snapshot so
+            # we can render the rich card. Defensive: if the payload parse
+            # fails (or the snapshot is missing), fall back to a plain-text
+            # DM through the seam so the operator still gets the dashboard
+            # URL.
+            from gekko.schemas.proposal import TradeProposal as _TP
+
+            _tp_card = None
+            if payload_json_snapshot is not None:
+                try:
+                    _tp_card = _TP.model_validate_json(payload_json_snapshot)
+                except Exception:  # noqa: BLE001 — defensive
+                    _tp_card = None
+
+            if _tp_card is not None:
+                from gekko.execution.executor import _send_slack_dm_blocks
+                from gekko.reporter.slack import build_first_live_card
+
+                blocks = build_first_live_card(_tp_card, dashboard_url)
+                await _send_slack_dm_blocks(
+                    gekko_user_id,
+                    blocks=blocks,
+                    fallback=(
+                        f"FIRST LIVE TRADE — confirm at "
+                        f"{dashboard_url}/live-confirm/{decision_id}"
+                    ),
+                )
+            else:
+                from gekko.execution.executor import _send_slack_dm
+
+                await _send_slack_dm(
+                    gekko_user_id,
+                    (
+                        f":warning: FIRST live trade for "
+                        f"`{strategy_name_snapshot}`. Confirm at "
+                        f"{dashboard_url}/live-confirm/{decision_id}"
+                    ),
+                )
             return
 
         # Outside the approval transaction — the Executor opens its own.
