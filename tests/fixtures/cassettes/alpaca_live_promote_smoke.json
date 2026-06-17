@@ -1,0 +1,99 @@
+{
+  "_README": [
+    "Plan 02-07 Task 1 — Phase-2 walking-skeleton cassette.",
+    "",
+    "Recorded responses that emulate alpaca-py 0.43's live-trading return",
+    "shapes for the promote-paper-to-live walking-skeleton end-to-end test.",
+    "The test in tests/integration/test_promote_paper_to_live_end_to_end.py",
+    "uses MagicMocks wired to the response shapes below — the cassette is",
+    "the authoritative documentation of what the live Alpaca REST + websocket",
+    "endpoints look like for this flow.",
+    "",
+    "For operator regeneration: setting GEKKO_TEST_LIVE_ALPACA=1 with real",
+    "live credentials would switch the test to live mode (NOT enabled here;",
+    "the walking-skeleton cassette is the canonical CI surface). The manual",
+    "demo recipe in README §'Phase 2 — Walking-skeleton demo' is the live-",
+    "mode equivalent of this cassette.",
+    "",
+    "The cassette contains NO real credentials. Placeholder live keys:",
+    "  api_key=TEST_LIVE_KEY  secret_key=TEST_LIVE_SECRET",
+    "Account values match Plan 02-07 Task 1 §read_first: equity=$100,",
+    "non_marginable_buying_power=$100, daytrade_count=0, equity above 0",
+    "but below PDT threshold so PDT branch falls through to local audit",
+    "walk (which finds zero round-trips for a fresh user)."
+  ],
+  "credentials": {
+    "broker": "alpaca",
+    "kind": "alpaca_live",
+    "api_key": "TEST_LIVE_KEY",
+    "secret_key": "TEST_LIVE_SECRET",
+    "paper": false
+  },
+  "account": {
+    "id": "live-acct-CASSETTE",
+    "account_number": "LIVE12345CASSETTE",
+    "status": "ACTIVE",
+    "currency": "USD",
+    "equity": "100",
+    "cash": "100",
+    "buying_power": "100",
+    "non_marginable_buying_power": "100",
+    "pattern_day_trader": false,
+    "daytrade_count": 0,
+    "shorting_enabled": false
+  },
+  "positions": [],
+  "quote_AAPL": {
+    "symbol": "AAPL",
+    "ask_price": "1.00",
+    "bid_price": "0.99",
+    "ask_size": 100,
+    "bid_size": 100,
+    "timestamp": "2026-06-16T15:00:00Z"
+  },
+  "limit_order_AAPL_live": {
+    "id": "cassette-live-001",
+    "client_order_id": "WILL_BE_REPLACED_AT_RUNTIME",
+    "symbol": "AAPL",
+    "qty": "1",
+    "side": "buy",
+    "type": "limit",
+    "limit_price": "1.00",
+    "time_in_force": "day",
+    "status": "accepted",
+    "filled_qty": "0",
+    "filled_avg_price": null,
+    "submitted_at": "2026-06-16T15:00:01Z"
+  },
+  "trading_stream_fill_AAPL_live": {
+    "event": "fill",
+    "execution_id": "exec-live-001",
+    "order": {
+      "id": "cassette-live-001",
+      "client_order_id": "WILL_BE_REPLACED_AT_RUNTIME",
+      "symbol": "AAPL",
+      "side": "buy",
+      "filled_qty": "1",
+      "filled_avg_price": "1.00",
+      "status": "filled",
+      "filled_at": "2026-06-16T15:00:02Z"
+    },
+    "ticker": "AAPL",
+    "filled_qty": "1",
+    "filled_avg_price": "1.00",
+    "ts": "2026-06-16T15:00:02Z"
+  },
+  "expected_audit_chain": [
+    "decision",
+    "proposal",
+    "approval (awaiting_2nd_channel=True)",
+    "approval (second_channel=True)",
+    "order_submitted",
+    "fill"
+  ],
+  "expected_post_fill_state": {
+    "proposal_status": "FILLED",
+    "broker_order_id": "cassette-live-001",
+    "first_live_trade_confirmed_at": "set (non-NULL)"
+  }
+}

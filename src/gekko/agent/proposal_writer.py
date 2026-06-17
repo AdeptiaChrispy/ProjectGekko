@@ -312,6 +312,15 @@ async def _write_trade(
             broker_order_id=None,
             created_at=now_iso,
             updated_at=now_iso,
+            # BLOCKER #5 runtime half (Plan 02-07 walking-skeleton fix):
+            # mirror the proposal's account_mode onto the COLUMN. The
+            # Slack approve handler reads ``row.account_mode`` (NOT
+            # payload_json) to compute is_live_first; without this the
+            # column would fall back to the server_default ``'PAPER'``
+            # and the dual-channel divert would never fire for live
+            # strategies. Closes TOCTOU end-to-end by making the column
+            # the authoritative live/paper signal for downstream callers.
+            account_mode=account_mode,
         )
     )
     try:
