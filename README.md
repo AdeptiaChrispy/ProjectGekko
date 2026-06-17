@@ -227,6 +227,149 @@ This runs the same flow in cassette mode (no Slack, no Alpaca, no Claude) — th
 
 ---
 
+## Phase 2 — Walking-skeleton demo (OrderGuard + Real-Money Alpaca Live)
+
+This is the Phase-2 demo: a 5-to-10 minute end-to-end run that places a **real $1 limit order** on the operator's Alpaca live account, exercises the HITL-06 dual-channel gate (Slack approve + dashboard `/live-confirm` with a 5-second read timer), and validates that the OrderGuard firewall + audit chain stay intact end-to-end.
+
+**Before running the manual demo, ensure** `uv run pytest tests/integration/test_promote_paper_to_live_end_to_end.py -x` **passes — that's the cassette version of this recipe (no real money), and any failure there is a blocker.**
+
+### Prerequisites
+
+- Phase 1 walking-skeleton demo above has been completed at least once (22-event chain on disk).
+- An **Alpaca live-trading account** with at least a few dollars of buying power. Generate live API key + secret at the Alpaca dashboard → **Live Trading → API Keys**.
+- The Slack + Anthropic + dashboard tunnel from the Phase 1 demo are still configured. The dashboard tunnel URL must be reachable from the same browser as Slack (so the Slack DM's "Open Dashboard to Confirm" URL-button works in one click).
+- Set `DASHBOARD_URL` in your `.env` (or environment) to the **public** dashboard URL (ngrok / cloudflared / Tailscale) — the HITL-06 Slack DM bakes this URL into the second-channel link. The default `http://localhost:8000` only works when Slack and your browser run on the same machine.
+
+### Add live credentials to the SQLCipher vault
+
+```bash
+uv run gekko credentials add-alpaca-live
+# (prompts for API key + secret with hide_input — values never echo, never land in .env)
+# → "Live credentials stored for user chris."
+```
+
+Live keys live **only** inside the encrypted per-user SQLCipher DB (`~/.gekko/<user_id>.db`). They never touch `.env`, never appear in logs (the structlog redactor catches them), and never enter LLM context.
+
+### Promote a strategy to live-eligible
+
+```bash
+uv run gekko strategy promote-live ai-infra-bull
+# (typed-name confirm: re-type "ai-infra-bull" when prompted)
+# → "Strategy `ai-infra-bull` is now live-mode-eligible. The next approved
+#    trade will require dual-channel confirmation (Slack DM + dashboard)."
+```
+
+Open the dashboard at `/strategies` — the `ai-infra-bull` row now shows a **`[LIVE]` red chip**, and a persistent `[LIVE — REAL MONEY] Alpaca live trading is armed.` banner is stuck to the top of every dashboard page.
+
+In the dashboard's strategy edit page, the `mode` `<select>` is now enabled — switch it from `paper` to `live` and save. (Paper-only strategies stay paper; only live-eligible ones can flip.)
+
+### First live trade — dual-channel gate
+
+Trigger a run (Slack or CLI):
+
+```bash
+uv run gekko run ai-infra-bull
+# or, in Slack DM with the bot: /gekko run ai-infra-bull
+```
+
+Within ~60 seconds the operator receives a **dedicated first-live Slack DM** — NOT the regular HITL card:
+
+- **Header:** `🔴 FIRST LIVE TRADE — DUAL CONFIRM REQUIRED`
+- **Body:** strategy, ticker, action, notional, rationale (all `_escape_mrkdwn`-wrapped)
+- **One button only:** `Open Dashboard to Confirm` (URL-button — no inline Approve/Reject; the dual-channel gate is structurally bypass-proof)
+
+Click `Open Dashboard to Confirm`. The browser opens `/live-confirm/{proposal_id}` — a **full-page** template (not a modal):
+
+- **Hero:** `Confirm First Live Trade — ai-infra-bull`
+- Full trade-detail panel (ticker, qty, limit_price, target_notional_usd, rationale)
+- Two checkboxes:
+  - ☐ `I understand this is real money on my Alpaca live account.`
+  - ☐ `I have read the rationale and trade details above.`
+- Countdown: `Read time: 5… 4… 3… 2… 1… (you may now confirm)`
+- Final button: `Confirm First Live Trade`
+
+Tick both checkboxes. **Wait for the 5-second countdown to elapse** (the server-side timer is the gate — bypassing the visible countdown via DevTools gains nothing). Then click `Confirm First Live Trade`.
+
+The page transitions to:
+
+> *First live trade confirmed. The executor is placing your order with Alpaca. You'll receive a Slack DM when the fill confirms.*
+
+### Verify the fill
+
+Within seconds (assuming market hours and a liquid stock like AAPL with a near-market limit), a Slack DM lands:
+
+> *🔴 LIVE: Filled BUY 1 AAPL @ $X.XX — strategy=ai-infra-bull (client_order_id=…, broker_order_id=…)*
+
+Confirm the fill on the **Alpaca live dashboard** (https://app.alpaca.markets/dashboard/overview → Orders) — the $1 order should show as `filled`, and the position should appear in your account.
+
+### Inspect the 6-event chain
+
+```bash
+uv run gekko audit verify
+# → Chain intact across 28 events for user chris
+#   (22 from Phase 1 + 6 new from this live trade — first_live_trade_stamped + credential events
+#    add to the chain length but do not break it)
+
+uv run gekko audit dump --limit 10
+```
+
+The 6 trade-related events for this run, in order: `decision` → `proposal` → `approval (awaiting_2nd_channel=True)` → `approval (second_channel=True)` → `order_submitted` → `fill`. Every row links to its predecessor via `prev_hash`/`row_hash` — tampering with any payload breaks the chain.
+
+### Subsequent live trade — single-channel path
+
+Trigger another run on the same strategy:
+
+```bash
+uv run gekko run ai-infra-bull
+```
+
+This time the Slack DM is the **regular HITL card** (with the red `🔴 LIVE — REAL MONEY` banner + the `⚠️ THIS PLACES A REAL-MONEY ORDER…` caution line). The inline `Approve` button is back — a single click dispatches the executor immediately. No dashboard step. This is because `strategy_metadata.first_live_trade_confirmed_at` was stamped on the first live fill, and the per-strategy dual-channel gate stays closed thereafter (D-32).
+
+### Kill switch sanity check
+
+While a live order is open (or place a new far-from-market limit order on purpose), exercise the kill:
+
+```bash
+# In Slack DM: /gekko kill   (then in the follow-up: type "KILL")
+# Or CLI:
+uv run gekko kill
+```
+
+Within 5 seconds:
+
+- All open orders are cancelled (best-effort parallel cancel with 4s gather timeout).
+- Slack DM: `🚫 Kill ACTIVE. Cancelled X/Y. Z pending. W failed (see logs).`
+- The dashboard shows a persistent `🚫 KILL ACTIVE — no orders will fire.` banner stacked above the live banner.
+- Running `gekko run ai-infra-bull` while killed produces a `cap_rejection` audit event with `reject_code=kill_active`.
+
+Resume:
+
+```bash
+# Slack: /gekko unkill   (type "UNKILL" to confirm)
+# Or CLI:
+uv run gekko unkill
+```
+
+The kill banner clears; trading resumes.
+
+### Run the automated wave-gate test (cassette mode)
+
+```bash
+uv run pytest tests/integration/test_promote_paper_to_live_end_to_end.py -m integration
+```
+
+This runs the same flow against a recorded cassette at `tests/fixtures/cassettes/alpaca_live_promote_smoke.json` — no real money, no real Slack, no Claude. Use it as a regression gate before re-running the manual recipe.
+
+### Demo closeout
+
+Record for the audit trail:
+
+- Wall-clock elapsed from `/gekko run` to the fill Slack DM
+- The chain ID + the broker_order_id of the actual $1 trade
+- Any UI / copy / timing surprises (file as Phase-3 backlog if applicable)
+
+---
+
 ## License
 
 TBD.
