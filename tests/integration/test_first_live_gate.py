@@ -190,6 +190,32 @@ async def test_first_live_approve_diverts_to_awaiting_2nd_channel(
     fake_client = MagicMock()
     fake_client.chat_postMessage = AsyncMock(return_value={"ok": True})
 
+    # CR-02 fix: the first-live DM now routes through
+    # gekko.execution.executor._send_slack_dm_blocks (the identity-split
+    # seam from quick-260612-nlv) carrying the build_first_live_card
+    # Block Kit (UI-SPEC §3a) — NOT a direct client.chat_postMessage on
+    # the Slack bolt client. Capture both seams so we can assert on the
+    # rich card without depending on the bolt client.
+    sent_block_dms: list[dict[str, Any]] = []
+
+    async def _capture_blocks(
+        user_id: str,
+        *,
+        blocks: list[dict[str, Any]],
+        fallback: str = "",
+    ) -> None:
+        sent_block_dms.append(
+            {
+                "user_id": user_id,
+                "blocks": blocks,
+                "fallback": fallback,
+            }
+        )
+
+    monkeypatch.setattr(
+        "gekko.execution.executor._send_slack_dm_blocks", _capture_blocks
+    )
+
     await _approve_workflow(
         decision_id=decision_id,
         slack_user_id="U_TEST_USER",
@@ -203,13 +229,26 @@ async def test_first_live_approve_diverts_to_awaiting_2nd_channel(
     assert row.status == "AWAITING_2ND_CHANNEL"
     # Executor must NOT have been dispatched.
     assert dispatched == []
-    # The DM must mention the dashboard URL.
-    assert fake_client.chat_postMessage.await_count == 1
-    call = fake_client.chat_postMessage.await_args
-    text = call.kwargs.get("text") or (call.args[0] if call.args else "")
-    assert "FIRST live trade" in text, f"text was: {text!r}"
-    assert "/live-confirm/" in text
-    assert decision_id in text
+    # The block-DM seam must have been invoked exactly once with the
+    # rich first-live card.
+    assert len(sent_block_dms) == 1, (
+        "expected exactly one _send_slack_dm_blocks call carrying the "
+        f"build_first_live_card; got {sent_block_dms!r}"
+    )
+    dm = sent_block_dms[0]
+    assert dm["user_id"] == "test-user", (
+        "first-live DM must address the internal gekko_user_id (identity "
+        "split seam), not the Slack user id"
+    )
+    # Fallback text must mention FIRST LIVE TRADE + the dashboard URL.
+    assert "FIRST LIVE TRADE" in dm["fallback"]
+    assert "/live-confirm/" in dm["fallback"]
+    assert decision_id in dm["fallback"]
+    # The Block Kit card must include the dashboard URL button.
+    block_text_blob = _json.dumps(dm["blocks"])
+    assert "/live-confirm/" in block_text_blob
+    assert decision_id in block_text_blob
+    assert "FIRST LIVE TRADE" in block_text_blob
 
 
 @pytest.mark.asyncio

@@ -265,10 +265,21 @@ def _load_strategy_for_executor(
 
     The synthesized fallback exists because every Phase-1 executor test
     seeds Strategy rows with ``payload_json="{}"`` (the test helpers in
-    Plan 01-08 didn't populate it). Failing here would break the
-    Phase-1 walking-skeleton — so we degrade gracefully with permissive
-    defaults that match the proposal's ticker (universe pass) + a 100%
-    position cap (no hard-cap reject in synthesized mode).
+    Plan 01-08 didn't populate it). On the PAPER path we degrade
+    gracefully with permissive defaults that match the proposal's ticker
+    (universe pass) + a 100% position cap (no hard-cap reject in
+    synthesized mode).
+
+    WR-03 fix: on the LIVE path the synthesized fallback is now FAIL-
+    CLOSED. A LIVE proposal whose strategy row has empty / corrupt
+    payload_json (botched migration, future regression nulling the
+    column, manual DB edit) used to land permissive synthetic caps —
+    max_position_pct=0.20, max_daily_loss_usd=999999,
+    max_trades_per_day=999, max_sector_exposure_pct=1 — that overrode
+    the operator's actual stated caps. On the live broker, permissive
+    defaults are exactly the failure mode this phase is designed to
+    prevent. We refuse to substitute permissive caps for real money;
+    the LIVE branch raises so OrderGuard never sees synthetic caps.
     """
     from decimal import Decimal as _D
     from datetime import UTC as _UTC, datetime as _dt
@@ -278,10 +289,42 @@ def _load_strategy_for_executor(
     if strategy_row is not None and strategy_row.payload_json:
         try:
             return Strategy.model_validate_json(strategy_row.payload_json)
-        except Exception:  # noqa: BLE001 - fall through to synth
-            pass
+        except Exception as exc:  # noqa: BLE001
+            # WR-03 fix: log the parse failure structured (previously
+            # silently swallowed via ``except Exception: pass``), so a
+            # corrupt payload surfaces in operator logs even when the
+            # caller falls through to the synth path.
+            log.exception(
+                "executor.strategy_payload_parse_failed",
+                strategy_id=getattr(strategy_row, "strategy_id", None),
+                user_id=user_id,
+                error=str(exc),
+            )
+            if tp.account_mode == "LIVE":
+                # Fail closed on the live path — never synthesize
+                # permissive caps for real money.
+                msg = (
+                    f"Cannot execute LIVE proposal {tp.decision_id} "
+                    f"against strategy {tp.strategy_name!r}: "
+                    "payload_json failed to parse. Refusing to "
+                    "substitute permissive synthetic caps."
+                )
+                raise ValueError(msg) from exc
 
-    # Synthesized fallback — minimal viable shape for OrderGuard.
+    if tp.account_mode == "LIVE":
+        # WR-03 fix: empty / missing payload_json on the LIVE path is
+        # also fail-closed. Synthesized permissive caps must never
+        # touch a real-money order.
+        msg = (
+            f"Cannot execute LIVE proposal {tp.decision_id} against "
+            f"strategy {tp.strategy_name!r}: strategies.payload_json "
+            "is empty or absent. Refusing to substitute permissive "
+            "synthetic caps for real money."
+        )
+        raise ValueError(msg)
+
+    # PAPER fallback — preserved verbatim from the pre-fix behavior so
+    # the Phase-1 walking-skeleton tests keep passing.
     synth_mode = "paper" if tp.account_mode == "PAPER" else "live"
     return Strategy(
         strategy_id=(strategy_row.strategy_id if strategy_row else "synth"),
