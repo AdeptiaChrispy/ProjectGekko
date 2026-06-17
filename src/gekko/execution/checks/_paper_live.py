@@ -27,8 +27,9 @@ def check_paper_live_pairing(
     strategy_mode: str,
     account_mode: str,
     user_id: str,
+    credential_kind: str | None = None,
 ) -> None:
-    """Reject any mismatch between strategy mode, account mode, and broker.
+    """Reject any mismatch between strategy mode, account mode, broker, and credential kind.
 
     :param broker: The concrete :class:`Brokerage` (NOT the OrderGuard wrap —
         callers pass ``self._wrapped`` so the ``is_paper`` introspection sees
@@ -37,10 +38,16 @@ def check_paper_live_pairing(
     :param account_mode: ``"PAPER"`` or ``"LIVE"`` — the value stamped on the
         proposal row at proposal-build time (BLOCKER #5 / plan 02-01 Task 3).
     :param user_id: Carried into ``extra`` for audit-log filtering.
+    :param credential_kind: Optional fourth axis — ``"alpaca_paper"`` /
+        ``"alpaca_live"`` (the value of ``BrokerCredential.kind`` for the
+        row that produced this broker). When provided, the function
+        enforces ``credential_kind == "alpaca_live" ⇔ strategy_mode ==
+        "live"``. Plan 02-06 Task 1 extension per EXEC-05 D-34 invariant.
     :raises OrderGuardRejected: With ``reject_code='paper_live_mismatch_broker'``
-        when ``broker.is_paper`` disagrees with ``strategy_mode``; with
+        when ``broker.is_paper`` disagrees with ``strategy_mode``;
         ``reject_code='paper_live_mismatch_account'`` when ``account_mode``
-        disagrees with ``strategy_mode``.
+        disagrees; ``reject_code='paper_live_mismatch_credential'`` when
+        ``credential_kind`` disagrees (Plan 02-06).
     """
     expected_paper = strategy_mode == "paper"
     if broker.is_paper is not expected_paper:
@@ -73,6 +80,25 @@ def check_paper_live_pairing(
                 "user_id": user_id,
             },
         )
+
+    # Plan 02-06 Task 1 — fourth axis: credential_kind.
+    if credential_kind is not None:
+        expected_kind = "alpaca_paper" if expected_paper else "alpaca_live"
+        if credential_kind != expected_kind:
+            raise OrderGuardRejected(
+                "paper_live_mismatch_credential",
+                (
+                    f"strategy.mode={strategy_mode!r} expects "
+                    f"credential_kind={expected_kind!r}, found "
+                    f"credential_kind={credential_kind!r}. Run "
+                    "`gekko credentials add-alpaca-live` if missing."
+                ),
+                extra={
+                    "strategy_mode": strategy_mode,
+                    "credential_kind": credential_kind,
+                    "user_id": user_id,
+                },
+            )
 
 
 __all__: tuple[str, ...] = ("check_paper_live_pairing",)

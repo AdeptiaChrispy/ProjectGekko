@@ -73,32 +73,62 @@ _TIF_MAP: dict[TimeInForce, AlpacaTimeInForce] = {
 
 
 class AlpacaBroker(Brokerage):
-    """Paper-only Alpaca broker.
+    """Alpaca broker — paper by default, live behind ``_allow_live`` opt-in.
 
-    Constructor enforces ``paper=True`` via two layers (see module docstring).
-    All sync alpaca-py calls are wrapped in ``asyncio.to_thread`` because the
-    SDK has no native async API as of 0.43 — the wrapper is the established
-    pattern per RESEARCH.
+    Constructor enforces ``paper=True`` by default. To construct a live
+    broker, the caller MUST pass BOTH ``paper=False`` AND ``_allow_live=True``
+    — the ``_allow_live`` kwarg is an internal opt-in NOT documented in the
+    user-facing API; it can ONLY be set inside
+    :func:`gekko.execution.executor._build_broker` per BLOCKER #4 grep gate.
+
+    Per Plan 02-06 Task 1 (BROK-A-02 / D-34): the live path loads the
+    operator's Alpaca live API key + secret from the SQLCipher vault via
+    :func:`gekko.vault.credentials.load_live_credentials` and constructs an
+    underlying ``TradingClient(paper=False)`` whose ``_base_url`` is the
+    live endpoint. The post-construct probe (layer 2) verifies the URL
+    looks live when ``_allow_live=True`` — and continues to verify "paper"
+    on the default path.
+
+    All sync alpaca-py calls are wrapped in ``asyncio.to_thread`` because
+    the SDK has no native async API as of 0.43 — the wrapper is the
+    established pattern per RESEARCH.
     """
 
     name = "alpaca"
     supports_fractional = True
     is_paper = True
 
-    def __init__(self, *, api_key: str, secret_key: str, paper: bool = True) -> None:
-        # ---- Layer 1: argument check (P1 paper-only invariant) -------------
-        if not paper:
-            # Knight-Capital insurance per Pitfall 7: live keys cannot reach
-            # the TradingClient in Phase 1. Phase 2's OrderGuard adds the
-            # promotion ladder; until then this is a hard physical rejection.
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        secret_key: str,
+        paper: bool = True,
+        _allow_live: bool = False,
+    ) -> None:
+        # ---- Layer 1: argument check ---------------------------------------
+        # The Phase-1 hard paper-only guard is RELAXED in Phase 2: live mode
+        # is permitted, but ONLY when the internal ``_allow_live`` opt-in is
+        # True. ``AlpacaBroker(paper=False)`` from user code still raises —
+        # only :func:`gekko.execution.executor._build_broker` (the vetted
+        # vault-credentials path) flips ``_allow_live=True``. BLOCKER #4
+        # grep gate locks the literal to that single site.
+        if not paper and not _allow_live:
             msg = (
-                "Phase 1 supports paper trading only (live blocked until "
-                "Phase 2 OrderGuard). If you intended paper, pass paper=True."
+                "Live mode requires explicit live-credentials path via "
+                "_build_broker; do not construct AlpacaBroker(paper=False) "
+                "directly. The _allow_live kwarg is an internal opt-in."
             )
             raise BrokerConfigError(msg)
 
+        # Stamp the instance attribute so OrderGuard's wrapped.is_paper
+        # introspection sees the truthful underlying value.
+        self.is_paper = paper
+
         # ---- Construct the underlying clients ------------------------------
-        self._client: TradingClient = TradingClient(api_key, secret_key, paper=True)
+        self._client: TradingClient = TradingClient(
+            api_key, secret_key, paper=paper
+        )
         self._data_client: StockHistoricalDataClient = StockHistoricalDataClient(
             api_key, secret_key
         )
@@ -108,18 +138,34 @@ class AlpacaBroker(Brokerage):
         # accept either:
         #   * .value is a string like "https://paper-api.alpaca.markets/v2"
         #   * str(enum) is like "BaseURL.TRADING_PAPER"
-        # Both contain "paper" (case-insensitive). A future alpaca-py
-        # change that drops the substring will trip this check and force
-        # a planned response rather than a silent live-order leak.
-        base_url_value = getattr(self._client._base_url, "value", str(self._client._base_url))
+        # Both contain "paper" (case-insensitive). On the live path we
+        # require the substring "live" or absence of "paper" — defense
+        # against a future alpaca-py change that flips the semantics of
+        # ``paper=`` or a corrupted env that swaps live keys for paper ones
+        # silently.
+        base_url_value = getattr(
+            self._client._base_url, "value", str(self._client._base_url)
+        )
         base_url_str = f"{self._client._base_url!s}|{base_url_value}".lower()
-        if "paper" not in base_url_str:
-            msg = (
-                "Paper-mode assertion failed; refusing to construct broker. "
-                f"TradingClient._base_url={self._client._base_url!r} does not "
-                "look like a paper endpoint."
-            )
-            raise BrokerConfigError(msg)
+        if paper:
+            if "paper" not in base_url_str:
+                msg = (
+                    "Paper-mode assertion failed; refusing to construct broker. "
+                    f"TradingClient._base_url={self._client._base_url!r} does not "
+                    "look like a paper endpoint."
+                )
+                raise BrokerConfigError(msg)
+        else:
+            # Live path — base URL must NOT contain "paper" (defense against
+            # a silently-papering alpaca-py future). The live URL is
+            # "api.alpaca.markets" — no "paper" substring.
+            if "paper" in base_url_str:
+                msg = (
+                    "Live-mode assertion failed; refusing to construct broker. "
+                    f"TradingClient._base_url={self._client._base_url!r} still "
+                    "looks like a paper endpoint despite paper=False."
+                )
+                raise BrokerConfigError(msg)
 
     # -------------------------------------------------------------------
     # Brokerage ABC contract

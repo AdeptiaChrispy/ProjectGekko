@@ -77,6 +77,13 @@ audit_app = typer.Typer(
 )
 app.add_typer(audit_app, name="audit")
 
+credentials_app = typer.Typer(
+    name="credentials",
+    help="Manage broker credentials in the SQLCipher vault (D-34).",
+    no_args_is_help=True,
+)
+app.add_typer(credentials_app, name="credentials")
+
 
 # ---------------------------------------------------------------------------
 # `gekko doctor` — Plan 01-01 (unchanged surface; AUTH-04 redaction)
@@ -627,6 +634,155 @@ def unkill() -> None:
         _execute_unkill(user_id=settings.gekko_user_id, source="cli")
     )
     typer.echo("Kill cleared — new orders will fire again.")
+
+
+# ---------------------------------------------------------------------------
+# `gekko credentials add-alpaca-live` — Plan 02-06 Task 1 (BROK-A-02 / D-34)
+# ---------------------------------------------------------------------------
+
+
+@credentials_app.command("add-alpaca-live")
+def credentials_add_alpaca_live() -> None:
+    """Store an Alpaca live API key + secret in the SQLCipher vault.
+
+    Live keys NEVER touch .env per D-34. This command is the ONLY ingress
+    path for Alpaca live credentials. Prompts via ``typer.prompt(...,
+    hide_input=True)`` so the values never echo to the terminal. Writes
+    a single :class:`gekko.db.models.BrokerCredential` row with
+    ``kind='alpaca_live'``.
+
+    On success prints the next-step nudge pointing the operator at
+    ``gekko strategy promote-live <name>``.
+    """
+    from gekko.config import get_settings
+    from gekko.logging_config import configure_logging
+    from gekko.vault.credentials import store_live_credentials
+    from gekko.vault.passphrase import get_passphrase, prompt_passphrase
+
+    configure_logging()
+    settings = get_settings()
+    user_id = settings.gekko_user_id
+
+    # Passphrase first — required to unlock the SQLCipher DB.
+    try:
+        get_passphrase()
+    except RuntimeError:
+        prompt_passphrase()
+
+    # NEVER echo the prompt values back to the operator.
+    api_key = typer.prompt(
+        "Alpaca live API key", hide_input=True
+    )
+    secret_key = typer.prompt(
+        "Alpaca live secret key", hide_input=True
+    )
+
+    try:
+        asyncio.run(
+            store_live_credentials(
+                user_id=user_id, api_key=api_key, secret_key=secret_key
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        typer.echo(
+            f"ERROR: failed to store credentials — {type(exc).__name__}: {exc}",
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(
+        f"Live credentials stored for user {user_id}. Use "
+        "`gekko strategy promote-live <name>` to enable a strategy "
+        "for live trading."
+    )
+
+
+# ---------------------------------------------------------------------------
+# `gekko strategy promote-live` / `demote-live` — Plan 02-06 Task 2 (D-31)
+# ---------------------------------------------------------------------------
+
+
+@strategy_app.command("promote-live")
+def strategy_promote_live(
+    name: str = typer.Argument(..., help="Strategy slug to promote to live."),
+) -> None:
+    """Promote a paper-mode strategy to live-eligible (D-31).
+
+    UI-SPEC §"Destructive Action Confirmations": requires the operator
+    to type the EXACT strategy name to confirm. On confirm, sets
+    ``strategy_metadata.live_mode_eligible=True`` +
+    ``live_promoted_at=<iso>``. The first live trade per strategy still
+    requires the dashboard dual-channel confirm (HITL-06).
+    """
+    from gekko.config import get_settings
+    from gekko.logging_config import configure_logging
+    from gekko.strategy.promotion import promote_strategy_to_live
+    from gekko.vault.passphrase import get_passphrase, prompt_passphrase
+
+    configure_logging()
+    settings = get_settings()
+
+    typer.echo(
+        f"Promoting strategy {name!r} to live-eligible. "
+        "First live trade still requires dashboard dual-channel confirm."
+    )
+    ack = typer.prompt(f"Type the strategy name {name!r} to confirm")
+    if ack.strip() != name:
+        typer.echo("Aborted — typed confirmation did not match.")
+        raise typer.Exit(code=1)
+
+    try:
+        get_passphrase()
+    except RuntimeError:
+        prompt_passphrase()
+
+    asyncio.run(
+        promote_strategy_to_live(
+            user_id=settings.gekko_user_id, strategy_name=name
+        )
+    )
+    typer.echo(
+        f"Strategy {name!r} is now live-eligible. "
+        "Switch its mode to 'live' in the dashboard or via "
+        "`gekko strategy create` to author live trades."
+    )
+
+
+@strategy_app.command("demote-live")
+def strategy_demote_live(
+    name: str = typer.Argument(..., help="Strategy slug to demote from live."),
+) -> None:
+    """Demote a live-eligible strategy back to paper-only (D-31).
+
+    Sets ``strategy_metadata.live_mode_eligible=False``. Does NOT clear
+    ``first_live_trade_confirmed_at`` — once stamped, the per-strategy
+    dual-channel gate stays satisfied even if the strategy is re-promoted
+    later.
+    """
+    from gekko.config import get_settings
+    from gekko.logging_config import configure_logging
+    from gekko.strategy.promotion import demote_strategy_from_live
+    from gekko.vault.passphrase import get_passphrase, prompt_passphrase
+
+    configure_logging()
+    settings = get_settings()
+
+    ack = typer.prompt(f"Type the strategy name {name!r} to confirm")
+    if ack.strip() != name:
+        typer.echo("Aborted — typed confirmation did not match.")
+        raise typer.Exit(code=1)
+
+    try:
+        get_passphrase()
+    except RuntimeError:
+        prompt_passphrase()
+
+    asyncio.run(
+        demote_strategy_from_live(
+            user_id=settings.gekko_user_id, strategy_name=name
+        )
+    )
+    typer.echo(f"Strategy {name!r} demoted back to paper-only.")
 
 
 # ---------------------------------------------------------------------------

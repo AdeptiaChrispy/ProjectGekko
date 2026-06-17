@@ -101,7 +101,7 @@ def _get_session_factory(
     return make_session_factory(engine), engine
 
 
-def _build_broker(
+async def _build_broker(
     user_id: str,
     strategy: Strategy,
     account_mode: str,
@@ -111,15 +111,20 @@ def _build_broker(
     """Construct the per-user :class:`AlpacaBroker` wrapped in :class:`OrderGuard`.
 
     Plan 02-02 Task 3: wraps the concrete broker in OrderGuard so every
-    paper trade goes through the 6 BLOCK checks (universe, hard caps,
-    qty×price drift, paper/live invariant, kill-switch read, market-hours
-    defense-in-depth).
+    trade goes through the 8 checks (universe, hard caps, qty×price drift,
+    paper/live invariant, kill-switch read, PDT, T+1, market-hours).
 
-    Phase 2 paper path: ``AlpacaBroker(paper=True)`` from env-loaded keys.
-    Plan 02-06 adds the live branch (``strategy.mode == 'live' AND
-    strategy_metadata.live_mode_eligible``) — vault-stored credentials
-    fed to ``AlpacaBroker(paper=False)``. Until then this resolves
-    unconditionally to PAPER.
+    Plan 02-06 Task 1: LIVE branch lit. ``is_live`` is derived from the
+    LOCKED proposal row's ``account_mode``, NOT from current strategy
+    state — re-reading ``strategy.mode`` or
+    ``strategy_metadata.live_mode_eligible`` at execute-time would reopen
+    the TOCTOU window between proposal-build (T0) and execute (T1) that
+    BLOCKER #5 closes.
+
+    BLOCKER #4 grep gate: ``_allow_live=True`` and ``paper=False``
+    literals are LOCKED to this function. Any other site in
+    ``src/gekko/`` containing these substrings fails
+    ``tests/unit/test_alpaca_live_construction_locked.py``.
 
     Tests monkeypatch this with a :class:`MagicMock` so we never hit a
     real Alpaca endpoint at unit-test time.
@@ -129,22 +134,53 @@ def _build_broker(
     :param strategy: The :class:`Strategy` the proposal was authored
         against. Used by OrderGuard for watchlist + hard_caps + mode.
     :param account_mode: ``"PAPER"`` or ``"LIVE"`` — stamped on the
-        proposal at build time (BLOCKER #5).
+        proposal at build time (BLOCKER #5). Sourced from the LOCKED
+        proposal row; NEVER re-derived from strategy state here.
     :param proposal: Optional :class:`TradeProposal` carrying the
         ``target_notional_usd`` for the qty×price 2% drift check.
     """
+    from gekko.core.errors import OrderGuardRejected
+    from gekko.vault.credentials import load_live_credentials
+
     settings = get_settings()
-    wrapped = AlpacaBroker(
-        api_key=settings.alpaca_paper_api_key.get_secret_value(),
-        secret_key=settings.alpaca_paper_secret_key.get_secret_value(),
-        paper=True,
-    )
+    is_live = account_mode == "LIVE"
+    if is_live:
+        creds = await load_live_credentials(user_id)
+        if creds is None:
+            raise OrderGuardRejected(
+                "paper_live_mismatch_credential",
+                (
+                    f"Strategy {strategy.name} is live but no alpaca_live "
+                    "credentials in vault. Run "
+                    "`gekko credentials add-alpaca-live`."
+                ),
+                extra={
+                    "strategy_name": strategy.name,
+                    "user_id": user_id,
+                },
+            )
+        api_key, secret_key = creds
+        wrapped = AlpacaBroker(
+            api_key=api_key,
+            secret_key=secret_key,
+            paper=False,
+            _allow_live=True,
+        )
+        credential_kind = "alpaca_live"
+    else:
+        wrapped = AlpacaBroker(
+            api_key=settings.alpaca_paper_api_key.get_secret_value(),
+            secret_key=settings.alpaca_paper_secret_key.get_secret_value(),
+            paper=True,
+        )
+        credential_kind = "alpaca_paper"
     return OrderGuard(
         wrapped,
         strategy=strategy,
         account_mode=account_mode,  # type: ignore[arg-type]
         user_id=user_id,
         proposal=proposal,
+        credential_kind=credential_kind,
     )
 
 
@@ -294,12 +330,19 @@ async def execute_proposal(proposal_id: str, user_id: str) -> None:
                     )
                 )
             ).scalar_one()
-            if row.status != "APPROVED":
+            # Plan 02-06 Task 2: dual-channel live trades reach the
+            # executor in APPROVED_LIVE (after dashboard /live-confirm
+            # transitioned them there from AWAITING_2ND_CHANNEL). Both
+            # entry statuses are valid; the transition_status calls below
+            # use the matching from_status.
+            if row.status not in ("APPROVED", "APPROVED_LIVE"):
                 msg = (
                     f"Cannot execute proposal {proposal_id!r}: expected "
-                    f"status 'APPROVED', found {row.status!r}"
+                    f"status 'APPROVED' or 'APPROVED_LIVE', found "
+                    f"{row.status!r}"
                 )
                 raise ValueError(msg)
+            entry_status = row.status
             tp = TradeProposal.model_validate_json(row.payload_json)
             strategy_id = row.strategy_id
             account_mode = row.account_mode
@@ -352,7 +395,7 @@ async def execute_proposal(proposal_id: str, user_id: str) -> None:
                 await transition_status(
                     session,
                     proposal_id,
-                    from_status="APPROVED",
+                    from_status=entry_status,
                     to_status="FAILED",
                 )
             return
@@ -370,9 +413,77 @@ async def execute_proposal(proposal_id: str, user_id: str) -> None:
         )
 
         # ---- 4. Broker submission with structured error handling. ---------
-        broker = _build_broker(
-            user_id, strategy, account_mode, proposal=tp
-        )
+        # Plan 02-06 Task 1: _build_broker is now async (the live path
+        # awaits load_live_credentials). The paper path is still
+        # synchronous-equivalent; the await is essentially free there.
+        # Phase-1 tests monkeypatch _build_broker with a sync lambda; we
+        # tolerate both shapes via an iscoroutine check so legacy tests
+        # don't need to be retrofitted.
+        import inspect as _inspect
+
+        try:
+            _maybe = _build_broker(
+                user_id, strategy, account_mode, proposal=tp
+            )
+            if _inspect.isawaitable(_maybe):
+                broker = await _maybe
+            else:
+                broker = _maybe
+        except OrderGuardRejected as exc:
+            # Live-credential-missing path bubbles up here BEFORE the
+            # try-place_order block. Route to the cap_rejection branch so
+            # the audit + state transition + Slack DM happen with the same
+            # shape as a check failure.
+            log.warning(
+                "executor.cap_rejection",
+                proposal_id=proposal_id,
+                ticker=tp.ticker,
+                reject_code=exc.reject_code,
+                reject_reason=exc.reject_reason,
+            )
+            async with sf() as session, session.begin():
+                cap_payload: dict[str, Any] = {
+                    "reject_code": exc.reject_code,
+                    "reject_reason": exc.reject_reason,
+                    "ticker": tp.ticker,
+                    "proposal_id": proposal_id,
+                    "check_name": exc.reject_code,
+                }
+                for k, v in exc.extra.items():
+                    cap_payload.setdefault(k, v)
+                await append_event(
+                    session,
+                    user_id=user_id,
+                    strategy_id=strategy_id,
+                    event_type="cap_rejection",
+                    payload=normalize_decimals(cap_payload),
+                )
+                await transition_status(
+                    session,
+                    proposal_id,
+                    from_status=entry_status,
+                    to_status="FAILED",
+                )
+            try:
+                from gekko.reporter.slack import (
+                    build_orderguard_rejection_card,
+                )
+
+                blocks = build_orderguard_rejection_card(
+                    reject_code=exc.reject_code,
+                    reject_reason=exc.reject_reason,
+                    ticker=tp.ticker,
+                    strategy_name=tp.strategy_name,
+                    proposal_id=proposal_id,
+                )
+                await _send_slack_dm_blocks(user_id, blocks=blocks)
+            except Exception:  # noqa: BLE001
+                log.exception(
+                    "executor.cap_rejection.dm_failed",
+                    proposal_id=proposal_id,
+                    reject_code=exc.reject_code,
+                )
+            return
         try:
             result: OrderResult = await broker.place_order(req)
         except OrderGuardRejected as exc:
@@ -412,7 +523,7 @@ async def execute_proposal(proposal_id: str, user_id: str) -> None:
                 await transition_status(
                     session,
                     proposal_id,
-                    from_status="APPROVED",
+                    from_status=entry_status,
                     to_status="FAILED",
                 )
             # Plan 02-05 Task 3: send the rejection Slack DM AFTER the
@@ -465,7 +576,7 @@ async def execute_proposal(proposal_id: str, user_id: str) -> None:
                 await transition_status(
                     session,
                     proposal_id,
-                    from_status="APPROVED",
+                    from_status=entry_status,
                     to_status="FAILED",
                 )
             await _send_slack_dm(
@@ -515,7 +626,7 @@ async def execute_proposal(proposal_id: str, user_id: str) -> None:
             await transition_status(
                 session,
                 proposal_id,
-                from_status="APPROVED",
+                from_status=entry_status,
                 to_status="EXECUTING",
             )
 

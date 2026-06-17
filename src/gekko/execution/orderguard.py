@@ -89,6 +89,7 @@ class OrderGuard(Brokerage):
         account_mode: AccountMode,
         user_id: str,
         proposal: TradeProposal | None = None,
+        credential_kind: str | None = None,
     ) -> None:
         """Wrap a concrete broker with the OrderGuard policy layer.
 
@@ -109,12 +110,18 @@ class OrderGuard(Brokerage):
             When ``None`` the qty_price sanity check is skipped (used by
             tests that exercise only a subset of checks). In production
             the executor ALWAYS passes the proposal.
+        :param credential_kind: Optional fourth axis for the paper/live
+            invariant — ``"alpaca_paper"`` or ``"alpaca_live"`` from the
+            vault row that produced ``wrapped``. Plan 02-06 Task 1 / D-34
+            extension. The executor's ``_build_broker`` ALWAYS passes
+            this in production.
         """
         self._wrapped = wrapped
         self._strategy = strategy
         self._account_mode = account_mode
         self._user_id = user_id
         self._proposal = proposal
+        self._credential_kind = credential_kind
         # Mirror the wrapped broker's class-attr surface.
         self.name = wrapped.name
         self.supports_fractional = wrapped.supports_fractional
@@ -191,6 +198,7 @@ class OrderGuard(Brokerage):
             strategy_mode=self._strategy.mode,
             account_mode=self._account_mode,
             user_id=self._user_id,
+            credential_kind=self._credential_kind,
         )
 
         await check_universe(req, strategy=self._strategy)
