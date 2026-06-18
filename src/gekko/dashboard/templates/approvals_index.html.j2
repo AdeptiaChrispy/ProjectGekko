@@ -1,0 +1,26 @@
+{% extends "base.html.j2" %}
+
+{% block title %}Pending Approvals — Gekko{% endblock %}
+
+{% block content %}
+{# UI-SPEC §Surface 2 — Dashboard /approvals index (D-55, DASH-04).
+   No inline <script> per CSP `script-src 'self'`.
+   HTMX partial-card swaps via hx-post on each proposal card.
+#}
+<h1 class="text-2xl font-semibold mb-4 mt-4">Pending Approvals</h1>
+
+{# Proposal-card list or empty state #}
+{% if proposals %}
+  {% for proposal in proposals %}
+    {% include "_proposal_card.html.j2" %}
+  {% endfor %}
+{% else %}
+<div class="empty-state" role="status">
+  <div class="empty-state-glyph">🤖</div>
+  <p>No proposals pending — agent is waiting for the next research cycle.</p>
+</div>
+{% endif %}
+
+{# Modal mount point for HTMX modal swaps (edit-size, etc.) #}
+<div id="modal-mount"></div>
+{% endblock %}

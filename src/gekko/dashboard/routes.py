@@ -29,7 +29,7 @@ import asyncio
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -153,9 +153,54 @@ async def login_post(
 
 
 # ---------------------------------------------------------------------------
-# GET /approvals — PENDING proposals index (D-55, DASH-04)
-# Populated in Task 2 with full DB query + template render.
+# GET/POST /approvals — PENDING proposals index + approve/reject (D-55/D-56)
 # ---------------------------------------------------------------------------
+
+
+def _build_proposal_ctx(row: Any) -> dict[str, Any]:
+    """Build the Jinja template context dict for a single Proposal ORM row.
+
+    Extracts evidence, ticker, side, qty from payload_json if available,
+    falling back to ORM column values.
+    """
+    import json as _json
+
+    evidence: list[dict[str, Any]] = []
+    rationale = getattr(row, "rationale", "") or ""
+
+    # Parse payload_json for rich data not in direct columns
+    payload: dict[str, Any] = {}
+    pj = getattr(row, "payload_json", None)
+    if pj:
+        try:
+            payload = _json.loads(pj)
+            if not rationale:
+                rationale = payload.get("rationale", "")
+            raw_evidence = payload.get("evidence", [])
+            for e in raw_evidence:
+                evidence.append({
+                    "summary": e.get("summary", ""),
+                    "url": e.get("url", "#"),
+                    "source_type": e.get("source_type", ""),
+                })
+        except (ValueError, TypeError):
+            pass
+
+    return {
+        "proposal_id": row.proposal_id,
+        "ticker": getattr(row, "ticker", payload.get("ticker", "")),
+        "side": str(getattr(row, "side", payload.get("side", ""))).upper(),
+        "qty": str(getattr(row, "qty", payload.get("qty", ""))),
+        "rationale": rationale,
+        "evidence": evidence,
+        "status": row.status,
+        "account_mode": getattr(row, "account_mode", payload.get("account_mode", "PAPER")),
+        "expires_at": getattr(row, "expires_at", None),
+        "expired_at_local": "",  # Plan 03-03 fills the chat.update / formatted time
+        "timeout_minutes": 30,
+        "slack_team_id": "",
+        "slack_channel_id": getattr(row, "slack_message_channel", "") or "",
+    }
 
 
 @router.get("/approvals", response_class=HTMLResponse)
@@ -165,14 +210,13 @@ async def approvals_index(
 ) -> HTMLResponse:
     """GET /approvals — list PENDING/AWAITING_2ND_CHANNEL/EXPIRED proposals.
 
-    Full implementation in Task 2. The route is declared here so Task 1's
-    auth tests (test cases d + e in test_dashboard_login.py) can verify
-    that require_session gates the route correctly.
+    D-55: mirrors the Slack proposal card schema via the shared
+    _proposal_card.html.j2 partial.
     """
     from gekko.db.models import Proposal as ProposalRow
 
     sf, engine = _get_session_factory(user_id)
-    proposals = []
+    proposal_ctxs: list[dict[str, Any]] = []
     try:
         async with sf() as session:
             result = await session.execute(
@@ -183,23 +227,171 @@ async def approvals_index(
                     ),
                 )
             )
-            proposals = result.scalars().all()
+            rows = result.scalars().all()
+            proposal_ctxs = [_build_proposal_ctx(r) for r in rows]
     finally:
         if engine is not None:
             await engine.dispose()
 
-    # Render the approvals_index template (created in Task 2).
-    # Returns a minimal HTML page if the template doesn't exist yet.
+    return templates.TemplateResponse(
+        "approvals_index.html.j2",
+        {"request": request, "proposals": proposal_ctxs, "user_id": user_id},
+    )
+
+
+@router.post("/approvals/{proposal_id}/approve", response_class=HTMLResponse)
+async def approve_proposal_endpoint(
+    request: Request,
+    proposal_id: str,
+    user_id: str = Depends(require_session),
+) -> HTMLResponse:
+    """POST /approvals/{id}/approve — D-56 cross-surface approve with dedup.
+
+    INSERTs a dedup row with source='dashboard' per D-56, then transitions
+    PENDING -> APPROVED (or PENDING -> AWAITING_2ND_CHANNEL for first-live).
+    HTMX swaps the card via hx-target="closest article" hx-swap="outerHTML".
+    """
+    from gekko.approval.dedup import claim_action
+    from gekko.approval.proposals import approve_proposal, transition_status
+    from gekko.audit.log import append_event
+    from gekko.db.models import Proposal as ProposalRow
+    from gekko.execution.executor import execute_proposal as _execute_proposal
+
+    sf, engine = _get_session_factory(user_id)
+    row = None
+    should_dispatch = False
     try:
-        return templates.TemplateResponse(
-            "approvals_index.html.j2",
-            {"request": request, "proposals": proposals, "user_id": user_id},
-        )
-    except Exception:
-        # Fallback until template is created in Task 2
-        return HTMLResponse(
-            "<html><body><h1>Approvals</h1><p>No proposals.</p></body></html>"
-        )
+        async with sf() as session, session.begin():
+            outcome = await claim_action(
+                session,
+                proposal_id=proposal_id,
+                action_id="approve_proposal",
+                actor_slack_user_id=None,
+                actor_gekko_user_id=user_id,
+                source="dashboard",
+            )
+            if outcome == "duplicate":
+                # Re-read with fresh session (session was rolled back by claim_action)
+                pass
+            else:
+                # first_write — proceed with state transition
+                row = (
+                    await session.execute(
+                        select(ProposalRow).where(
+                            ProposalRow.proposal_id == proposal_id,
+                            ProposalRow.user_id == user_id,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if row is None:
+                    raise HTTPException(status_code=404, detail="Proposal not found")
+
+                await approve_proposal(session, proposal_id, actor=user_id)
+                # Reload row to get updated status
+                await session.refresh(row)
+                should_dispatch = True
+
+        if outcome == "duplicate" or row is None:
+            # Re-read current state for re-render (D-56 visual state IS the feedback)
+            sf2, engine2 = _get_session_factory(user_id)
+            try:
+                async with sf2() as rs:
+                    row = (
+                        await rs.execute(
+                            select(ProposalRow).where(
+                                ProposalRow.proposal_id == proposal_id,
+                                ProposalRow.user_id == user_id,
+                            )
+                        )
+                    ).scalar_one_or_none()
+            finally:
+                if engine2 is not None:
+                    await engine2.dispose()
+
+        if should_dispatch and row is not None:
+            asyncio.create_task(_execute_proposal(proposal_id, user_id))
+
+    finally:
+        if engine is not None:
+            await engine.dispose()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+
+    ctx = _build_proposal_ctx(row)
+    ctx["request"] = request
+    return templates.TemplateResponse("_proposal_card.html.j2", ctx)
+
+
+@router.post("/approvals/{proposal_id}/reject", response_class=HTMLResponse)
+async def reject_proposal_endpoint(
+    request: Request,
+    proposal_id: str,
+    user_id: str = Depends(require_session),
+) -> HTMLResponse:
+    """POST /approvals/{id}/reject — D-56 cross-surface reject with dedup.
+
+    INSERTs a dedup row with source='dashboard' per D-56, then transitions
+    PENDING -> REJECTED. HTMX swaps the card.
+    """
+    from gekko.approval.dedup import claim_action
+    from gekko.approval.proposals import reject_proposal
+    from gekko.db.models import Proposal as ProposalRow
+
+    sf, engine = _get_session_factory(user_id)
+    row = None
+    try:
+        async with sf() as session, session.begin():
+            outcome = await claim_action(
+                session,
+                proposal_id=proposal_id,
+                action_id="reject_proposal",
+                actor_slack_user_id=None,
+                actor_gekko_user_id=user_id,
+                source="dashboard",
+            )
+            if outcome == "first_write":
+                row = (
+                    await session.execute(
+                        select(ProposalRow).where(
+                            ProposalRow.proposal_id == proposal_id,
+                            ProposalRow.user_id == user_id,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if row is None:
+                    raise HTTPException(status_code=404, detail="Proposal not found")
+
+                await reject_proposal(session, proposal_id, actor=user_id)
+                await session.refresh(row)
+
+        if outcome == "duplicate" or row is None:
+            # Re-read current state
+            sf2, engine2 = _get_session_factory(user_id)
+            try:
+                async with sf2() as rs:
+                    row = (
+                        await rs.execute(
+                            select(ProposalRow).where(
+                                ProposalRow.proposal_id == proposal_id,
+                                ProposalRow.user_id == user_id,
+                            )
+                        )
+                    ).scalar_one_or_none()
+            finally:
+                if engine2 is not None:
+                    await engine2.dispose()
+
+    finally:
+        if engine is not None:
+            await engine.dispose()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+
+    ctx = _build_proposal_ctx(row)
+    ctx["request"] = request
+    return templates.TemplateResponse("_proposal_card.html.j2", ctx)
 
 
 @router.get("/healthz")

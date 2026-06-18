@@ -1,0 +1,90 @@
+{# Shared partial — proposal card for dashboard /approvals index.
+   UI-SPEC §Surface 2 (D-55). Used by approvals_index.html.j2.
+
+   Required context variables:
+     proposal_id     : str
+     ticker          : str
+     side            : str (BUY / SELL)
+     qty             : str or Decimal
+     rationale       : str
+     evidence        : list of {summary, url, source_type}
+     status          : str (PENDING / EXPIRED / AWAITING_2ND_CHANNEL / etc.)
+     account_mode    : str (PAPER / LIVE)
+     expires_at      : str | None  (ISO timestamp, for EXPIRED cards)
+     expired_at_local : str  (HH:MM local, for display)
+     timeout_minutes : int
+     slack_team_id   : str (for Open in Slack deeplink, may be empty)
+     slack_channel_id : str (for Open in Slack deeplink, may be empty)
+
+   HTMX: each action button uses hx-post + hx-target="closest article" +
+   hx-swap="outerHTML" so the card replaces itself with the updated state.
+   hx-disable-elt="this" disables the button on click to prevent double-submit.
+#}
+<article class="proposal-card {{ 'expired' if status == 'EXPIRED' else '' }}"
+         aria-label="Proposal for {{ ticker }} {{ side }} {{ qty }} shares"
+         data-proposal-id="{{ proposal_id }}">
+
+  {# Card header: ticker + side + qty + status chips #}
+  <div class="proposal-card-header">
+    <span class="proposal-card-ticker">{{ ticker }} {{ side }} {{ qty }}</span>
+    <div>
+      {% if account_mode == "LIVE" %}
+      <span class="chip-live" aria-label="status: live mode">LIVE</span>
+      {% endif %}
+      {% if status == "EXPIRED" %}
+      <span class="chip-expired" aria-label="status: expired">EXPIRED</span>
+      {% elif status == "AWAITING_2ND_CHANNEL" %}
+      <span class="chip-awaiting" aria-label="status: awaiting 2nd channel">AWAITING 2ND CHANNEL</span>
+      {% endif %}
+    </div>
+  </div>
+
+  {# Rationale — LLM-authored text (escaped by Jinja2 autoescape) #}
+  <div class="proposal-card-rationale">{{ rationale }}</div>
+
+  {# Evidence snippets — collapsible #}
+  {% if evidence %}
+  <details class="proposal-card-evidence">
+    <summary>Evidence ({{ evidence | length }} snippets)</summary>
+    <ul>
+      {% for e in evidence %}
+      <li>{{ e.summary }} — <a href="{{ e.url }}" rel="noopener noreferrer">{{ e.source_type }}</a></li>
+      {% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+
+  {# Conditional actions block per status #}
+  {% if status == "PENDING" %}
+  <div class="proposal-card-actions">
+    <button class="btn-primary"
+            hx-post="/approvals/{{ proposal_id }}/approve"
+            hx-target="closest article"
+            hx-swap="outerHTML"
+            hx-disable-elt="this">Approve</button>
+    <button class="btn-secondary"
+            hx-post="/approvals/{{ proposal_id }}/reject"
+            hx-target="closest article"
+            hx-swap="outerHTML"
+            hx-disable-elt="this">Reject</button>
+    <button class="btn-secondary"
+            hx-get="/approvals/{{ proposal_id }}/edit-size"
+            hx-target="#modal-mount"
+            hx-swap="innerHTML">Edit size</button>
+    {# Open in Slack deeplink — symmetric with the Slack-side URL button to /approvals #}
+    {% if slack_team_id and slack_channel_id %}
+    <a href="slack://channel?team={{ slack_team_id }}&id={{ slack_channel_id }}"
+       class="btn-tertiary">Open in Slack</a>
+    {% endif %}
+  </div>
+  {% elif status == "EXPIRED" %}
+  <div class="proposal-card-expired-status" role="status">
+    ⏰ Expired{% if expired_at_local %} at {{ expired_at_local }}{% endif %} — not executed (timeout=REJECT after {{ timeout_minutes or 30 }} min).
+  </div>
+  {% elif status == "AWAITING_2ND_CHANNEL" %}
+  <div class="proposal-card-actions">
+    <a class="btn-primary" href="/live-confirm/{{ proposal_id }}">Open dual-channel confirm</a>
+  </div>
+  {% endif %}
+
+</article>

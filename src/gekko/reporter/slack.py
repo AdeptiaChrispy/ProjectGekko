@@ -57,6 +57,20 @@ from gekko.schemas.proposal import NoActionProposal, TradeProposal
 
 log = get_logger(__name__)
 
+
+def _get_dashboard_url() -> str:
+    """Return the configured dashboard base URL (D-60).
+
+    Reads from Settings.dashboard_url at call time (not at import time)
+    so tests can mock get_settings without import-order issues.
+    """
+    from gekko.config import get_settings
+    try:
+        return get_settings().dashboard_url
+    except Exception:
+        return "http://localhost:8000"
+
+
 # ---------------------------------------------------------------------------
 # Block builders — internal helpers
 # ---------------------------------------------------------------------------
@@ -285,8 +299,9 @@ def build_proposal_card(
                 "text": f"*Alternatives considered:*\n{alternatives_md}",
             },
         },
-        # 6. Action buttons — Approve / Reject (primary) + Edit Size /
-        #    Escalate (P3 stubs). All four carry value=decision_id.
+        # 6. Action buttons — Approve / Reject (primary) + Edit Size +
+        #    Open-in-dashboard URL button (D-60 — replaces the Escalate
+        #    action button; URL buttons don't round-trip to Slack handlers).
         {
             "type": "actions",
             "elements": [
@@ -310,11 +325,13 @@ def build_proposal_card(
                     "value": decision_id_value,
                     "action_id": "edit_size",
                 },
+                # D-60 — URL button opens the dashboard /approvals/{id} page.
+                # No action_id (URL buttons do NOT round-trip to Slack handlers).
                 {
                     "type": "button",
-                    "text": {"type": "plain_text", "text": "Escalate"},
-                    "value": decision_id_value,
-                    "action_id": "escalate_to_dashboard",
+                    "style": "primary",
+                    "text": {"type": "plain_text", "text": "Open in dashboard"},
+                    "url": f"{_get_dashboard_url()}/approvals/{decision_id_value}",
                 },
             ],
         },

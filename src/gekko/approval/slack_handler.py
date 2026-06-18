@@ -699,21 +699,22 @@ async def handle_edit_size_stub(
 async def handle_escalate_stub(
     *, ack: _AckFn, body: dict[str, Any], client: Any
 ) -> None:
-    """Escalate-to-dashboard button — deferred to Plan 03.
-
-    WR-06 fix: DM routes through the ``_send_slack_dm`` identity-split
-    seam.
+    """DEPRECATED — D-60 (Plan 03-05 Task 2) converted the Escalate button to a
+    URL button that opens /approvals/{proposal_id} in the operator's browser.
+    URL buttons do NOT round-trip to Slack action handlers — this function is
+    never called in production. It remains here for backward-compat with any
+    older Bolt registration that still references handle_escalate_stub by name.
     """
+    # no-op: URL buttons do not trigger action handlers (Slack does not post
+    # an action event for URL buttons). Log a warning if this is ever reached
+    # — it means the button type conversion in build_proposal_card failed.
     await ack()
-    from gekko.execution.executor import _send_slack_dm
-
-    settings = get_settings()
-    await _send_slack_dm(
-        settings.gekko_user_id,
-        "Escalation to the dashboard is coming in Phase 3.",
-    )
     log.warning(
-        "feature.deferred", feature="escalate_to_dashboard", phase="P3"
+        "escalate_stub.should_not_be_called",
+        note=(
+            "D-60 converted escalate to a URL button in Plan 03-05 Task 2. "
+            "If you see this, check build_proposal_card in reporter/slack.py."
+        ),
     )
 
 
