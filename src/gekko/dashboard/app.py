@@ -45,7 +45,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from gekko.config import get_settings
-from gekko.dashboard.routes import router
+from gekko.dashboard.routes import public_router, router
 from gekko.logging_config import get_logger
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -227,6 +227,9 @@ def create_app() -> FastAPI:
     ``tests/integration/test_dashboard_strategy_edit.py``.
     """
     app = FastAPI(title="Gekko", lifespan=lifespan)
+    # public_router: /login (GET/POST) + /healthz — no auth dependency.
+    app.include_router(public_router)
+    # router: all other dashboard routes — gated by require_session.
     app.include_router(router)
 
     # D-57 / D-58 — SessionMiddleware for /login passphrase-cookie auth.

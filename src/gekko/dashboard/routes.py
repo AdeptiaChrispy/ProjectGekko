@@ -46,7 +46,6 @@ from gekko.db.session import AsyncSessionLocal, make_session_factory
 from gekko.schemas.strategy import HardCaps, Strategy, next_version
 from gekko.vault.passphrase import get_passphrase as _get_passphrase
 
-router = APIRouter()
 templates = Jinja2Templates(
     directory=str(Path(__file__).parent / "templates")
 )
@@ -73,6 +72,8 @@ def _get_session_factory(
 
 # ---------------------------------------------------------------------------
 # Auth dependency — require_session (D-57)
+# Must be defined BEFORE the router so the APIRouter(dependencies=[...])
+# constructor can reference the callable at module-load time.
 # ---------------------------------------------------------------------------
 
 
@@ -98,11 +99,29 @@ async def require_session(request: Request) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Login routes (D-57 / D-58)
+# Routers — fail-closed design:
+#
+# ``router`` has ``Depends(require_session)`` as a router-level dependency so
+# every route it hosts is auth-gated by default. Public routes that must be
+# exempt from authentication (/login GET/POST, /healthz) are declared on
+# ``public_router`` (no router-level dependency). Both routers are registered
+# in ``app.py`` via ``app.include_router()``.
+#
+# NOTE: FastAPI's ``dependencies=[]`` on a per-route decorator does NOT
+# override router-level dependencies — it is additive. The two-router
+# pattern is the correct approach for per-route public exemptions.
+# ---------------------------------------------------------------------------
+
+public_router = APIRouter()  # no auth dependency — for /login and /healthz
+router = APIRouter(dependencies=[Depends(require_session)])
+
+
+# ---------------------------------------------------------------------------
+# Login routes (D-57 / D-58) — declared on public_router (no auth gate)
 # ---------------------------------------------------------------------------
 
 
-@router.get("/login", response_class=HTMLResponse)
+@public_router.get("/login", response_class=HTMLResponse)
 async def login_get(request: Request) -> HTMLResponse:
     """GET /login — render the passphrase form."""
     next_url = request.query_params.get("next", "/approvals")
@@ -112,7 +131,7 @@ async def login_get(request: Request) -> HTMLResponse:
     )
 
 
-@router.post("/login", response_class=HTMLResponse)
+@public_router.post("/login", response_class=HTMLResponse)
 async def login_post(
     request: Request,
     passphrase: str = Form(...),
@@ -811,7 +830,7 @@ async def settings_post(
     )
 
 
-@router.get("/healthz")
+@public_router.get("/healthz")
 async def healthz() -> dict[str, str]:
     """Liveness probe — uvicorn / supervisor / dashboard self-checks."""
     return {"status": "ok"}
@@ -823,11 +842,12 @@ async def root() -> RedirectResponse:
 
 
 @router.get("/strategies", response_class=HTMLResponse)
-async def strategies_list(request: Request) -> HTMLResponse:
+async def strategies_list(
+    request: Request,
+    user_id: str = Depends(require_session),
+) -> HTMLResponse:
     """List strategies for the current user (REG-04 — scoped to gekko_user_id)."""
-    settings = get_settings()
     engine = request.app.state.engine
-    user_id = settings.gekko_user_id
 
     async with make_session_factory(engine)() as session:
         # Latest version per strategy_name for the current user.
@@ -909,15 +929,17 @@ async def strategies_list(request: Request) -> HTMLResponse:
 @router.get(
     "/strategies/{name}/edit", response_class=HTMLResponse
 )
-async def strategy_edit(request: Request, name: str) -> HTMLResponse:
+async def strategy_edit(
+    request: Request,
+    name: str,
+    user_id: str = Depends(require_session),
+) -> HTMLResponse:
     """Render the edit form populated with the latest version (STRAT-02).
 
     REG-04: scopes to ``current_user.user_id`` — never serves another
     user's strategy. Returns 404 if no row exists for this user.
     """
-    settings = get_settings()
     engine = request.app.state.engine
-    user_id = settings.gekko_user_id
 
     async with make_session_factory(engine)() as session:
         q = (
@@ -981,11 +1003,10 @@ async def strategy_save(
     max_sector_exposure_pct: str = Form(...),
     schedule_time: str = Form(""),
     mode: str = Form("paper"),
+    user_id: str = Depends(require_session),
 ) -> RedirectResponse:
     """Persist a new snapshot version of the strategy from form input (STRAT-02)."""
-    settings = get_settings()
     engine = request.app.state.engine
-    user_id = settings.gekko_user_id
 
     tickers = [t.strip().upper() for t in watchlist.split(",") if t.strip()]
 
@@ -1039,7 +1060,11 @@ async def strategy_save(
 
 
 @router.post("/trigger/{name}", response_class=HTMLResponse)
-async def trigger(request: Request, name: str) -> HTMLResponse:
+async def trigger(
+    request: Request,
+    name: str,
+    user_id: str = Depends(require_session),
+) -> HTMLResponse:
     """Fire :func:`trigger_strategy_run` + post the proposal card (D-06).
 
     Fire-and-forget — the route returns the partial template immediately
@@ -1047,8 +1072,7 @@ async def trigger(request: Request, name: str) -> HTMLResponse:
     (30+ seconds) and then posts the HITL-01 card to the user's DM
     via :func:`gekko.reporter.slack.post_run_result`.
     """
-    settings = get_settings()
-    asyncio.create_task(_run_and_post_dashboard(settings.gekko_user_id, name))
+    asyncio.create_task(_run_and_post_dashboard(user_id, name))
     return templates.TemplateResponse(
         "trigger_button.html.j2",
         {"request": request, "name": name, "triggered": True},
@@ -1122,7 +1146,9 @@ async def modal_close() -> HTMLResponse:
 
 @router.post("/kill", response_class=HTMLResponse)
 async def kill_endpoint(
-    request: Request, confirm: str = Form(...)
+    request: Request,
+    confirm: str = Form(...),
+    user_id: str = Depends(require_session),
 ) -> HTMLResponse:
     """POST /kill — operator submitted the typed-KILL form.
 
@@ -1139,10 +1165,9 @@ async def kill_endpoint(
             detail="Type KILL exactly (uppercase) to confirm.",
         )
 
-    settings = get_settings()
     asyncio.create_task(
         _execute_kill_background(
-            user_id=settings.gekko_user_id, source="dashboard"
+            user_id=user_id, source="dashboard"
         )
     )
     # Flag the app-state cache as dirty so subsequent renders pick up the
@@ -1165,7 +1190,9 @@ async def kill_endpoint(
 
 @router.post("/unkill", response_class=HTMLResponse)
 async def unkill_endpoint(
-    request: Request, confirm: str = Form(...)
+    request: Request,
+    confirm: str = Form(...),
+    user_id: str = Depends(require_session),
 ) -> HTMLResponse:
     """POST /unkill — operator submitted the typed-UNKILL form."""
     # Case-sensitive gate: UI-SPEC §2b symmetric "Type UNKILL exactly".
@@ -1175,10 +1202,9 @@ async def unkill_endpoint(
             detail="Type UNKILL exactly (uppercase) to confirm.",
         )
 
-    settings = get_settings()
     asyncio.create_task(
         _execute_unkill_background(
-            user_id=settings.gekko_user_id, source="dashboard"
+            user_id=user_id, source="dashboard"
         )
     )
     try:
@@ -1192,17 +1218,19 @@ async def unkill_endpoint(
 
 
 @router.get("/kill/state", response_class=HTMLResponse)
-async def kill_state(request: Request) -> HTMLResponse:
+async def kill_state(
+    request: Request,
+    user_id: str = Depends(require_session),
+) -> HTMLResponse:
     """HTMX-poll endpoint for the in-flight kill tally (UI-SPEC §2b).
 
     The kill modal's loading affordance polls this every 1s via
     ``hx-trigger="every 1s"``. Returns a small text fragment with the
     current tally — or "Cancelling…" if still in flight.
     """
-    settings = get_settings()
     from gekko.execution.kill_switch import is_active as _is_kill_active
 
-    active = await _is_kill_active(settings.gekko_user_id)
+    active = await _is_kill_active(user_id)
     if active:
         return HTMLResponse("Kill ACTIVE — cancel sweep complete.")
     return HTMLResponse("Setting kill_active=true…")
@@ -1267,6 +1295,7 @@ async def promote_to_live(
     request: Request,
     name: str,
     strategy_name_confirm: str = Form(...),
+    user_id: str = Depends(require_session),
 ) -> HTMLResponse:
     """Promote a paper strategy to live-eligible (D-31).
 
@@ -1289,9 +1318,8 @@ async def promote_to_live(
             ),
         )
 
-    settings = get_settings()
     await promote_strategy_to_live(
-        user_id=settings.gekko_user_id, strategy_name=name
+        user_id=user_id, strategy_name=name
     )
     # Invalidate the cached banner_mode so the next render picks up the
     # new live-eligible state without waiting for the 60s TTL.
@@ -1307,7 +1335,9 @@ async def promote_to_live(
 
 @router.get("/live-confirm/{proposal_id}", response_class=HTMLResponse)
 async def live_confirm_get(
-    request: Request, proposal_id: str
+    request: Request,
+    proposal_id: str,
+    user_id: str = Depends(require_session),
 ) -> HTMLResponse:
     """Render the HITL-06 second-channel confirm page (UI-SPEC §3b).
 
@@ -1318,9 +1348,7 @@ async def live_confirm_get(
     """
     from gekko.schemas.proposal import TradeProposal
 
-    settings = get_settings()
     engine = request.app.state.engine
-    user_id = settings.gekko_user_id
 
     from gekko.db.models import Proposal as _Proposal
 
@@ -1390,6 +1418,7 @@ async def live_confirm_post(
     ack_real_money: str = Form(""),
     ack_read_rationale: str = Form(""),
     page_load_ts: float = Form(...),
+    user_id: str = Depends(require_session),
 ) -> HTMLResponse:
     """HITL-06 second-channel confirm — AWAITING_2ND_CHANNEL → APPROVED_LIVE.
 
@@ -1409,9 +1438,7 @@ async def live_confirm_post(
     from gekko.db.models import Proposal as _Proposal
     from gekko.execution.executor import execute_proposal as _execute_proposal
 
-    settings = get_settings()
     engine = request.app.state.engine
-    user_id = settings.gekko_user_id
 
     # Validation Layer 1: both checkboxes must be checked.
     if ack_real_money != "on" or ack_read_rationale != "on":
@@ -1518,4 +1545,4 @@ async def live_confirm_post(
     )
 
 
-__all__: tuple[str, ...] = ("router",)
+__all__: tuple[str, ...] = ("public_router", "router")
