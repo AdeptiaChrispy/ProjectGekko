@@ -216,6 +216,74 @@ async def _send_slack_dm(user_id: str, text: str) -> None:
     )
 
 
+async def _send_slack_dm_respecting_quiet_hours(
+    user_id: str,
+    text: str,
+    *,
+    category: str,
+) -> None:
+    """Route a Slack DM through the quiet-hours gate per D-48 (HITL-05).
+
+    **Bypass categories** (always fire, no quiet-hours check):
+      * ``"kill_active"``  — kill-state changes (operator safety)
+      * ``"executor_error"`` — BrokerOrderError, MarketClosed, cap_rejection
+      * ``"first_live_fill"`` — first live-money fill (trust-building signal)
+
+    **Routine categories** (suppressed when :func:`_resolve_quiet_hours` is True):
+      * ``"routine_fill"`` — paper-trade or subsequent paper fill confirmations
+      * ``"daily_pnl"``   — scheduled P&L digest
+
+    The function imports :func:`_resolve_quiet_hours` lazily (inside the body)
+    to avoid module-load-time circular imports: ``executor.py`` is the
+    substrate; ``quiet_hours.py`` reads via the same DB session-factory seam.
+
+    All actual sends route through :func:`_send_slack_dm` — never directly to
+    ``chat.postMessage`` — preserving the identity-split fix from quick task
+    260612-nlv and PATTERNS §2e.
+
+    :param user_id: Internal gekko user id (see :func:`_send_slack_dm`).
+    :param text: DM text payload.
+    :param category: One of the five literals above.  Unrecognised literals
+        are treated as bypass-category (fail-open keeps the operator informed).
+    """
+    _BYPASS_CATEGORIES = frozenset({"kill_active", "executor_error", "first_live_fill"})
+
+    if category in _BYPASS_CATEGORIES:
+        # bypass-category: bypass-dispatch — caller already classified this
+        # as a bypass category (kill_active, executor_error, first_live_fill).
+        await _send_slack_dm(user_id, text)
+        return
+
+    # Routine category — consult the quiet-hours predicate.
+    from datetime import UTC as _UTC
+    from datetime import datetime as _dt
+
+    from gekko.approval.quiet_hours import _resolve_quiet_hours
+
+    try:
+        in_window = await _resolve_quiet_hours(user_id, _dt.now(_UTC))
+    except Exception:  # noqa: BLE001
+        # If the predicate fails (e.g. DB not ready), fail-open and send.
+        log.exception(
+            "executor.quiet_hours_predicate_failed",
+            user_id=user_id,
+            category=category,
+        )
+        in_window = False
+
+    if in_window:
+        log.debug(
+            "slack_dm.suppressed",
+            user_id=user_id,
+            category=category,
+        )
+        return
+
+    # bypass-category: routine-out-of-window — predicate returned False;
+    # quiet hours not active, send the routine DM.
+    await _send_slack_dm(user_id, text)
+
+
 async def _send_slack_dm_blocks(
     user_id: str, *, blocks: list[dict[str, Any]], fallback: str = ""
 ) -> None:
@@ -450,6 +518,10 @@ async def execute_proposal(proposal_id: str, user_id: str) -> None:
             # BrokerOrderError + OrderGuardRejected paths below which
             # both DM. Best-effort: DM failure must not abort the
             # already-committed state transition.
+            #
+            # bypass-category: executor_error — market-closed is a safety
+            # signal that must reach the operator regardless of quiet hours
+            # (D-48 bypass set; AST gate in test_quiet_hours_dm_gate.py).
             try:
                 await _send_slack_dm(
                     user_id,
@@ -651,6 +723,9 @@ async def execute_proposal(proposal_id: str, user_id: str) -> None:
                     from_status=entry_status,
                     to_status="FAILED",
                 )
+            # bypass-category: executor_error — broker failure must reach
+            # the operator immediately regardless of quiet hours (D-48 bypass
+            # set; AST gate in test_quiet_hours_dm_gate.py).
             await _send_slack_dm(
                 user_id,
                 (
@@ -867,7 +942,15 @@ async def on_fill_event(payload: dict[str, Any], *, user_id: str) -> None:
             strategy_name=strategy_name,
             side=side,
         )
-        await _send_slack_dm(user_id, msg)
+        # Route through quiet-hours wrapper per D-48 (HITL-05):
+        # LIVE fills bypass quiet hours (first_live_fill category);
+        # paper fills are routine and may be suppressed.
+        _fill_category = (
+            "first_live_fill"
+            if (live_strategy_name_to_stamp is not None)
+            else "routine_fill"
+        )
+        await _send_slack_dm_respecting_quiet_hours(user_id, msg, category=_fill_category)
     finally:
         if engine is not None:
             await engine.dispose()
