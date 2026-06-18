@@ -75,50 +75,7 @@ See `milestones/v1.0-ROADMAP.md` for the full archived snapshot (with detailed p
   4. Paper credentials cannot place live orders and vice versa — OrderGuard validates env-credential pairing and hard-rejects mismatches, with a red banner indicating live mode on every Slack message and UI surface
   5. User can promote a paper strategy to live, place a small real-money trade through the full HITL flow, and see PDT-rule awareness, wash-sale flagging, market-hours guard, and broker rate-limit backoff all enforce correctly without manual intervention
 
-**Plans:** 7/7 plans complete
-Plans:
-**Wave 1**
-
-- [x] 02-01-PLAN.md — Alembic 0002 + schema + Wave-0 test stubs + tenacity gate (complete 2026-06-16)
-
-**Wave 2** *(blocked on Wave 1 completion)*
-
-- [x] 02-02-PLAN.md — OrderGuard skeleton + universe / hard caps / qty×price / paper-live / kill-read / market-hours BLOCK checks (complete 2026-06-16)
-- [x] 02-04-PLAN.md — RES-06/07 prompt-injection minimums (WEB_ALLOWLIST + untrusted_content + Decision prompt)
-
-**Wave 3** *(blocked on Wave 2 completion)*
-
-- [x] 02-03-PLAN.md — PDT + T+1 BLOCK + wash-sale FLAG + tenacity-on-GETs + EXEC-03 grep gate
-
-**Wave 4** *(blocked on Wave 3 completion)*
-
-- [x] 02-05-PLAN.md — Kill switch (DB persistence + 3 surfaces + 5s SLA + boot-time check + rejection card)
-
-**Wave 5** *(blocked on Wave 4 completion)*
-
-- [x] 02-06-PLAN.md — Live credentials vault + promotion + HITL-06 dual-channel + live banner / chips (complete 2026-06-16)
-
-**Wave 6** *(blocked on Wave 5 completion)*
-
-- [x] 02-07-PLAN.md — Walking-skeleton cassette test + README demo recipe + manual  real-money demo
-
-### Phase 3: Production HITL UX (Slack Block Kit + Dashboard Fallback)
-
-**Goal**: User has a production-grade approval surface — idempotent Slack buttons that survive at-least-once delivery, configurable quiet hours that prevent 2am pings, timeout-equals-REJECT default, edit-size and escalate-to-dashboard options, and stale-proposal expiry.
-**Milestone:** v2.0
-**Mode:** mvp
-**Depends on**: Phase 2
-**Requirements**: HITL-02, HITL-03, HITL-05, DASH-04, REPT-01
-**Carry-forward from v1.0:** Executor-error → Slack DM surfacing on `MarketClosed` / `BrokerOrderError` — currently the operator sees silence when post-approval execution fails.
-**Success Criteria** (what must be TRUE):
-
-  1. User receives a Slack Block Kit proposal card with approve / reject / edit-size / escalate-to-dashboard buttons; clicking the same button twice (Slack at-least-once delivery) results in exactly one action, never double-execution
-  2. User configures quiet hours (e.g., 10pm-7am local) and sees proposals queued during that window, delivered when the window opens — no 2am pings
-  3. Proposal expires after configurable timeout (default 30 min) and auto-rejects with notification — sleeping user never wakes to unwanted trades; timeout=EXECUTE is not a configurable option for new strategies
-  4. User can edit proposed order size from the Slack card and approve the edited order in a single interaction, with the edit recorded in audit
-  5. When Slack is unavailable, user can complete the same approve / reject / edit flow via the web dashboard `/approvals` page and the order executes identically
-
-**Plans:** 7/7 plans complete
+**Plans:** 10 plans (7 executed + 3 gap-closure)
 Plans:
 **Wave 1**
 
@@ -136,11 +93,20 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3)*
 
-- [x] 03-06-PLAN.md — REPT-01 daily P&L digest (16:30 ET CronTrigger + D-59 NYSE schedule gate + Block Kit digest) + severity-tier emoji prefixes (⚠️/❌/🚫) on executor + kill DMs + carry-forward executor-error coverage audit
+- [x] 03-06-PLAN.md — REPT-01 daily P&L digest (16:30 ET CronTrigger + D-59 NYSE schedule gate + Block Kit digest) + severity-tier emoji prefixes on executor + kill DMs + carry-forward executor-error coverage audit
 
 **Wave 5** *(blocked on Wave 4)*
 
 - [x] 03-07-PLAN.md — Walking-skeleton cassette (happy path + dashboard fallback + expiry chain) + README demo recipe + deferred-items.md for 5 manual operator verifications
+
+**Wave 7 (gap closure — parallel, no inter-dependency)**
+
+- [ ] 03-08-PLAN.md — CR-01: router-level Depends(require_session) for all safety-critical routes + explicit public exemptions for /login /healthz + session-derived user_id + regression tests (DASH-04)
+- [ ] 03-09-PLAN.md — CR-02/CR-03/CR-04: add strategy_name+side to fill_payload; _send_dm_blocks_respecting_quiet_hours returns bool; audit event records delivered/suppressed_by_quiet_hours; expiry DM category=executor_error (REPT-01, HITL-03)
+
+**Wave 8 (gap closure — after 03-08 and 03-09)**
+
+- [ ] 03-10-PLAN.md — WR-08/HITL-02: remove dead X-Slack-Retry-Num retry gate from handle_approve/handle_reject; tombstone _extract_retry_num with Socket Mode explanation; tests confirm claim_action is sole dedup layer
 
 **UI hint**: yes
 
