@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Safety & Trust
 status: executing
-last_updated: "2026-06-18T08:15:53.808Z"
+last_updated: "2026-06-18T08:55:38.105Z"
 last_activity: 2026-06-18
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 23
-  completed_plans: 21
+  completed_plans: 22
   percent: 67
 ---
 
@@ -26,7 +26,7 @@ progress:
 ## Current Position
 
 Phase: 03 (production-hitl-ux-slack-block-kit-dashboard-fallback) — EXECUTING
-Plan: 6 of 7
+Plan: 7 of 7
 Status: Ready to execute
 Last activity: 2026-06-18
 
@@ -46,6 +46,7 @@ Last activity: 2026-06-18
 | Phase 02 P02-06 | 4h30m | 3 tasks | 22 files |
 | Phase 03 P03 | 16 | 3 tasks | 8 files |
 | Phase 03 P04 | 20min | 3 tasks | 10 files |
+| Phase 03 P06 | 45min | 3 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -287,6 +288,15 @@ After the manual demo passes, the next milestone-level step is either `/gsd-comp
 - _flag_wash_sale NEVER raises (FLAG-only contract; PATTERNS §4 anti-pattern row 12)._ Entire body wrapped in `try: ... except Exception: log + return None`. Tripwire `test_wash_sale_never_raises_on_db_failure` patches `_get_session_factory` to raise and asserts the function returns `None` without propagating. Tripwire `test_wash_sale_never_raises_on_malformed_payload` corrupts `events.payload_json` and asserts the function returns `None` (the bad row is silently skipped).
 - _[Rule 1 - Bug] Auto-fixed test pollution in test_rate_limit_backoff.py._ Phase-1's `tests/unit/test_alpaca_place_order.py` mutates `APIError.status_code` AT THE CLASS LEVEL via `type(api_err).status_code = property(lambda self: 503)`. This permanently rebinds the property on the parent for the rest of the pytest session; any new `APIError(...)` returns 503 for `.status_code` regardless of constructor args. `_make_api_error` in test_rate_limit_backoff.py now builds a fresh per-call subclass with its own `status_code` property that shadows the parent. `isinstance(exc, APIError)` still passes so `_is_rate_limit`'s first guard fires normally. Out-of-scope to fix Phase-1's pollution at its source (unrelated tests). Committed as `fix(02-03-1)` (17831e7).
 
+### Decisions from Plan 03-06 (added 2026-06-18)
+
+- _`daily_pnl` is ROUTINE category (D-48) — goes through `_send_slack_dm_respecting_quiet_hours`, defers in quiet window, NOT a bypass category._ The bypass set is for operator-safety DMs (kill, cap_rejection) that must fire regardless of quiet hours. A daily digest is discretionary and deferrable.
+- _`_send_dm_blocks_respecting_quiet_hours` is module-local in `daily_pnl.py` to avoid circular import with `executor.py`._ The existing `_send_slack_dm_blocks` in `executor.py` has no quiet-hours routing; extending it to accept `category` would be a breaking change to Plan 02-05's established API. Module-local helper preserves layering.
+- _`cap_rejection` paths already emit Block Kit cards via `build_orderguard_rejection_card` — no additional plain-text ❌ DM needed._ The rejection card is richer than a plain-text DM. AST gate covers both FAILED transitions regardless.
+- _`kill_switch._dm_kill_summary` already had `🚫` prefix — no code change required._ Confirmed via UTF-8 byte search; the 🚫 prefix was added in Plan 02-05.
+- _AST gate uses 30-line window for sibling DM detection._ The try/except + finally + DM pattern in `executor.py` needs a wider window than the 5-line gate used in prior tests. 30 lines accommodates the `except BrokerOrderError + transition_status + _send_slack_dm` block shape.
+- _`pandas_market_calendars` provides bundle market data locally — D-59 NYSE gate fires with ZERO network calls at check-time._ Calendar data is bundled in the package; `mcal.get_calendar("NYSE").schedule(...)` reads from bundled exchange_calendars data.
+
 ---
 *State initialized: 2026-06-08 after roadmap creation*
 *Updated: 2026-06-08 after Phase 1 context gathered*
@@ -304,6 +314,7 @@ After the manual demo passes, the next milestone-level step is either `/gsd-comp
 *Updated: 2026-06-16 after Plan 02-03 complete (Wave-3 OrderGuard BLOCK/FLAG matrix completion — tenacity retry_on_rate_limit on AlpacaBroker GETs + AST-walk gate over place_order/cancel_order zero-decorator invariants + check_pdt two-source defense + check_t1_settlement on cash accounts + flag_wash_sale 30-day FLAG-only helper + ProposalWriter stamps wash_sale_flag at proposal-build time; 4 commits; 522 unit + 37 integration tests pass)*
 *Updated: 2026-06-16 after Plan 02-06 complete (Wave-5 live-mode unlock end-to-end — SQLCipher live credentials vault + HITL-06 dual-channel state machine + ProposalWriter account_mode stamp closing BLOCKER #5 TOCTOU + AlpacaBroker _allow_live with AST-walk grep gate closing BLOCKER #4 + dashboard live banner + Slack first-live URL-button card; 3 commits; 107 unit + 28 integration tests pass)*
 *Updated: 2026-06-18 after Plan 03-02 complete (HITL-02 dedup gate — claim_action() UNIQUE-INSERT helper + dedup_click audit event + wire into _approve_workflow/_reject_workflow + D-43 ephemeral response + X-Slack-Retry-Num gate + integration race test proving exactly-once execution; 3 commits a7e4cdd/e219523/bb9ef6d)*
+*Updated: 2026-06-18 after Plan 03-06 complete (REPT-01 daily P&L digest — send_daily_pnl_digest + D-59 NYSE gate + APScheduler 16:30 ET cron + severity-tier emoji prefixes ⚠️/❌/🚫 + AST carry-forward gate; 3 commits b3654fa/7d355a2/eeb8c9f)*
 
 ### Decisions from Plan 02-06 (added 2026-06-16)
 

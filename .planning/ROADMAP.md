@@ -118,7 +118,7 @@ Plans:
   4. User can edit proposed order size from the Slack card and approve the edited order in a single interaction, with the edit recorded in audit
   5. When Slack is unavailable, user can complete the same approve / reject / edit flow via the web dashboard `/approvals` page and the order executes identically
 
-**Plans:** 5/7 plans executed
+**Plans:** 6/7 plans executed
 Plans:
 **Wave 1**
 
@@ -136,7 +136,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3)*
 
-- [ ] 03-06-PLAN.md — REPT-01 daily P&L digest (16:30 ET CronTrigger + D-59 NYSE schedule gate + Block Kit digest) + severity-tier emoji prefixes (⚠️/❌/🚫) on executor + kill DMs + carry-forward executor-error coverage audit
+- [x] 03-06-PLAN.md — REPT-01 daily P&L digest (16:30 ET CronTrigger + D-59 NYSE schedule gate + Block Kit digest) + severity-tier emoji prefixes (⚠️/❌/🚫) on executor + kill DMs + carry-forward executor-error coverage audit
 
 **Wave 5** *(blocked on Wave 4)*
 
@@ -255,7 +255,7 @@ Plans:
 |-------|-----------|----------------|--------|-----------|
 | 1. Foundation & Vertical Slice | v1.0 | 9/9 | Complete ✅ | 2026-06-15 |
 | 2. OrderGuard & Real-Money Alpaca Live | v2.0 | 7/7 | Complete   | 2026-06-17 |
-| 3. Production HITL UX | v2.0 | 5/7 | In Progress|  |
+| 3. Production HITL UX | v2.0 | 6/7 | In Progress|  |
 | 4. Agent Architecture & Cost Bounds | v2.0 | 0/0 | Not started | - |
 | 5. Trust Ladder | v2.0 | 0/0 | Not started | - |
 | 6. Web Dashboard & Multi-User Auth | v3.0 | 0/0 | Not started | - |
