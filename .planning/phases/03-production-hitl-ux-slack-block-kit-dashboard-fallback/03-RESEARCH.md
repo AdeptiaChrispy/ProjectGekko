@@ -1128,32 +1128,28 @@ except IntegrityError:
 
 **If this table is empty:** Not applicable — 9 assumptions logged. The planner / discuss-phase should review A6 (the `'EXPIRED'` enum extension), A7 (the AWAITING_2ND_CHANNEL inclusion in sweep), and A1 (the missing `slack_message_ts/channel` columns) before drafting plans — these are the items that change the migration scope.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Should the 60s sweep iterate over all users on a multi-user-later deployment?**
-   - What we know: P3 ships in the single-user-per-instance deployment shape (PROJECT.md / D-18). The sweep is registered per-user in the lifespan startup.
-   - What's unclear: When the dashboard is later opened to multiple users (P6), does each user get their own sweep job? Or one sweep that iterates over all user DBs?
-   - Recommendation: One sweep job per user is the cleanest model; APScheduler can host N IntervalTriggers with distinct job ids. Defer the answer until P6 actually adds multiple users.
+All 5 open questions surfaced by initial research were resolved during the `/gsd-plan-phase 3` research-handoff AskUserQuestion batch on 2026-06-17. Decisions logged as D-58..D-61 in `03-CONTEXT.md` §F "Research-Handoff Decisions"; the daily-P&L bypass-vs-suppress ambiguity was further resolved during plan-checker iteration 1 on the same date. Each question's resolution below.
 
-2. **Daily P&L digest on market-closed days — empty DM or skip entirely?**
-   - What we know: D-48 / E says "4:30pm post-close ET regardless"; the operator gets a digest every weekday.
-   - What's unclear: On holidays (Christmas Day on a Wednesday, Thanksgiving Thursday) the market is closed all day. Should the digest still fire (saying "no trades today; market closed")?
-   - Recommendation: Use `pandas_market_calendars.get_calendar('NYSE').valid_days(...)` to check; on closed days, skip entirely (no DM). The operator's mental model is "no market = no digest." Worth confirming with the operator in `/gsd-discuss-phase` follow-up if not locked.
+1. **Should the 60s sweep iterate over all users on a multi-user-later deployment?** — **RESOLVED: deferred to P6.**
+   - Resolution: Single-user-per-instance per D-18 is the v2 deployment shape. P3 registers one sweep job per user in lifespan (PATTERNS §2f). When P6 opens to multi-user, each user gets their own IntervalTrigger job id — APScheduler hosts N triggers cleanly. No P3 work needed; the per-user-iterating job structure already supports multi-user later.
 
-3. **Cookie secret derivation — passphrase-derived vs ephemeral random?**
-   - What we know: D-57 says "8-hour idle expiry, HttpOnly, SameSite=Strict, Secure=False." Says nothing about secret rotation.
-   - What's unclear: Whether the planner picks recommendation (a), (b), or (c) from §Runtime State Inventory.
-   - Recommendation: (b) ephemeral random per restart — simplest, no new env var, acceptable UX cost. Mention in the operator-facing README.
+2. **Daily P&L digest on market-closed days — empty DM or skip entirely?** — **RESOLVED: D-59 (skip on closed days).**
+   - Resolution: `pandas_market_calendars.get_calendar("NYSE").schedule(start_date=today, end_date=today).empty` gate at the top of `send_daily_pnl_digest`. If empty (weekend, holiday), log `daily_pnl.market_closed_skip` and return False; no DM. Operator's mental model: "no market = no digest." Locked via D-59.
 
-4. **Should the `escalate_to_dashboard` button become a URL button to `/approvals/{proposal_id}` in P3, or stay a stub?**
-   - What we know: D-55 mirrors the Slack card on `/approvals`. There's no longer a clear distinction between "approve in Slack" and "escalate to dashboard" — they're the same surface.
-   - What's unclear: Whether to ship the URL-button version in P3 or defer.
-   - Recommendation: Ship the URL-button version in P3 — it's a 5-line change to the `build_proposal_card` and removes a confusing stub. Falls under Claude's discretion.
+3. **Cookie secret derivation — passphrase-derived vs ephemeral random?** — **RESOLVED: D-58 (ephemeral per-restart).**
+   - Resolution: `os.urandom(32)` at app boot — fresh secret per `gekko serve` start; sessions invalidate on restart. Passphrase is NOT promoted to a second load-bearing role. Operator re-enters passphrase at next page load (already required for SQLCipher unlock). No new secret-management burden. Documented in operator-facing README per D-58.
 
-5. **Should pre-migration proposals (~22 audit events from P1 demo) be backfilled with `expires_at`?**
-   - What we know: Alembic 0003 adds `expires_at` to `proposals`. Pre-migration rows have NULL.
-   - What's unclear: Backfill with `created_at + 30min` (would immediately expire them on first sweep) vs leave NULL (sweep treats as "no expiry, never expire").
-   - Recommendation: Leave NULL + sweep treats as "no expiry." The 22 P1-demo events are FILLED / FAILED / REJECTED terminal states already (not PENDING). For any defensive PENDING row from a crash, the operator can manually reject via the dashboard.
+4. **Should the `escalate_to_dashboard` button become a URL button to `/approvals/{proposal_id}` in P3, or stay a stub?** — **RESOLVED: D-60 (URL button).**
+   - Resolution: Slack Block Kit URL buttons require no callback handler (Slack opens the URL in the user's browser). Dashboard `/approvals` route now exists in P3 (D-55), making this a real destination. 5-line change in `reporter/slack.py:build_proposal_card` — replace existing escalate `action_id` with `url=f"{settings.dashboard_url}/approvals/{proposal_id}"`. Implemented in Plan 03-05 alongside the dashboard routes.
+
+5. **Should pre-migration proposals (~22 audit events from P1 demo) be backfilled with `expires_at`?** — **RESOLVED: D-61 (grandfathered NULL).**
+   - Resolution: Alembic 0004 adds `Proposal.expires_at` with DEFAULT NULL for existing rows. Sweep WHERE clause is `status IN ('PENDING', 'AWAITING_2ND_CHANNEL') AND expires_at IS NOT NULL AND expires_at <= now()`. Grandfathered proposals stay PENDING until manually resolved. New proposals (post-P3) always get a real `expires_at` at insertion (ProposalWriter Task 3 of Plan 03-01). The NULL set monotonically drains. Safest, no surprise mass-expire on migration day.
+
+**Plan-checker iteration 1 resolution (2026-06-17):**
+
+- **Daily-P&L bypass-vs-suppress ambiguity** — D-48 lists `Daily P&L summary` in the SUPPRESSED list, but the parenthetical "fixed at 4:30pm post-close ET regardless" was misread as bypass. Resolution per AskUserQuestion: daily_pnl is a ROUTINE category and respects user quiet hours. The cron trigger fires at 16:30 ET on every NYSE trading day (D-59 gate); the DM goes through `_send_slack_dm_respecting_quiet_hours(category='daily_pnl')` and gets deferred to window-open when 16:30 ET falls within the user's quiet window. For typical US quiet hours (10pm-7am), 16:30 ET is well outside the window and the DM lands immediately. "Regardless" in CONTEXT.md §E describes the cron TRIGGER firing time, NOT the DM bypass classification. Locked in Plan 03-06 truth #3 + acceptance criteria + `test_daily_pnl_respects_quiet.py`.
 
 ## Environment Availability
 

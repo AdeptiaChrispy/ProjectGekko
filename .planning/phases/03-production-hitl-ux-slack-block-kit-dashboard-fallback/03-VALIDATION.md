@@ -69,7 +69,7 @@ Test files mapped to the 5 requirement IDs. AST gates (last 5 rows) enforce inva
 | `test_dashboard_edit_size_happy.py` | DASH-04 | integration | `pytest tests/integration/test_dashboard_edit_size_happy.py -x` | ❌ W0 | ⬜ pending |
 | `test_proposal_card_shared_partial.py` (snapshot) | DASH-04 | unit | `pytest tests/unit/test_proposal_card_shared_partial.py -x` | ❌ W0 | ⬜ pending |
 | `test_daily_pnl_aggregation.py` | REPT-01 | unit | `pytest tests/unit/test_daily_pnl_aggregation.py -x` | ❌ W0 | ⬜ pending |
-| `test_daily_pnl_bypasses_quiet.py` | REPT-01 | unit | `pytest tests/unit/test_daily_pnl_bypasses_quiet.py -x` | ❌ W0 | ⬜ pending |
+| `test_daily_pnl_respects_quiet.py` (asserts deferred when 16:30 ET in quiet window; fires when outside) | REPT-01 | unit | `pytest tests/unit/test_daily_pnl_respects_quiet.py -x` | ❌ W0 | ⬜ pending |
 | `test_severity_tier_dm.py` | REPT-01 | unit | `pytest tests/unit/test_severity_tier_dm.py -x` | ❌ W0 | ⬜ pending |
 | `test_executor_error_dms_coverage.py` (audit MarketClosed + BrokerOrderError) | REPT-01 | unit | `pytest tests/unit/test_executor_error_dms_coverage.py -x` | ❌ W0 | ⬜ pending |
 | `test_quiet_hours_dm_gate.py` (AST gate per Pitfall 9) | All | unit | `pytest tests/unit/test_quiet_hours_dm_gate.py -x` | ❌ W0 | ⬜ pending |
@@ -98,7 +98,7 @@ Phase 3 introduces ~30 new test files (no framework install needed — pytest + 
 - [ ] `tests/unit/test_dashboard_edit_size.py` — drift error fragment, happy-path modal close
 - [ ] `tests/unit/test_proposal_card_shared_partial.py` — Slack-card schema parity
 - [ ] `tests/unit/test_daily_pnl_aggregation.py` — query + render
-- [ ] `tests/unit/test_daily_pnl_bypasses_quiet.py` — quiet-hours bypass
+- [ ] `tests/unit/test_daily_pnl_respects_quiet.py` — quiet-hours bypass
 - [ ] `tests/unit/test_severity_tier_dm.py` — emoji prefix
 - [ ] `tests/unit/test_executor_error_dms_coverage.py` — line 454 + line 654 covered
 - [ ] `tests/unit/test_chat_update_expired.py` — respx mock of Slack chat.update
