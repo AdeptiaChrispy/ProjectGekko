@@ -3,19 +3,19 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Safety & Trust
 status: executing
-last_updated: "2026-06-18T12:43:58.061Z"
+last_updated: "2026-06-18T13:13:38.327Z"
 last_activity: 2026-06-18
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 26
-  completed_plans: 24
+  completed_plans: 25
   percent: 67
 ---
 
 # Project State: Project Gekko
 
-**Last updated:** 2026-06-18 (**Plan 03-08 complete — CR-01 fail-closed auth fix.** Router-level `Depends(require_session)` applied to all 8 safety-critical dashboard routes; /login and /healthz moved to `public_router` (no auth requirement). Session-derived user_id replaces `settings.gekko_user_id` in all gated handlers. 14-test regression suite (test_dashboard_auth_safety_routes.py) all pass. HITL-06 dual-channel guarantee now holds: the dashboard second channel requires distinct authentication. Gap-closure plans 03-09 and 03-10 remain.)
+**Last updated:** 2026-06-18 (**Plan 03-09 complete — CR-02/CR-03/CR-04 gap-closure.** fill_payload now includes strategy_name and side from tp_persisted (CR-02 — daily P&L aggregator now correctly buckets by strategy and signs SELL fills). _send_dm_blocks_respecting_quiet_hours returns bool; daily_pnl audit events record delivered + suppressed_by_quiet_hours fields (CR-03 — audit log now honest about DM delivery). Expiry DM changed from routine_fill to executor_error category (CR-04 — proposal expiry now always pages operator regardless of quiet window). 10 new TDD tests (test_fill_payload_fields.py x4, test_daily_pnl_audit_honesty.py x4, test_expiry_quiet_hours_bypass.py x2). Gap-closure plan 03-10 remains.)
 
 ## Project Reference
 
@@ -26,7 +26,7 @@ progress:
 ## Current Position
 
 Phase: 03 (production-hitl-ux-slack-block-kit-dashboard-fallback) — EXECUTING
-Plan: 2 of 10
+Plan: 3 of 10
 Status: Ready to execute
 Last activity: 2026-06-18
 
@@ -48,6 +48,7 @@ Last activity: 2026-06-18
 | Phase 03 P04 | 20min | 3 tasks | 10 files |
 | Phase 03 P06 | 45min | 3 tasks | 9 files |
 | Phase 03 P07 | 120min | 3 tasks | 3 files |
+| Phase 03 P09 | 25 | 2 tasks | 6 files |
 
 ## Accumulated Context
 

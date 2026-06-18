@@ -102,7 +102,7 @@ Plans:
 **Wave 7 (gap closure — parallel, no inter-dependency)**
 
 - [x] 03-08-PLAN.md — CR-01: router-level Depends(require_session) for all safety-critical routes + explicit public exemptions for /login /healthz + session-derived user_id + regression tests (DASH-04)
-- [ ] 03-09-PLAN.md — CR-02/CR-03/CR-04: add strategy_name+side to fill_payload; _send_dm_blocks_respecting_quiet_hours returns bool; audit event records delivered/suppressed_by_quiet_hours; expiry DM category=executor_error (REPT-01, HITL-03)
+- [x] 03-09-PLAN.md — CR-02/CR-03/CR-04: add strategy_name+side to fill_payload; _send_dm_blocks_respecting_quiet_hours returns bool; audit event records delivered/suppressed_by_quiet_hours; expiry DM category=executor_error (REPT-01, HITL-03)
 
 **Wave 8 (gap closure — after 03-08 and 03-09)**
 
@@ -221,7 +221,7 @@ Plans:
 |-------|-----------|----------------|--------|-----------|
 | 1. Foundation & Vertical Slice | v1.0 | 9/9 | Complete ✅ | 2026-06-15 |
 | 2. OrderGuard & Real-Money Alpaca Live | v2.0 | 7/7 | Complete   | 2026-06-17 |
-| 3. Production HITL UX | v2.0 | 8/10 | In Progress|  |
+| 3. Production HITL UX | v2.0 | 9/10 | In Progress|  |
 | 4. Agent Architecture & Cost Bounds | v2.0 | 0/0 | Not started | - |
 | 5. Trust Ladder | v2.0 | 0/0 | Not started | - |
 | 6. Web Dashboard & Multi-User Auth | v3.0 | 0/0 | Not started | - |
