@@ -32,6 +32,15 @@ Production wiring (Plan 01-09):
   * :func:`_get_session_factory` reads that cached passphrase and builds a
     per-user SQLCipher engine each call. The engine is disposed in a
     ``finally`` block so we don't leak SQLCipher connections.
+
+Exactly-once execution (Plan 03-10 — gap closure WR-08):
+  The X-Slack-Retry-Num HTTP header is absent in Socket Mode (the
+  production transport). The ``_extract_retry_num`` helper and the
+  retry-gate blocks that read from ``body["headers"]`` were removed in
+  Plan 03-10. Exactly-once execution is provided solely by
+  ``claim_action``'s UNIQUE constraint in ``dedup.py``.  Do NOT add
+  retry-gate logic that reads HTTP headers here; it will silently not
+  work in Socket Mode.
 """
 
 from __future__ import annotations
@@ -139,26 +148,6 @@ def _format_hhmm(iso_ts: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# X-Slack-Retry-Num gate helpers
-# ---------------------------------------------------------------------------
-
-
-def _extract_retry_num(body: dict[str, Any]) -> int:
-    """Extract the Slack retry number from the request body.
-
-    Slack attaches ``X-Slack-Retry-Num`` as an HTTP header; slack-bolt
-    surfaces it via ``body["headers"]`` in async interactivity payloads.
-    A value of ``0`` (or absent) means "first delivery".
-    """
-    headers = body.get("headers") or {}
-    raw = headers.get("x-slack-retry-num") or headers.get("X-Slack-Retry-Num") or "0"
-    try:
-        return int(raw)
-    except (ValueError, TypeError):
-        return 0
-
-
-# ---------------------------------------------------------------------------
 # Approve
 # ---------------------------------------------------------------------------
 
@@ -170,60 +159,23 @@ async def handle_approve(
 
     Flow:
       1. ack FIRST (Pitfall 3).
-      2. X-Slack-Retry-Num gate: if Slack is retrying (retry_num > 0) AND a
-         dedup row already exists for this (proposal_id, action_id,
-         actor_slack_user_id), short-circuit — the original ephemeral already
-         fired so this is a no-op. The retry gate fires BEFORE claim_action
-         to avoid creating duplicate dedup rows on retry storms.
-      3. Dispatch background workflow via :func:`asyncio.create_task` so
+      2. Dispatch background workflow via :func:`asyncio.create_task` so
          the bolt handler returns quickly.
 
     The background workflow does the owner check, inserts a dedup row via
-    ``claim_action``, transitions PENDING -> APPROVED with the ``approval``
-    audit event, and fires the Executor.
+    ``claim_action`` (the sole exactly-once guard — Plan 03-10), transitions
+    PENDING -> APPROVED with the ``approval`` audit event, and fires the
+    Executor.
+
+    Note: The X-Slack-Retry-Num HTTP header is NOT present in Socket Mode
+    (the production transport). The former retry-gate block was removed in
+    Plan 03-10 (WR-08 gap closure) because it always returned 0 in production
+    and was dead code. ``claim_action``'s UNIQUE constraint is the sole and
+    sufficient idempotency layer.
     """
     await ack()
     decision_id = body["actions"][0]["value"]
     slack_user_id = body["user"]["id"]
-
-    # X-Slack-Retry-Num gate (RESEARCH §HITL-02).
-    # When retry_num > 0 AND a dedup row exists, Slack is retrying the same
-    # payload — the original ephemeral already fired. Short-circuit to avoid
-    # a duplicate ephemeral storm while still processing retries where no
-    # prior write landed (defensive: treat as first delivery in that case).
-    retry_num = _extract_retry_num(body)
-    if retry_num > 0:
-        from gekko.config import get_settings as _gs
-        _settings = _gs()
-        _gekko_user_id = _settings.gekko_user_id
-        _sf, _engine = _get_session_factory(_gekko_user_id)
-        try:
-            async with _sf() as _session:
-                _prior = (
-                    await _session.execute(
-                        select(SlackActionDedup).where(
-                            SlackActionDedup.proposal_id == decision_id,
-                            SlackActionDedup.action_id == "approve_proposal",
-                            SlackActionDedup.actor_slack_user_id == slack_user_id,
-                        )
-                    )
-                ).scalar_one_or_none()
-            if _prior is not None:
-                log.debug(
-                    "slack.approve.retry_gate_short_circuit",
-                    decision_id=decision_id,
-                    retry_num=retry_num,
-                )
-                return
-        except Exception:  # noqa: BLE001 — gate failure falls through to normal path
-            log.warning(
-                "slack.approve.retry_gate_error",
-                decision_id=decision_id,
-                retry_num=retry_num,
-            )
-        finally:
-            if _engine is not None:
-                await _engine.dispose()
 
     asyncio.create_task(
         _approve_workflow(
@@ -515,45 +467,16 @@ async def _approve_workflow(
 async def handle_reject(
     *, ack: _AckFn, body: dict[str, Any], client: Any
 ) -> None:
-    """Reject button — HITL-04. ack-first, X-Slack-Retry-Num gate, then background."""
+    """Reject button — HITL-04. ack-first, then background workflow.
+
+    Note: The X-Slack-Retry-Num HTTP header is NOT present in Socket Mode
+    (the production transport). The former retry-gate block was removed in
+    Plan 03-10 (WR-08 gap closure). ``claim_action``'s UNIQUE constraint
+    is the sole and sufficient idempotency layer.
+    """
     await ack()
     decision_id = body["actions"][0]["value"]
     slack_user_id = body["user"]["id"]
-
-    # X-Slack-Retry-Num gate — same shape as handle_approve.
-    retry_num = _extract_retry_num(body)
-    if retry_num > 0:
-        from gekko.config import get_settings as _gs
-        _settings = _gs()
-        _gekko_user_id = _settings.gekko_user_id
-        _sf, _engine = _get_session_factory(_gekko_user_id)
-        try:
-            async with _sf() as _session:
-                _prior = (
-                    await _session.execute(
-                        select(SlackActionDedup).where(
-                            SlackActionDedup.proposal_id == decision_id,
-                            SlackActionDedup.action_id == "reject_proposal",
-                            SlackActionDedup.actor_slack_user_id == slack_user_id,
-                        )
-                    )
-                ).scalar_one_or_none()
-            if _prior is not None:
-                log.debug(
-                    "slack.reject.retry_gate_short_circuit",
-                    decision_id=decision_id,
-                    retry_num=retry_num,
-                )
-                return
-        except Exception:  # noqa: BLE001
-            log.warning(
-                "slack.reject.retry_gate_error",
-                decision_id=decision_id,
-                retry_num=retry_num,
-            )
-        finally:
-            if _engine is not None:
-                await _engine.dispose()
 
     asyncio.create_task(
         _reject_workflow(
