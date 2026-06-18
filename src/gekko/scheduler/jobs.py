@@ -232,6 +232,7 @@ def unschedule_strategy(
 
 __all__: tuple[str, ...] = (
     "build_scheduler",
+    "register_expire_stale_sweep",
     "schedule_strategy_daily",
     "unschedule_strategy",
 )
