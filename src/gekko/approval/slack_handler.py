@@ -38,9 +38,11 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Awaitable, Callable
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from gekko.approval.dedup import claim_action
 from gekko.approval.proposals import (
     approve_proposal,
     reject_proposal,
@@ -50,7 +52,7 @@ from gekko.audit.log import append_event
 from gekko.config import get_settings
 from gekko.db.engine import get_async_engine
 from gekko.db.models import Proposal as ProposalRow
-from gekko.db.models import StrategyMetadata
+from gekko.db.models import SlackActionDedup, StrategyMetadata
 from gekko.db.session import AsyncSessionLocal, make_session_factory
 from gekko.execution.executor import execute_proposal
 from gekko.logging_config import get_logger
@@ -89,6 +91,71 @@ def _get_session_factory(
 
 
 # ---------------------------------------------------------------------------
+# D-43 ephemeral helper
+# ---------------------------------------------------------------------------
+
+
+async def _post_ephemeral(response_url: str, text: str) -> None:
+    """POST a Slack ephemeral message to ``response_url``.
+
+    Uses ``httpx.AsyncClient`` (already in tree).  ``response_url`` is the
+    single-use URL Slack provides with ~30min TTL (RESEARCH §HITL-02).
+
+    A >=400 response is logged as a WARNING but does NOT raise — the
+    duplicate detection already happened via the dedup row; the ephemeral
+    is best-effort UX feedback.
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                response_url,
+                json={"response_type": "ephemeral", "text": text},
+                timeout=5.0,
+            )
+        if resp.status_code >= 400:
+            log.warning(
+                "slack.ephemeral.post_failed",
+                status_code=resp.status_code,
+                response_url=response_url,
+            )
+    except Exception:  # noqa: BLE001 — ephemeral failure is non-critical
+        log.warning(
+            "slack.ephemeral.post_error",
+            response_url=response_url,
+        )
+
+
+def _format_hhmm(iso_ts: str) -> str:
+    """Extract HH:MM from an ISO timestamp string."""
+    try:
+        from datetime import datetime
+        dt = datetime.fromisoformat(iso_ts)
+        return dt.strftime("%H:%M")
+    except Exception:  # noqa: BLE001
+        return iso_ts[:16]
+
+
+# ---------------------------------------------------------------------------
+# X-Slack-Retry-Num gate helpers
+# ---------------------------------------------------------------------------
+
+
+def _extract_retry_num(body: dict[str, Any]) -> int:
+    """Extract the Slack retry number from the request body.
+
+    Slack attaches ``X-Slack-Retry-Num`` as an HTTP header; slack-bolt
+    surfaces it via ``body["headers"]`` in async interactivity payloads.
+    A value of ``0`` (or absent) means "first delivery".
+    """
+    headers = body.get("headers") or {}
+    raw = headers.get("x-slack-retry-num") or headers.get("X-Slack-Retry-Num") or "0"
+    try:
+        return int(raw)
+    except (ValueError, TypeError):
+        return 0
+
+
+# ---------------------------------------------------------------------------
 # Approve
 # ---------------------------------------------------------------------------
 
@@ -100,27 +167,77 @@ async def handle_approve(
 
     Flow:
       1. ack FIRST (Pitfall 3).
-      2. Dispatch background workflow via :func:`asyncio.create_task` so
+      2. X-Slack-Retry-Num gate: if Slack is retrying (retry_num > 0) AND a
+         dedup row already exists for this (proposal_id, action_id,
+         actor_slack_user_id), short-circuit — the original ephemeral already
+         fired so this is a no-op. The retry gate fires BEFORE claim_action
+         to avoid creating duplicate dedup rows on retry storms.
+      3. Dispatch background workflow via :func:`asyncio.create_task` so
          the bolt handler returns quickly.
 
-    The background workflow does the owner check, transitions
-    PENDING -> APPROVED with the ``approval`` audit event, and fires the
-    Executor.
+    The background workflow does the owner check, inserts a dedup row via
+    ``claim_action``, transitions PENDING -> APPROVED with the ``approval``
+    audit event, and fires the Executor.
     """
     await ack()
     decision_id = body["actions"][0]["value"]
     slack_user_id = body["user"]["id"]
+
+    # X-Slack-Retry-Num gate (RESEARCH §HITL-02).
+    # When retry_num > 0 AND a dedup row exists, Slack is retrying the same
+    # payload — the original ephemeral already fired. Short-circuit to avoid
+    # a duplicate ephemeral storm while still processing retries where no
+    # prior write landed (defensive: treat as first delivery in that case).
+    retry_num = _extract_retry_num(body)
+    if retry_num > 0:
+        from gekko.config import get_settings as _gs
+        _settings = _gs()
+        _gekko_user_id = _settings.gekko_user_id
+        _sf, _engine = _get_session_factory(_gekko_user_id)
+        try:
+            async with _sf() as _session:
+                _prior = (
+                    await _session.execute(
+                        select(SlackActionDedup).where(
+                            SlackActionDedup.proposal_id == decision_id,
+                            SlackActionDedup.action_id == "approve_proposal",
+                            SlackActionDedup.actor_slack_user_id == slack_user_id,
+                        )
+                    )
+                ).scalar_one_or_none()
+            if _prior is not None:
+                log.debug(
+                    "slack.approve.retry_gate_short_circuit",
+                    decision_id=decision_id,
+                    retry_num=retry_num,
+                )
+                return
+        except Exception:  # noqa: BLE001 — gate failure falls through to normal path
+            log.warning(
+                "slack.approve.retry_gate_error",
+                decision_id=decision_id,
+                retry_num=retry_num,
+            )
+        finally:
+            if _engine is not None:
+                await _engine.dispose()
+
     asyncio.create_task(
         _approve_workflow(
             decision_id=decision_id,
             slack_user_id=slack_user_id,
+            body=body,
             client=client,
         )
     )
 
 
 async def _approve_workflow(
-    *, decision_id: str, slack_user_id: str, client: Any
+    *,
+    decision_id: str,
+    slack_user_id: str,
+    body: dict[str, Any] | None = None,
+    client: Any,
 ) -> None:
     """Background half of the approve handler.
 
@@ -129,9 +246,14 @@ async def _approve_workflow(
     identity (from settings.gekko_user_id) used for DB / engine /
     executor calls. The two are usually different even for the same
     human — REG-03 + REG-04.
+
+    ``body`` is the original Slack interactivity payload dict; it carries
+    ``trigger_id`` (for retry-debugging per D-45) and ``response_url``
+    (for the D-43 duplicate ephemeral).
     """
     from gekko.config import get_settings
 
+    _body = body or {}
     settings = get_settings()
     gekko_user_id = settings.gekko_user_id
 
@@ -177,6 +299,63 @@ async def _approve_workflow(
         payload_json_snapshot: str | None = None
         is_live_first: bool = False
         async with sf() as session, session.begin():
+            # -----------------------------------------------------------------
+            # D-41 dedup gate — FIRST thing inside the transaction, AFTER the
+            # cross-user check. Inserts a SlackActionDedup row; on duplicate
+            # fires the D-43 ephemeral and returns WITHOUT touching state.
+            # -----------------------------------------------------------------
+            dedup_outcome = await claim_action(
+                session,
+                proposal_id=decision_id,
+                action_id="approve_proposal",
+                actor_slack_user_id=slack_user_id,
+                actor_gekko_user_id=gekko_user_id,
+                source="slack",
+                slack_trigger_id=_body.get("trigger_id"),
+            )
+            if dedup_outcome == "duplicate":
+                # The claim_action duplicate path rolled back the session.
+                # Open a FRESH read-only query to get the original dedup row
+                # (for inserted_at + original actor) and the proposal's current
+                # status for the D-43 ephemeral copy.
+                orig_slack_user: str = slack_user_id
+                hh_mm: str = "??"
+                current_status: str = "UNKNOWN"
+                try:
+                    async with sf() as read_session:
+                        orig_row = (
+                            await read_session.execute(
+                                select(SlackActionDedup).where(
+                                    SlackActionDedup.proposal_id == decision_id,
+                                    SlackActionDedup.action_id == "approve_proposal",
+                                    SlackActionDedup.result == "first_write",
+                                )
+                            )
+                        ).scalar_one_or_none()
+                        proposal_row = await read_session.get(
+                            ProposalRow, decision_id
+                        )
+                        if orig_row:
+                            orig_slack_user = (
+                                orig_row.actor_slack_user_id or slack_user_id
+                            )
+                            hh_mm = _format_hhmm(orig_row.inserted_at)
+                        if proposal_row:
+                            current_status = proposal_row.status
+                except Exception:  # noqa: BLE001
+                    log.warning(
+                        "slack.approve.dedup_query_failed",
+                        decision_id=decision_id,
+                    )
+                eph_text = (
+                    f"✅ Already approved by <@{orig_slack_user}>"
+                    f" at {hh_mm}. Status: {current_status}."
+                )
+                response_url = _body.get("response_url", "")
+                if response_url:
+                    await _post_ephemeral(response_url, eph_text)
+                return
+
             row = await session.get(ProposalRow, decision_id)
             if row is None:
                 # WR-06 fix: route through the identity-split seam.
@@ -333,25 +512,67 @@ async def _approve_workflow(
 async def handle_reject(
     *, ack: _AckFn, body: dict[str, Any], client: Any
 ) -> None:
-    """Reject button — HITL-04. ack-first, then background reject workflow."""
+    """Reject button — HITL-04. ack-first, X-Slack-Retry-Num gate, then background."""
     await ack()
     decision_id = body["actions"][0]["value"]
     slack_user_id = body["user"]["id"]
+
+    # X-Slack-Retry-Num gate — same shape as handle_approve.
+    retry_num = _extract_retry_num(body)
+    if retry_num > 0:
+        from gekko.config import get_settings as _gs
+        _settings = _gs()
+        _gekko_user_id = _settings.gekko_user_id
+        _sf, _engine = _get_session_factory(_gekko_user_id)
+        try:
+            async with _sf() as _session:
+                _prior = (
+                    await _session.execute(
+                        select(SlackActionDedup).where(
+                            SlackActionDedup.proposal_id == decision_id,
+                            SlackActionDedup.action_id == "reject_proposal",
+                            SlackActionDedup.actor_slack_user_id == slack_user_id,
+                        )
+                    )
+                ).scalar_one_or_none()
+            if _prior is not None:
+                log.debug(
+                    "slack.reject.retry_gate_short_circuit",
+                    decision_id=decision_id,
+                    retry_num=retry_num,
+                )
+                return
+        except Exception:  # noqa: BLE001
+            log.warning(
+                "slack.reject.retry_gate_error",
+                decision_id=decision_id,
+                retry_num=retry_num,
+            )
+        finally:
+            if _engine is not None:
+                await _engine.dispose()
+
     asyncio.create_task(
         _reject_workflow(
             decision_id=decision_id,
             slack_user_id=slack_user_id,
+            body=body,
             client=client,
         )
     )
 
 
 async def _reject_workflow(
-    *, decision_id: str, slack_user_id: str, client: Any
+    *,
+    decision_id: str,
+    slack_user_id: str,
+    body: dict[str, Any] | None = None,
+    client: Any,
 ) -> None:
     """Background half of the reject handler. Same identity model as approve."""
     from gekko.config import get_settings
 
+    _body = body or {}
     settings = get_settings()
     gekko_user_id = settings.gekko_user_id
 
@@ -374,6 +595,50 @@ async def _reject_workflow(
     sf, engine = _get_session_factory(gekko_user_id)
     try:
         async with sf() as session, session.begin():
+            # D-41 dedup gate — FIRST thing inside the transaction.
+            dedup_outcome = await claim_action(
+                session,
+                proposal_id=decision_id,
+                action_id="reject_proposal",
+                actor_slack_user_id=slack_user_id,
+                actor_gekko_user_id=gekko_user_id,
+                source="slack",
+                slack_trigger_id=_body.get("trigger_id"),
+            )
+            if dedup_outcome == "duplicate":
+                # Open a fresh read session to get the original dedup row.
+                orig_slack_user: str = slack_user_id
+                hh_mm: str = "??"
+                try:
+                    async with sf() as read_session:
+                        orig_row = (
+                            await read_session.execute(
+                                select(SlackActionDedup).where(
+                                    SlackActionDedup.proposal_id == decision_id,
+                                    SlackActionDedup.action_id == "reject_proposal",
+                                    SlackActionDedup.result == "first_write",
+                                )
+                            )
+                        ).scalar_one_or_none()
+                        if orig_row:
+                            orig_slack_user = (
+                                orig_row.actor_slack_user_id or slack_user_id
+                            )
+                            hh_mm = _format_hhmm(orig_row.inserted_at)
+                except Exception:  # noqa: BLE001
+                    log.warning(
+                        "slack.reject.dedup_query_failed",
+                        decision_id=decision_id,
+                    )
+                eph_text = (
+                    f"❌ Already rejected by <@{orig_slack_user}>"
+                    f" at {hh_mm}."
+                )
+                response_url = _body.get("response_url", "")
+                if response_url:
+                    await _post_ephemeral(response_url, eph_text)
+                return
+
             row = await session.get(ProposalRow, decision_id)
             if row is None:
                 # WR-06 fix: route through identity-split seam.
