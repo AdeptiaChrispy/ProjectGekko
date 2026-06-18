@@ -96,6 +96,18 @@ The 5 DM categories specified by REPT-01 with their wire-status:
 - **Errors and operational alerts** — `BrokerOrderError` / `OrderGuardRejected` / `MarketClosed` already DM (P2 fixes, `executor.py` lines 454 + 654). P3 audit: confirm coverage; add severity tier on DMs (`⚠️` = informational, `❌` = error, `🚫` = kill-state). Cost-ceiling alerts (P4 territory) and trust-ladder anomaly-demotion DMs (P5 territory) are out of scope.
 - **Carry-forward audit:** confirm `executor.py` and `kill_switch.py` cover every error path that transitions a proposal to FAILED with an operator-visible DM. Any silent FAILED transitions are bugs P3 closes.
 
+### F. Research-Handoff Decisions (locked 2026-06-17 after `/gsd-plan-phase 3` research return)
+
+The phase researcher surfaced 4 follow-up decisions whose answers materially shape the plan. All locked before the planner spawns:
+
+- **D-58: Dashboard session cookie secret = ephemeral per-restart (random at app boot).** Generate `os.urandom(32)`-derived secret in `dashboard.app.lifespan`; sessions invalidate on each `gekko serve` restart. Operator re-enters passphrase at next page load (already required for SQLCipher unlock). No new secret-management burden; passphrase is NOT promoted to a second load-bearing role. Trade-off accepted: forced re-login on every restart is acceptable for single-operator deployment per REG-03.
+
+- **D-59: Daily P&L DM skips entirely on market-closed days.** Use `pandas_market_calendars` (already in tree from P1) to check NYSE schedule at the cron-handler entry; if `nyse.schedule(start_date=today, end_date=today).empty`, the handler returns early with no DM. CronTrigger still fires daily at 16:30 America/New_York; the gate is inside the handler. Operator inbox stays clean on weekends and holidays.
+
+- **D-60: `handle_escalate` Slack button converts to a URL button pointing at `/approvals/{proposal_id}`.** Slack Block Kit URL buttons require no callback handler (Slack opens the URL in the user's browser). The dashboard `/approvals` route now exists in P3 (D-55), making this a real destination. 5-line change in `reporter/slack.py:build_proposal_card` — replace the existing escalate button's `action_id` with a `url` field constructed as `f"{DASHBOARD_BASE_URL}/approvals/{proposal_id}"`. Wires the existing operator intent to the new dashboard surface.
+
+- **D-61: Pre-migration PENDING proposals get NULL `expires_at`; sweep ignores NULL.** Alembic 0003 adds `Proposal.expires_at: datetime | null` with DEFAULT NULL for existing rows. The sweep's WHERE clause is `status IN ('PENDING', 'AWAITING_2ND_CHANNEL') AND expires_at IS NOT NULL AND expires_at <= now()`. Grandfathered proposals stay PENDING until manually resolved or migrated; new proposals (post-P3) always get a real `expires_at` at insertion time so the NULL set monotonically drains. Safest, no surprise mass-expire on migration day.
+
 ### Claude's Discretion
 
 Items left to research / planning that don't need user input now:
