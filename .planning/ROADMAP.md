@@ -118,7 +118,7 @@ Plans:
   4. User can edit proposed order size from the Slack card and approve the edited order in a single interaction, with the edit recorded in audit
   5. When Slack is unavailable, user can complete the same approve / reject / edit flow via the web dashboard `/approvals` page and the order executes identically
 
-**Plans:** 4/7 plans executed
+**Plans:** 5/7 plans executed
 Plans:
 **Wave 1**
 
@@ -131,7 +131,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2)*
 
-- [ ] 03-04-PLAN.md — HITL-03 expire_stale_proposals sweep (60s IntervalTrigger w/ coalesce + max_instances) + build_proposal_card expired=True branch + chat.update wiring + caller-gate AST + restart-persistence integration test
+- [x] 03-04-PLAN.md — HITL-03 expire_stale_proposals sweep (60s IntervalTrigger w/ coalesce + max_instances) + build_proposal_card expired=True branch + chat.update wiring + caller-gate AST + restart-persistence integration test
 - [x] 03-05-PLAN.md — DASH-04 SessionMiddleware + /login + /approvals + shared _proposal_card partial + Slack edit-size modal (views_open) + dashboard HTMX edit-size + escalate URL button (D-60) + /settings quiet-hours form
 
 **Wave 4** *(blocked on Wave 3)*
@@ -255,7 +255,7 @@ Plans:
 |-------|-----------|----------------|--------|-----------|
 | 1. Foundation & Vertical Slice | v1.0 | 9/9 | Complete ✅ | 2026-06-15 |
 | 2. OrderGuard & Real-Money Alpaca Live | v2.0 | 7/7 | Complete   | 2026-06-17 |
-| 3. Production HITL UX | v2.0 | 4/7 | In Progress|  |
+| 3. Production HITL UX | v2.0 | 5/7 | In Progress|  |
 | 4. Agent Architecture & Cost Bounds | v2.0 | 0/0 | Not started | - |
 | 5. Trust Ladder | v2.0 | 0/0 | Not started | - |
 | 6. Web Dashboard & Multi-User Auth | v3.0 | 0/0 | Not started | - |
