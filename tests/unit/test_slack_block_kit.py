@@ -236,7 +236,9 @@ def test_card_includes_approve_and_reject_buttons_with_decision_id() -> None:
     action_blocks = [b for b in blocks if b.get("type") == "actions"]
     assert len(action_blocks) >= 1
     actions = action_blocks[0]["elements"]
-    by_action_id = {a["action_id"]: a for a in actions}
+    # D-60: the "Open in dashboard" URL button carries no action_id, so key
+    # only the action buttons that round-trip to Slack handlers.
+    by_action_id = {a["action_id"]: a for a in actions if "action_id" in a}
 
     assert "approve_proposal" in by_action_id
     assert by_action_id["approve_proposal"]["value"] == p.decision_id
@@ -247,21 +249,29 @@ def test_card_includes_approve_and_reject_buttons_with_decision_id() -> None:
     assert by_action_id["reject_proposal"]["style"] == "danger"
 
 
-def test_card_includes_edit_size_and_escalate_stub_buttons() -> None:
-    """Edit Size + Escalate buttons exist (P3 stubs) with proper action_ids."""
+def test_card_includes_edit_size_and_dashboard_url_button() -> None:
+    """Edit Size action button + the D-60 'Open in dashboard' URL button exist.
+
+    D-60 replaced the old 'Escalate' stub action button with a URL button that
+    deep-links to the dashboard /approvals/{decision_id} page. URL buttons do
+    NOT round-trip to Slack handlers, so they carry a ``url`` and no ``action_id``.
+    """
     p = _sample_trade_proposal()
     blocks = build_proposal_card(p)
     action_blocks = [b for b in blocks if b.get("type") == "actions"]
     assert len(action_blocks) >= 1
     actions = action_blocks[0]["elements"]
-    by_action_id = {a["action_id"]: a for a in actions}
+    by_action_id = {a["action_id"]: a for a in actions if "action_id" in a}
 
+    # Edit Size remains an action button keyed by decision_id.
     assert "edit_size" in by_action_id
-    assert "escalate_to_dashboard" in by_action_id
-    # All four buttons carry the same decision_id value (handlers re-load the
-    # row from DB; the value just routes the action)
     assert by_action_id["edit_size"]["value"] == p.decision_id
-    assert by_action_id["escalate_to_dashboard"]["value"] == p.decision_id
+
+    # The Escalate stub is gone; a URL button deep-links to the dashboard.
+    url_buttons = [a for a in actions if "url" in a and "action_id" not in a]
+    assert len(url_buttons) == 1, "expected exactly one D-60 dashboard URL button"
+    assert p.decision_id in url_buttons[0]["url"]
+    assert "/approvals/" in url_buttons[0]["url"]
 
 
 def test_card_includes_reg_01_compliance_footer() -> None:
