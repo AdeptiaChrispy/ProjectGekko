@@ -856,6 +856,21 @@ async def on_fill_event(payload: dict[str, Any], *, user_id: str) -> None:
                         payload.get("filled_avg_price", "")
                     ),
                     "ticker": ticker,
+                    # CR-02 fix: strategy_name and side are required by the
+                    # daily P&L aggregator (_aggregate_today_events) for
+                    # per-strategy bucketing and sign-correct SELL P&L.
+                    # Both fields are available from tp_persisted at this
+                    # point; the defensive fallback covers malformed payloads.
+                    "strategy_name": (
+                        tp_persisted.strategy_name
+                        if tp_persisted is not None
+                        else ""
+                    ),
+                    "side": (
+                        str(tp_persisted.side).lower()
+                        if tp_persisted is not None
+                        else payload.get("side", "")
+                    ),
                 }
             )
             await append_event(
