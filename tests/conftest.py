@@ -493,3 +493,162 @@ def clean_settings_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[pytest.Monke
 
     # Cleanup — clear again so the next test starts fresh.
     get_settings.cache_clear()
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 fixtures — Plan 03-01 Task 1 (VALIDATION.md §Wave 0 Requirements)
+#
+# Three new fixtures for the P3 schema substrate:
+#   - quiet_hours_user: User row with quiet_hours_* + timezone columns (D-47/D-49)
+#   - expired_proposal: Proposal with status=PENDING + expires_at in the past (D-50/D-61)
+#   - dedup_row_factory: callable yielding SlackActionDedup rows (D-45)
+#
+# All are function-scoped and opt-in (no autouse).
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture
+async def quiet_hours_user(
+    temp_sqlcipher_db: Any,
+) -> AsyncIterator[Any]:
+    """Seed a User row with quiet_hours_start=time(22,0), quiet_hours_end=time(7,0),
+    timezone='America/New_York' (D-47/D-49 default).
+
+    The new P3 columns (quiet_hours_start, quiet_hours_end, timezone) are added
+    by Alembic 0004 (Plan 03-01 Task 2). Tests that exercise the quiet-hours
+    predicate use this fixture to seed the required user state.
+
+    Yields the AsyncEngine (same as temp_sqlcipher_db) after inserting the user row.
+    The caller reads the row via session.get(User, user_id).
+    """
+    from datetime import time
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from gekko.db.models import User
+
+    _user_id = "test-quiet-user"
+    async with AsyncSession(temp_sqlcipher_db) as session, session.begin():
+        user = User(
+            user_id=_user_id,
+            created_at="2026-06-17T00:00:00+00:00",
+            agreement_acknowledged_at="2026-06-17T00:00:00+00:00",
+            quiet_hours_start=time(22, 0).strftime("%H:%M:%S"),
+            quiet_hours_end=time(7, 0).strftime("%H:%M:%S"),
+            timezone="America/New_York",
+        )
+        session.add(user)
+    yield temp_sqlcipher_db
+
+
+@pytest_asyncio.fixture
+async def expired_proposal(
+    temp_sqlcipher_db: Any,
+) -> AsyncIterator[Any]:
+    """Seed a Proposal row with status=PENDING and expires_at in the past.
+
+    The ``slack_message_ts`` and ``slack_message_channel`` columns (added by
+    Plan 03-01 Task 2 Alembic 0004) are pre-populated with realistic values
+    so tests that mock chat.update have identifiers to match against.
+
+    Yields the AsyncEngine after inserting the required user + strategy + proposal rows.
+    The caller reads the proposal row via session.get(Proposal, proposal_id).
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from gekko.db.models import Proposal, Strategy, User
+
+    _user_id = "test-expired-user"
+    _strategy_id = "strat-expired-001"
+    _proposal_id = "prop-expired-001"
+    _now = datetime.now(UTC)
+    _past = (_now - timedelta(minutes=1)).isoformat()
+    _created = _now.isoformat()
+
+    async with AsyncSession(temp_sqlcipher_db) as session, session.begin():
+        user = User(
+            user_id=_user_id,
+            created_at=_created,
+            agreement_acknowledged_at=_created,
+        )
+        session.add(user)
+        await session.flush()
+
+        strategy = Strategy(
+            strategy_id=_strategy_id,
+            user_id=_user_id,
+            strategy_name="test-strategy",
+            version=1,
+            payload_json="{}",
+            created_at=_created,
+        )
+        session.add(strategy)
+        await session.flush()
+
+        proposal = Proposal(
+            proposal_id=_proposal_id,
+            user_id=_user_id,
+            strategy_id=_strategy_id,
+            status="PENDING",
+            payload_json="{}",
+            client_order_id=None,
+            broker_order_id=None,
+            created_at=_created,
+            updated_at=_created,
+            account_mode="PAPER",
+            expires_at=_past,
+            slack_message_ts="1234567890.000100",
+            slack_message_channel="D1234567890",
+        )
+        session.add(proposal)
+    yield temp_sqlcipher_db
+
+
+@pytest.fixture
+def dedup_row_factory() -> Any:
+    """Return a callable that builds SlackActionDedup row kwargs.
+
+    The factory accepts kwargs matching the SlackActionDedup columns declared
+    in Plan 03-01 Task 2 (Alembic 0004):
+
+        proposal_id, action_id, actor_slack_user_id, actor_gekko_user_id,
+        source, slack_trigger_id
+
+    Usage::
+
+        row_kwargs = dedup_row_factory(
+            proposal_id="prop-001",
+            action_id="approve_proposal",
+            actor_gekko_user_id="chris",
+            source="slack",
+        )
+        # Pass to session.add(SlackActionDedup(**row_kwargs, inserted_at=..., result=...))
+
+    Note: ``inserted_at`` and ``result`` are not supplied by the factory —
+    the caller fills them (as they are determined by the insert outcome, not
+    the caller's intent).
+    """
+    from datetime import UTC, datetime
+
+    def _factory(
+        proposal_id: str = "prop-001",
+        action_id: str = "approve_proposal",
+        actor_slack_user_id: str | None = None,
+        actor_gekko_user_id: str = "chris",
+        source: str = "slack",
+        slack_trigger_id: str | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "proposal_id": proposal_id,
+            "action_id": action_id,
+            "actor_slack_user_id": actor_slack_user_id,
+            "actor_gekko_user_id": actor_gekko_user_id,
+            "source": source,
+            "slack_trigger_id": slack_trigger_id,
+            "inserted_at": datetime.now(UTC).isoformat(),
+            "result": "first_write",
+        }
+
+    return _factory
