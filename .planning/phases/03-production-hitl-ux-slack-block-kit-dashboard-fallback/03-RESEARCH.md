@@ -1214,7 +1214,7 @@ All 5 open questions surfaced by initial research were resolved during the `/gsd
 | DASH-04 | POST /approvals/{id}/edit-submit with drift ≤ 2% transitions + closes modal | integration | `pytest tests/integration/test_dashboard_edit_size_happy.py -x` | ❌ Wave 0 |
 | DASH-04 | Same proposal-card schema renders in Slack + dashboard (snapshot) | unit | `pytest tests/unit/test_proposal_card_shared_partial.py -x` | ❌ Wave 0 |
 | REPT-01 | Daily P&L cron query aggregates today's fills + rejections | unit | `pytest tests/unit/test_daily_pnl_aggregation.py -x` | ❌ Wave 0 |
-| REPT-01 | Daily P&L digest bypasses user quiet hours | unit | `pytest tests/unit/test_daily_pnl_bypasses_quiet.py -x` | ❌ Wave 0 |
+| REPT-01 | Daily P&L digest respects user quiet hours (routine category per D-48; defers when 16:30 ET falls in window) | unit | `pytest tests/unit/test_daily_pnl_respects_quiet.py -x` | ❌ Wave 0 |
 | REPT-01 | Severity-tier emoji prefix on error DMs | unit | `pytest tests/unit/test_severity_tier_dm.py -x` | ❌ Wave 0 |
 | REPT-01 | Audit: MarketClosed (line 454) + BrokerOrderError (line 654) both DM | unit | `pytest tests/unit/test_executor_error_dms_coverage.py -x` | ❌ Wave 0 |
 | All | AST gate: every `_send_slack_dm` call site classified | unit | `pytest tests/unit/test_quiet_hours_dm_gate.py -x` | ❌ Wave 0 (per Pitfall 9) |
