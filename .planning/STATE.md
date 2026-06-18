@@ -3,19 +3,19 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Safety & Trust
 status: executing
-last_updated: "2026-06-18T12:21:54.510Z"
-last_activity: 2026-06-18 -- Phase 03 planning complete
+last_updated: "2026-06-18T12:43:58.061Z"
+last_activity: 2026-06-18
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 26
-  completed_plans: 23
+  completed_plans: 24
   percent: 67
 ---
 
 # Project State: Project Gekko
 
-**Last updated:** 2026-06-18 (**Phase 3 FULLY EXECUTED — Plan 03-07 (phase-closure walking skeleton) complete.** All 7 Phase-3 plans executed; 7/7 SUMMARY.md files on disk; `uv run pytest tests/integration/test_p3_walking_skeleton.py -x` green (4 tests: happy_path_approve, happy_path_with_edit_size, dashboard_fallback, expiry_chain). `walk_chain()` returns `[]` across all scenarios; `place_order` called exactly once per execution test. Phase 3 is ready for operator manual demo (5 deferred-items rows in `.planning/phases/03-production-hitl-ux-slack-block-kit-dashboard-fallback/deferred-items.md`). See README.md §"Phase 3 — Production HITL UX demo" for the 10-step operator recipe. Next: `/gsd-plan-phase 4` to start Phase 4 (Agent Architecture + Claude SDK hardening + cost ceiling).)
+**Last updated:** 2026-06-18 (**Plan 03-08 complete — CR-01 fail-closed auth fix.** Router-level `Depends(require_session)` applied to all 8 safety-critical dashboard routes; /login and /healthz moved to `public_router` (no auth requirement). Session-derived user_id replaces `settings.gekko_user_id` in all gated handlers. 14-test regression suite (test_dashboard_auth_safety_routes.py) all pass. HITL-06 dual-channel guarantee now holds: the dashboard second channel requires distinct authentication. Gap-closure plans 03-09 and 03-10 remain.)
 
 ## Project Reference
 
@@ -26,9 +26,9 @@ progress:
 ## Current Position
 
 Phase: 03 (production-hitl-ux-slack-block-kit-dashboard-fallback) — EXECUTING
-Plan: 7 of 7
+Plan: 2 of 10
 Status: Ready to execute
-Last activity: 2026-06-18 -- Phase 03 planning complete
+Last activity: 2026-06-18
 
 ## Performance Metrics
 
@@ -66,6 +66,13 @@ Last activity: 2026-06-18 -- Phase 03 planning complete
 | SQLCipher whole-DB encryption + passphrase-on-start | ARCH recommendation chosen over STACK's Fernet+keychain for cross-platform parity (avoids silent failures when service runs without logged-in user session) |
 | Decimal for money math, idempotency via `client_order_id` | Non-negotiable per PITFALLS Pitfall 1 (Knight Capital prevention) |
 | Robinhood Agentic Trading API status check in P1 | Re-validate the official API before committing to browser adapter in P9 (per BROK-R-01 and PITFALLS Pitfall 8) |
+
+### Decisions from Plan 03-08 (added 2026-06-18)
+
+- _Two-router pattern for FastAPI auth exemption._ `public_router = APIRouter()` (no auth) hosts `/login` GET/POST and `/healthz`. `router = APIRouter(dependencies=[Depends(require_session)])` hosts all other dashboard routes. FastAPI's `dependencies=[]` on a per-route decorator is additive (means "no additional deps on this route") not an override of router-level deps — the router-level dependency still fires. The two-router pattern is the correct FastAPI approach for per-route auth exemption.
+- _require_session must be defined before the router it gates._ `APIRouter(dependencies=[Depends(require_session)])` resolves `require_session` at module-load time. File restructured so require_session is declared above the router constructor.
+- _Session-derived user_id replaces settings.gekko_user_id in all gated route handlers._ Every route on the auth-gated router now derives user_id from the authenticated session via `user_id: str = Depends(require_session)`. The only remaining `settings.gekko_user_id` references are inside `require_session` itself (checking identity) and `login_post` (minting the session).
+- _GET / intentionally gated (fail-closed)._ The root redirect route is on the auth-gated router. Unauthenticated callers hitting `/` receive 302 to `/login`. There is no reason to expose `/` publicly.
 
 ### Open Questions Carried Forward
 
