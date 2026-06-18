@@ -526,7 +526,7 @@ async def execute_proposal(proposal_id: str, user_id: str) -> None:
                 await _send_slack_dm(
                     user_id,
                     (
-                        f"Order for `{tp.ticker}` deferred — NYSE not in "
+                        f"⚠️ Order for `{tp.ticker}` deferred — NYSE not in "
                         "regular trading hours. Proposal moved to "
                         "FAILED. (P7 will add scheduled retry.)"
                     ),
@@ -729,7 +729,7 @@ async def execute_proposal(proposal_id: str, user_id: str) -> None:
             await _send_slack_dm(
                 user_id,
                 (
-                    f"Order placement failed for `{tp.ticker}` "
+                    f"❌ Order placement failed for `{tp.ticker}` "
                     f"({proposal_id}): {exc}"
                 ),
             )
