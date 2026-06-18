@@ -44,6 +44,7 @@ import re
 from decimal import Decimal
 from typing import Any
 
+from gekko.logging_config import get_logger
 from gekko.reporter.templates import (
     LIVE_BANNER,
     ORDERGUARD_REJECTION_EXPLAINER,
@@ -53,6 +54,8 @@ from gekko.reporter.templates import (
     UNKNOWN_FIELD_PLACEHOLDER,
 )
 from gekko.schemas.proposal import NoActionProposal, TradeProposal
+
+log = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Block builders — internal helpers
@@ -462,6 +465,71 @@ def build_orderguard_rejection_card(
     ]
 
 
+async def _persist_slack_message_coords(
+    user_id: str,
+    *,
+    proposal_id: str,
+    ts: str | None,
+    channel: str | None,
+) -> None:
+    """Best-effort UPDATE of slack_message_ts + slack_message_channel on the Proposal row.
+
+    Called after ``chat_postMessage`` succeeds. Stores the Slack message coordinates
+    so that Plan 03-04's ``chat.update`` of the expired card has the ts + channel
+    to target (D-53). Failure is non-fatal: the Slack DM already landed, and
+    missing coordinates only degrades the chat.update to DM-only per D-53's fallback.
+
+    :param user_id: Used to locate the per-user SQLCipher DB.
+    :param proposal_id: Proposal row PK to UPDATE.
+    :param ts: Slack message timestamp from ``response["ts"]``. May be None if
+        Slack returned an unexpected response shape.
+    :param channel: Slack channel id from ``response["channel"]``. May be None.
+    """
+    if ts is None and channel is None:
+        log.warning(
+            "post_run_result.persist_ts_skipped",
+            proposal_id=proposal_id,
+            reason="both ts and channel are None",
+        )
+        return
+
+    # Lazy imports — keep module-level footprint minimal.
+    from sqlalchemy import update as sa_update
+
+    from gekko.db.engine import get_async_engine
+    from gekko.db.models import Proposal as ProposalRow
+    from gekko.db.session import make_session_factory
+    from gekko.settings import get_settings
+    from gekko.vault.passphrase import get_passphrase
+
+    try:
+        settings = get_settings()
+        passphrase = get_passphrase()
+        engine = get_async_engine(settings.db_path_for(user_id), passphrase)
+        try:
+            sf = make_session_factory(engine)
+            async with sf() as session, session.begin():
+                await session.execute(
+                    sa_update(ProposalRow)
+                    .where(ProposalRow.proposal_id == proposal_id)
+                    .values(slack_message_ts=ts, slack_message_channel=channel)
+                )
+        finally:
+            await engine.dispose()
+        log.info(
+            "post_run_result.ts_persisted",
+            proposal_id=proposal_id,
+            ts=ts,
+            channel=channel,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "post_run_result.persist_ts_failed",
+            proposal_id=proposal_id,
+            error=str(exc),
+        )
+
+
 async def post_run_result(
     user_id: str,
     result: dict[str, Any],
@@ -508,8 +576,17 @@ async def post_run_result(
             f"{account_mode}: {tp.side.upper()} {tp.qty} {tp.ticker} "
             f"(strategy={tp.strategy_name})"
         )
-        await slack_app.client.chat_postMessage(
+        response = await slack_app.client.chat_postMessage(
             channel=user_id, blocks=blocks, text=fallback
+        )
+        # Persist ts + channel so Plan 03-04's chat.update of the expired card
+        # has the coordinates to target (D-53). Best-effort: failure is logged
+        # but does NOT propagate — the DM has already landed.
+        await _persist_slack_message_coords(
+            user_id,
+            proposal_id=tp.decision_id,
+            ts=response.get("ts") if response else None,
+            channel=response.get("channel") if response else None,
         )
     elif outcome == "propose_no_action":
         na = NoActionProposal.model_validate(payload)
