@@ -143,6 +143,14 @@ def app_with_state(
     app = create_app()
     app.state.engine = temp_sqlcipher_db
     app.state.kill_active = False
+    # Plan 03-08 gated /live-confirm behind require_session. These tests
+    # exercise the confirm route's business logic (idempotency, validation),
+    # not the auth gate (covered by test_dashboard_auth_safety_routes.py), so
+    # override the dependency to a fixed authenticated user — the canonical
+    # FastAPI test idiom, scoped to this per-test app instance (no global state).
+    from gekko.dashboard.routes import require_session
+
+    app.dependency_overrides[require_session] = lambda: "test-user"
     return app
 
 
