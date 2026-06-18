@@ -368,9 +368,14 @@ async def _run_sweep(sf: "AsyncSessionLocal", *, user_id: str) -> int:
                 proposal_id=row.proposal_id,
             )
 
-        # 2. DM the operator — routine category, quiet-hours-aware (D-48).
-        # The expiry DM is NOT a bypass category: it is informational and
-        # should respect quiet hours (category="routine_fill").
+        # 2. DM the operator — proposal expiry is a dropped real-money decision
+        # that requires non-suppressible delivery per D-48 bypass categories.
+        # CR-04 fix: changed from category="routine_fill" (suppressed during quiet
+        # hours) to category="executor_error" (bypass — always reaches the operator
+        # regardless of quiet window). A proposal expiring silently while the operator
+        # sleeps is exactly the class of silent-dropped-trade-decision this project
+        # designates as must-catch. executor_error is in the bypass set defined in
+        # _send_slack_dm_respecting_quiet_hours in executor.py.
         from gekko.execution.executor import _send_slack_dm_respecting_quiet_hours
 
         try:
@@ -378,7 +383,7 @@ async def _run_sweep(sf: "AsyncSessionLocal", *, user_id: str) -> int:
             await _send_slack_dm_respecting_quiet_hours(
                 user_id,
                 dm_text,
-                category="routine_fill",
+                category="executor_error",
             )
         except Exception:  # noqa: BLE001
             log.warning(

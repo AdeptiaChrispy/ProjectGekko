@@ -325,13 +325,16 @@ async def _send_dm_blocks_respecting_quiet_hours(
     blocks: list[dict[str, Any]],
     category: str,
     fallback: str = "",
-) -> None:
+) -> bool:
     """Send a Block Kit DM through the quiet-hours gate (PATTERNS §2e).
 
     Routes through :func:`gekko.execution.executor._send_slack_dm_blocks_respecting_quiet_hours`
     so the identity-split fix (quick task 260612-nlv) and the D-48 quiet-hours
     semantics apply. The ``daily_pnl`` category is ROUTINE — it defers when
     16:30 ET falls within the user's quiet window.
+
+    :returns: ``True`` if the DM was dispatched; ``False`` if suppressed by quiet
+        hours. CR-03: callers use this bool to write an honest audit event.
     """
     _BYPASS_CATEGORIES = frozenset({"kill_active", "executor_error", "first_live_fill"})
 
@@ -340,7 +343,7 @@ async def _send_dm_blocks_respecting_quiet_hours(
 
         # bypass-category: bypass-dispatch — fire directly.
         await _send_slack_dm_blocks(user_id, blocks=blocks, fallback=fallback)
-        return
+        return True
 
     # Routine category — consult the quiet-hours predicate.
     from gekko.approval.quiet_hours import _resolve_quiet_hours
@@ -361,12 +364,13 @@ async def _send_dm_blocks_respecting_quiet_hours(
             user_id=user_id,
             category=category,
         )
-        return
+        return False
 
     # Outside quiet window — send the DM.
     from gekko.execution.executor import _send_slack_dm_blocks
 
     await _send_slack_dm_blocks(user_id, blocks=blocks, fallback=fallback)
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -413,14 +417,19 @@ async def send_daily_pnl_digest(*, user_id: str) -> bool:
         blocks = _build_digest_blocks(data, today_iso)
 
         # ---- Dispatch via quiet-hours-aware wrapper (D-48 routine category). ----
-        await _send_dm_blocks_respecting_quiet_hours(
+        # CR-03 fix: capture the bool return so the audit event can record actual
+        # delivery status instead of always claiming the DM was sent.
+        dispatched = await _send_dm_blocks_respecting_quiet_hours(
             user_id,
             blocks=blocks,
             category="daily_pnl",
             fallback=f"Daily P&L — {today_iso}",
         )
 
-        # ---- Audit event: record that the digest was sent (D-45 / T-03-06-04). ----
+        # ---- Audit event: record actual delivery status (D-45 / T-03-06-04). ----
+        # CR-03: the event is ALWAYS written (suppressed or delivered) so the audit
+        # trail is complete. The delivered/suppressed_by_quiet_hours fields reflect
+        # what actually happened — never silently claim sent when suppressed.
         gross_pnl_str = f"{float(data.gross_pnl_usd):+,.2f}"
         async with sf() as session, session.begin():
             await append_event(
@@ -434,6 +443,8 @@ async def send_daily_pnl_digest(*, user_id: str) -> bool:
                         "gross_pnl": gross_pnl_str,
                         "fills_count": data.fills_count,
                         "errors_count": data.errors_count,
+                        "delivered": dispatched,
+                        "suppressed_by_quiet_hours": not dispatched,
                     }
                 ),
             )
@@ -445,6 +456,7 @@ async def send_daily_pnl_digest(*, user_id: str) -> bool:
             gross_pnl=gross_pnl_str,
             fills_count=data.fills_count,
             errors_count=data.errors_count,
+            delivered=dispatched,
         )
         return True
 
