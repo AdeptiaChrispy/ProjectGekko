@@ -79,14 +79,19 @@ def test_state_transitions_retains_phase1_edges() -> None:
     assert phase1 <= STATE_TRANSITIONS
 
 
-def test_state_transitions_total_count_is_eleven() -> None:
-    """6 Phase-1 + 5 Phase-2 = 11 total edges."""
+def test_state_transitions_total_count_is_twelve() -> None:
+    """6 Phase-1 + 5 Phase-2 + 1 Phase-3 = 12 total edges.
+
+    Phase-3 plan 03-01 added (PENDING, EXPIRED) for the HITL-03 expiry sweep
+    that expires still-PENDING proposals once ``expires_at`` passes.
+    """
     from gekko.approval.proposals import STATE_TRANSITIONS
 
-    assert len(STATE_TRANSITIONS) == 11, (
-        f"Expected 11 edges (6 P1 + 5 P2), got {len(STATE_TRANSITIONS)}: "
+    assert len(STATE_TRANSITIONS) == 12, (
+        f"Expected 12 edges (6 P1 + 5 P2 + 1 P3), got {len(STATE_TRANSITIONS)}: "
         f"{sorted(STATE_TRANSITIONS)}"
     )
+    assert ("PENDING", "EXPIRED") in STATE_TRANSITIONS
 
 
 def test_transition_status_body_unchanged() -> None:

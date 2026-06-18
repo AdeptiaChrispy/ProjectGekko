@@ -78,6 +78,8 @@ async def test_metadata_creates_six_p1_tables(engine: AsyncEngine) -> None:
     Phase-1 baseline: 6 tables (users, strategies, guidance, proposals,
     events, broker_credentials). Phase-2 plan 02-01 Task 4 added
     ``strategy_metadata`` (D-31 / D-32 — live-promotion ladder state).
+    Phase-3 plan 03-01 added ``slack_action_dedup`` (HITL-02 — Slack
+    at-least-once retry idempotency gate).
     """
 
     def _tables(sync_conn: object) -> set[str]:
@@ -95,6 +97,8 @@ async def test_metadata_creates_six_p1_tables(engine: AsyncEngine) -> None:
         "broker_credentials",
         # Phase 2 / plan 02-01 Task 4.
         "strategy_metadata",
+        # Phase 3 / plan 03-01.
+        "slack_action_dedup",
     }
 
 
