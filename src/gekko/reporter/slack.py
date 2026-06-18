@@ -218,6 +218,9 @@ def build_proposal_card(
     *,
     company_name: str | None = None,
     sector: str | None = None,
+    expired: bool = False,
+    expired_at_local: str | None = None,
+    timeout_minutes: int = 30,
 ) -> list[dict[str, Any]]:
     """Render the verbose HITL-01 trade-proposal Block Kit card.
 
@@ -230,6 +233,14 @@ def build_proposal_card(
         card renders ``_unknown_`` so the field row stays in place.
     :param sector: Best-effort sector (e.g., "Technology"). Same
         ``None`` semantics as ``company_name``.
+    :param expired: When ``True``, render the expired-state card per
+        UI-SPEC §Surface 4 (Plan 03-04 Task 2): prepend ``[EXPIRED]`` chip
+        to the header section, remove the actions block, append a context
+        block with the expiry status string.
+    :param expired_at_local: Human-readable expiry time for the context
+        block (e.g. ``"10:00 UTC"``). Only used when ``expired=True``.
+    :param timeout_minutes: Configured timeout for the status line copy
+        (e.g. ``30``). Only used when ``expired=True``.
     :returns: A list of Block Kit block dicts ready to pass to
         ``slack_client.chat_postMessage(blocks=...)``.
     """
@@ -249,6 +260,115 @@ def build_proposal_card(
     rationale_md = _escape_mrkdwn(_truncate_for_slack(proposal.rationale))
     strategy_md = _escape_mrkdwn(proposal.strategy_name)
     decision_id_value = proposal.decision_id
+
+    # ---------------------------------------------------------------------------
+    # Expired branch (Plan 03-04 Task 2 — UI-SPEC §Surface 4 Slack treatment).
+    #
+    # When expired=True:
+    #  - A section block with the [EXPIRED] chip is prepended BEFORE the header
+    #    (serves as the visual "greyed-out" treatment + chip per UI-SPEC).
+    #  - The header block retains the banner + proposal summary but gains no
+    #    chip itself (the section above carries it).
+    #  - All informational blocks (rationale, evidence, alternatives) are
+    #    PRESERVED verbatim so the operator can review what expired.
+    #  - The actions block (Approve / Reject / Edit Size / Open in dashboard)
+    #    is REMOVED entirely — buttons on an expired card must not be clickable.
+    #  - A context block with the D-53 status string is appended in its place.
+    #  - The REG-01 footer context block is preserved.
+    #  - The LIVE banner (P2-locked; PATTERNS §2l) is preserved verbatim.
+    #  - All deterministic status-string constants pass through _escape_mrkdwn
+    #    as defense-in-depth (per P1 D-15), even though they have no
+    #    metacharacters to escape.
+    # ---------------------------------------------------------------------------
+
+    if expired:
+        _exp_at = _escape_mrkdwn(expired_at_local or "unknown time")
+        expired_status_text = (
+            f"⏰ *Proposal expired at {_exp_at}* — "
+            f"not executed (timeout=REJECT after {timeout_minutes} min)."
+        )
+        return [
+            # 0. [EXPIRED] chip section — prepended (UI-SPEC §Surface 4).
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        f"`[EXPIRED]` {_escape_mrkdwn(proposal.ticker)} "
+                        f"{_escape_mrkdwn(side_upper)} "
+                        f"{_escape_mrkdwn(str(proposal.qty))}"
+                    ),
+                },
+            },
+            # 1. Header — colored banner per account_mode (preserved verbatim).
+            {
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": f"{banner} — Trade Proposal",
+                    "emoji": True,
+                },
+            },
+            # 2. Primary fields (preserved verbatim).
+            {
+                "type": "section",
+                "fields": [
+                    {"type": "mrkdwn", "text": f"*Ticker:* {proposal.ticker}"},
+                    {"type": "mrkdwn", "text": f"*Company:* {company_display}"},
+                    {"type": "mrkdwn", "text": f"*Sector:* {sector_display}"},
+                    {"type": "mrkdwn", "text": f"*Side:* {side_upper}"},
+                    {"type": "mrkdwn", "text": f"*Qty:* {proposal.qty}"},
+                    {"type": "mrkdwn", "text": f"*Type:* {price_display}"},
+                    {"type": "mrkdwn", "text": f"*Confidence:* {proposal.confidence}"},
+                    {"type": "mrkdwn", "text": f"*Strategy:* {strategy_md}"},
+                ],
+            },
+            # 3. Rationale (preserved verbatim).
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*Rationale:* {rationale_md}",
+                },
+            },
+            # 4. Evidence (preserved verbatim).
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*Evidence:*\n{evidence_md}",
+                },
+            },
+            # 5. Alternatives (preserved verbatim).
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*Alternatives considered:*\n{alternatives_md}",
+                },
+            },
+            # 6. Expiry status context (REPLACES actions block per UI-SPEC §Surface 4).
+            {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": expired_status_text,
+                    },
+                ],
+            },
+            # 7. REG-01 compliance footer (preserved verbatim).
+            {
+                "type": "context",
+                "elements": [
+                    {"type": "mrkdwn", "text": REG_01_DISCLOSURE},
+                ],
+            },
+        ]
+
+    # ---------------------------------------------------------------------------
+    # Standard (non-expired) card — original code path preserved verbatim.
+    # ---------------------------------------------------------------------------
 
     return [
         # 1. Header — colored banner per account_mode

@@ -1473,12 +1473,22 @@ async def live_confirm_post(
                 ),
             )
 
-        await transition_status(
-            session,
-            proposal_id,
-            from_status="AWAITING_2ND_CHANNEL",
-            to_status="APPROVED_LIVE",
-        )
+        try:
+            await transition_status(
+                session,
+                proposal_id,
+                from_status="AWAITING_2ND_CHANNEL",
+                to_status="APPROVED_LIVE",
+            )
+        except ValueError as exc:
+            # Race condition: sweep or another click resolved the proposal
+            # between the status-check guard above and this transition.
+            # Propagate as an HTTP 409 so the operator's browser shows a
+            # clear message rather than a 500. (Pitfall 9 caller-gate.)
+            raise HTTPException(
+                status_code=409,
+                detail=str(exc),
+            ) from exc
         await append_event(
             session,
             user_id=row.user_id,

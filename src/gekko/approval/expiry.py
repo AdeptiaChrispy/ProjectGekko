@@ -136,7 +136,7 @@ async def _chat_update_expired_card(row: Any) -> None:
     # Build a minimal TradeProposal-like object from the proposal payload_json
     # so build_proposal_card receives a typed object.
     try:
-        from gekko.schemas.proposals import TradeProposal
+        from gekko.schemas.proposal import TradeProposal
 
         tp = TradeProposal.model_validate_json(row.payload_json)
     except Exception:  # noqa: BLE001
@@ -189,7 +189,7 @@ def _format_expiry_dm(
     :param strategy_name: Human-readable strategy name.
     """
     try:
-        from gekko.schemas.proposals import TradeProposal
+        from gekko.schemas.proposal import TradeProposal
 
         tp = TradeProposal.model_validate_json(row.payload_json)
         ticker = tp.ticker
