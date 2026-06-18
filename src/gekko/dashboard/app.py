@@ -66,7 +66,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from gekko.brokers.stream import AlpacaFillStream
     from gekko.db.engine import get_async_engine, get_sync_engine
     from gekko.execution.executor import on_fill_event
-    from gekko.scheduler.jobs import build_scheduler, register_expire_stale_sweep
+    from gekko.scheduler.jobs import (
+        build_scheduler,
+        register_daily_pnl_cron,
+        register_expire_stale_sweep,
+    )
     from gekko.vault.passphrase import get_passphrase
 
     # gekko.slack.interactivity registers @slack_app.action handlers at
@@ -140,6 +144,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 2a. Register the 60-second stale-proposal expiry sweep (HITL-03 / Plan 03-04).
     # Placed AFTER scheduler.start() so replace_existing=True can check the jobstore.
     register_expire_stale_sweep(app.state.scheduler, user_id=user_id)
+
+    # 2b. Register the daily P&L cron (REPT-01 / Plan 03-06 Task 2).
+    # Placed AFTER register_expire_stale_sweep — both registrars use the SAME
+    # P1 scheduler instance (PATTERNS §2f warning). CronTrigger 16:30 ET; the
+    # handler applies the D-59 NYSE schedule gate internally.
+    register_daily_pnl_cron(app.state.scheduler, user_id=user_id)
 
     # 3. AlpacaFillStream — wires the executor's on_fill_event callback.
     async def _on_fill(payload: dict) -> None:

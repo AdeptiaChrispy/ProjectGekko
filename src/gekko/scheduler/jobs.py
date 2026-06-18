@@ -203,6 +203,53 @@ def register_expire_stale_sweep(
     return job_id
 
 
+def register_daily_pnl_cron(
+    scheduler: AsyncIOScheduler,
+    *,
+    user_id: str,
+) -> str:
+    """Register (or replace) the 16:30 ET daily P&L cron job — Plan 03-06 Task 2.
+
+    :param scheduler: A running :class:`AsyncIOScheduler` built via
+        :func:`build_scheduler`. MUST be started (``scheduler.start()``
+        called) before this registrar is invoked so ``replace_existing=True``
+        checks the jobstore (not the pending-job list).
+    :param user_id: Owner of the proposals to summarise.
+
+    :returns: The deterministic job id ``f"daily-pnl-{user_id}"``.
+
+    **Schedule:** ``CronTrigger(hour=16, minute=30, timezone=ZoneInfo("America/New_York"))``
+    — fires every day at 16:30 America/New_York. The handler itself applies the D-59
+    NYSE schedule gate and returns early on weekends / holidays.
+
+    **Restart-safe knobs** (per RESEARCH §HITL-03 / PATTERNS §2f):
+
+    * ``coalesce=True`` — piled-up missed fires collapse to one catch-up run.
+    * ``max_instances=1`` — never overlap with self.
+
+    The job references ``send_daily_pnl_digest`` via module:fn string so
+    APScheduler's ``SQLAlchemyJobStore`` can safely pickle it across restarts
+    (bound-function-ref pickling is fragile across refactors — Plan 01-09 lock).
+    """
+    job_id = f"daily-pnl-{user_id}"
+
+    scheduler.add_job(
+        "gekko.reporter.daily_pnl:send_daily_pnl_digest",
+        CronTrigger(hour=16, minute=30, timezone=ZoneInfo("America/New_York")),
+        kwargs={"user_id": user_id},
+        id=job_id,
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    log.info(
+        "scheduler.daily_pnl_registered",
+        job_id=job_id,
+        user_id=user_id,
+    )
+    return job_id
+
+
 def unschedule_strategy(
     scheduler: AsyncIOScheduler,
     *,
@@ -232,6 +279,7 @@ def unschedule_strategy(
 
 __all__: tuple[str, ...] = (
     "build_scheduler",
+    "register_daily_pnl_cron",
     "register_expire_stale_sweep",
     "schedule_strategy_daily",
     "unschedule_strategy",

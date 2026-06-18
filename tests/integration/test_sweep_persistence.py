@@ -18,7 +18,11 @@ from pathlib import Path
 import pytest
 
 from gekko.db.engine import get_sync_engine
-from gekko.scheduler.jobs import build_scheduler, register_expire_stale_sweep
+from gekko.scheduler.jobs import (
+    build_scheduler,
+    register_daily_pnl_cron,
+    register_expire_stale_sweep,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -170,3 +174,68 @@ async def test_sweep_job_uses_module_fn_string_ref(tmp_path: Path) -> None:
             scheduler.shutdown(wait=False)
     finally:
         engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# (f) daily_pnl cron job — added in Plan 03-06 Task 2
+# ---------------------------------------------------------------------------
+
+
+async def test_daily_pnl_cron_job_registered(tmp_path: Path) -> None:
+    """register_daily_pnl_cron adds the daily P&L cron job to the scheduler."""
+    db = _make_db_path(tmp_path, "daily_pnl_persist.db")
+    engine = get_sync_engine(db, _PASSPHRASE)
+    try:
+        scheduler = build_scheduler(engine)
+        scheduler.start(paused=True)
+        try:
+            job_id = register_daily_pnl_cron(scheduler, user_id=_USER_ID)
+            assert job_id == f"daily-pnl-{_USER_ID}"
+
+            job = scheduler.get_job(job_id)
+            assert job is not None, f"Job {job_id!r} not found after registration"
+            assert job.coalesce is True
+            assert job.max_instances == 1
+
+            # Module:fn string ref resolves to send_daily_pnl_digest.
+            from gekko.reporter.daily_pnl import send_daily_pnl_digest
+
+            assert job.func is send_daily_pnl_digest, (
+                f"Job func should be send_daily_pnl_digest, got {job.func}"
+            )
+        finally:
+            scheduler.shutdown(wait=False)
+    finally:
+        engine.dispose()
+
+
+async def test_daily_pnl_cron_persists_across_restart(tmp_path: Path) -> None:
+    """daily_pnl cron job persists in jobstore across scheduler restart."""
+    db = _make_db_path(tmp_path, "daily_pnl_restart.db")
+
+    # Process A: register, start paused, shutdown.
+    engine1 = get_sync_engine(db, _PASSPHRASE)
+    try:
+        scheduler1 = build_scheduler(engine1)
+        scheduler1.start(paused=True)
+        try:
+            job_id = register_daily_pnl_cron(scheduler1, user_id=_USER_ID)
+        finally:
+            scheduler1.shutdown(wait=False)
+    finally:
+        engine1.dispose()
+
+    # Process B: fresh engine over SAME DB — job must survive.
+    engine2 = get_sync_engine(db, _PASSPHRASE)
+    try:
+        scheduler2 = build_scheduler(engine2)
+        scheduler2.start(paused=True)
+        try:
+            job_after_restart = scheduler2.get_job(job_id)
+            assert job_after_restart is not None, (
+                f"Daily P&L cron job {job_id!r} not found after restart"
+            )
+        finally:
+            scheduler2.shutdown(wait=False)
+    finally:
+        engine2.dispose()
