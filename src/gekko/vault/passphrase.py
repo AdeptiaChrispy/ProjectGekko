@@ -117,6 +117,23 @@ def get_passphrase() -> str:
     return _passphrase
 
 
+def verify_passphrase(candidate: str) -> bool:
+    """Return True iff ``candidate`` matches the cached passphrase.
+
+    Used by the dashboard ``POST /login`` handler (D-57). Compares the
+    submitted passphrase against the in-memory cache without exposing the
+    cached value in logs or exceptions.
+
+    :param candidate: The operator-submitted passphrase from the login form.
+    :returns: True if ``candidate == _passphrase``, False otherwise.
+    :raises RuntimeError: When no passphrase has been cached yet (same as
+        :func:`get_passphrase`). The operator must have run ``gekko serve``
+        which prompts and caches the passphrase before routes can fire.
+    """
+    cached = get_passphrase()  # raises RuntimeError if not set
+    return candidate == cached
+
+
 def clear() -> None:
     """Forget the cached passphrase. Test-only helper."""
     global _passphrase
@@ -128,4 +145,5 @@ __all__: tuple[str, ...] = (
     "get_passphrase",
     "prompt_passphrase",
     "set_passphrase",
+    "verify_passphrase",
 )

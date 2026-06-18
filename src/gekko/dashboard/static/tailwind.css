@@ -302,3 +302,163 @@ button:disabled:hover, .btn-disabled:hover {
   animation: spin 1s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------------------------------------------------------------------------
+ * Phase 3 — Plan 03-05 — proposal card, expired state, login page,
+ * quiet-hours warning, approvals empty state (UI-SPEC §Color).
+ * APPENDED BELOW the Phase 2 block — DO NOT modify existing rules above.
+ * ---------------------------------------------------------------------------*/
+
+/* Proposal card (shared partial — dashboard render-context) */
+.proposal-card {
+  background-color: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 24px;
+  margin-bottom: 16px;
+}
+.proposal-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.proposal-card-ticker {
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+.proposal-card-rationale {
+  font-size: 16px;
+  line-height: 1.5;
+  color: #1f2937;
+  margin-bottom: 16px;
+}
+.proposal-card-evidence {
+  font-size: 14px;
+  line-height: 1.4;
+  color: #4b5563;
+  margin-bottom: 16px;
+}
+.proposal-card-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.proposal-card-actions > button,
+.proposal-card-actions > a {
+  min-height: 44px;
+  min-width: 80px;
+}
+
+/* Expired-state overlay */
+.proposal-card.expired .proposal-card-rationale,
+.proposal-card.expired .proposal-card-evidence,
+.proposal-card.expired .proposal-card-ticker {
+  opacity: 0.4;
+}
+.proposal-card.expired .proposal-card-actions {
+  display: none;
+}
+.proposal-card-expired-status {
+  font-size: 14px;
+  font-weight: 400;
+  font-style: italic;
+  color: #4b5563;
+  margin-top: 8px;
+}
+
+/* Expired chip — neutral gray (NOT red — expiry is not danger) */
+.chip-expired {
+  display: inline-block;
+  background-color: #e5e7eb;
+  color: #4b5563;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Awaiting-2nd-channel chip — yellow caution family */
+.chip-awaiting {
+  display: inline-block;
+  background-color: #fef3c7;
+  color: #92400e;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Login page */
+.login-page {
+  max-width: 400px;
+  margin: 64px auto 0;
+  padding: 24px;
+}
+.login-hero {
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.2;
+  margin-bottom: 8px;
+  text-align: center;
+}
+.login-subtitle {
+  font-size: 14px;
+  font-weight: 400;
+  color: #4b5563;
+  text-align: center;
+  margin-bottom: 32px;
+}
+.login-form { display: flex; flex-direction: column; gap: 16px; }
+.login-input {
+  height: 40px;
+  padding: 10px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: inherit;
+}
+.login-input:focus { outline: 2px solid #2563eb; outline-offset: 0; border-color: #2563eb; }
+.login-error {
+  background-color: #fee2e2;
+  color: #991b1b;
+  padding: 12px 16px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 600;
+  border-left: 4px solid #dc2626;
+}
+.login-footer {
+  font-size: 12px;
+  color: #6b7280;
+  text-align: center;
+  margin-top: 32px;
+}
+
+/* Quiet-hours warning (per-strategy form override-narrower-than-user case) */
+.quiet-hours-warning {
+  background-color: #fef3c7;
+  color: #92400e;
+  border-left: 4px solid #f59e0b;
+  padding: 12px 16px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  margin: 16px 0;
+}
+
+/* Empty state for /approvals when no PENDING proposals */
+.empty-state {
+  padding: 48px 24px;
+  text-align: center;
+  color: #4b5563;
+  font-size: 16px;
+  line-height: 1.5;
+}
+.empty-state-glyph { font-size: 32px; margin-bottom: 8px; }

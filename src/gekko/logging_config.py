@@ -86,6 +86,11 @@ _REDACT_KEYS: frozenset[str] = frozenset(
         "slack_bot_token",
         "slack_signing_secret",
         "finnhub_api_key",
+        # Phase 3 — Plan 03-05: dashboard session auth (T-03-05-04 / T-03-05-05)
+        # Prevent accidental logging of the SQLCipher passphrase from /login form
+        # and session cookie values from request headers / middleware state.
+        "session",
+        "gekko_session",
     }
 )
 

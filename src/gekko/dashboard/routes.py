@@ -29,22 +29,177 @@ import asyncio
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from typing import Annotated
 from uuid import uuid4
 
-from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import desc, func, select
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from gekko.config import get_settings
+from gekko.db.engine import get_async_engine
 from gekko.db.models import Strategy as StrategyRow
-from gekko.db.session import make_session_factory
+from gekko.db.session import AsyncSessionLocal, make_session_factory
 from gekko.schemas.strategy import HardCaps, Strategy, next_version
+from gekko.vault.passphrase import get_passphrase as _get_passphrase
 
 router = APIRouter()
 templates = Jinja2Templates(
     directory=str(Path(__file__).parent / "templates")
 )
+
+
+# ---------------------------------------------------------------------------
+# Session factory accessor — test seam (mirrors slack_handler.py pattern)
+# ---------------------------------------------------------------------------
+
+
+def _get_session_factory(
+    user_id: str,
+) -> tuple[AsyncSessionLocal, AsyncEngine | None]:
+    """Build a session factory + owning engine for ``user_id``.
+
+    Tests monkeypatch this to avoid opening a real SQLCipher DB.
+    """
+    settings = get_settings()
+    engine = get_async_engine(
+        settings.db_path_for(user_id), _get_passphrase()
+    )
+    return make_session_factory(engine), engine
+
+
+# ---------------------------------------------------------------------------
+# Auth dependency — require_session (D-57)
+# ---------------------------------------------------------------------------
+
+
+async def require_session(request: Request) -> str:
+    """Return the gekko_user_id bound to the current session.
+
+    Raises HTTP 302 redirect to /login if no valid session cookie is present.
+    Per PATTERNS §2k (D-57 auth contract).
+    """
+    settings = get_settings()
+    sess_user_id = request.session.get("gekko_user_id")
+    authenticated = request.session.get("authenticated")
+    if (
+        not sess_user_id
+        or not authenticated
+        or sess_user_id != settings.gekko_user_id
+    ):
+        raise HTTPException(
+            status_code=302,
+            headers={"Location": f"/login?next={request.url.path}"},
+        )
+    return sess_user_id
+
+
+# ---------------------------------------------------------------------------
+# Login routes (D-57 / D-58)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/login", response_class=HTMLResponse)
+async def login_get(request: Request) -> HTMLResponse:
+    """GET /login — render the passphrase form."""
+    next_url = request.query_params.get("next", "/approvals")
+    return templates.TemplateResponse(
+        "login.html.j2",
+        {"request": request, "next_url": next_url, "error": False},
+    )
+
+
+@router.post("/login", response_class=HTMLResponse)
+async def login_post(
+    request: Request,
+    passphrase: str = Form(...),
+    next: str = Form("/approvals"),
+) -> HTMLResponse:
+    """POST /login — validate passphrase; mint session cookie on success.
+
+    T-03-05-02 open-redirect defense: `next` must start with `/` and not
+    contain `://`. Defaults to `/approvals` on validation failure.
+    """
+    from gekko.vault.passphrase import set_passphrase, verify_passphrase
+
+    # Sanitize redirect target against open-redirect (T-03-05-02)
+    safe_next = next if (next.startswith("/") and "://" not in next) else "/approvals"
+
+    # Validate passphrase against in-memory cache
+    try:
+        ok = verify_passphrase(passphrase)
+    except RuntimeError:
+        # Passphrase not cached yet (server not fully initialized)
+        ok = False
+
+    if not ok:
+        return templates.TemplateResponse(
+            "login.html.j2",
+            {"request": request, "next_url": safe_next, "error": True},
+            status_code=200,
+        )
+
+    settings = get_settings()
+    # Ensure passphrase is in vault for future DB opens
+    set_passphrase(passphrase)
+
+    # Mint session
+    request.session["gekko_user_id"] = settings.gekko_user_id
+    request.session["authenticated"] = True
+
+    return RedirectResponse(url=safe_next, status_code=303)
+
+
+# ---------------------------------------------------------------------------
+# GET /approvals — PENDING proposals index (D-55, DASH-04)
+# Populated in Task 2 with full DB query + template render.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/approvals", response_class=HTMLResponse)
+async def approvals_index(
+    request: Request,
+    user_id: str = Depends(require_session),
+) -> HTMLResponse:
+    """GET /approvals — list PENDING/AWAITING_2ND_CHANNEL/EXPIRED proposals.
+
+    Full implementation in Task 2. The route is declared here so Task 1's
+    auth tests (test cases d + e in test_dashboard_login.py) can verify
+    that require_session gates the route correctly.
+    """
+    from gekko.db.models import Proposal as ProposalRow
+
+    sf, engine = _get_session_factory(user_id)
+    proposals = []
+    try:
+        async with sf() as session:
+            result = await session.execute(
+                select(ProposalRow).where(
+                    ProposalRow.user_id == user_id,
+                    ProposalRow.status.in_(
+                        ["PENDING", "AWAITING_2ND_CHANNEL", "EXPIRED"]
+                    ),
+                )
+            )
+            proposals = result.scalars().all()
+    finally:
+        if engine is not None:
+            await engine.dispose()
+
+    # Render the approvals_index template (created in Task 2).
+    # Returns a minimal HTML page if the template doesn't exist yet.
+    try:
+        return templates.TemplateResponse(
+            "approvals_index.html.j2",
+            {"request": request, "proposals": proposals, "user_id": user_id},
+        )
+    except Exception:
+        # Fallback until template is created in Task 2
+        return HTMLResponse(
+            "<html><body><h1>Approvals</h1><p>No proposals.</p></body></html>"
+        )
 
 
 @router.get("/healthz")

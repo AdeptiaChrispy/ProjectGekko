@@ -34,6 +34,7 @@ duplicate scheduler fires + fill-stream connections.
 
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncIterator
@@ -41,6 +42,7 @@ from typing import TYPE_CHECKING, Any, AsyncIterator
 from fastapi import FastAPI, Request
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.sessions import SessionMiddleware
 
 from gekko.config import get_settings
 from gekko.dashboard.routes import router
@@ -212,6 +214,23 @@ def create_app() -> FastAPI:
     """
     app = FastAPI(title="Gekko", lifespan=lifespan)
     app.include_router(router)
+
+    # D-57 / D-58 — SessionMiddleware for /login passphrase-cookie auth.
+    # Registered via add_middleware BEFORE the @app.middleware("http") decorator
+    # below. Per Starlette's reverse-execution rule, add_middleware inserts
+    # to the OUTERMOST position (runs first on request ingress, last on
+    # response egress) so `request.session` is available to every inner
+    # middleware and route handler.
+    # D-58: ephemeral per-restart secret via os.urandom(32).hex() so a
+    # leaked cookie from one server run is dead after restart.
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=os.urandom(32).hex(),
+        max_age=8 * 3600,  # 8-hour idle expiry per D-57
+        https_only=False,  # HTTP-on-localhost OK per D-57
+        same_site="strict",  # SameSite=Strict per D-57
+        session_cookie="gekko_session",
+    )
 
     # Static (HTMX + Tailwind subset).
     static_dir = Path(__file__).parent / "static"

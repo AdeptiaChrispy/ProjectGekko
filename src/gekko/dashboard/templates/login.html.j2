@@ -1,0 +1,38 @@
+{% extends "base.html.j2" %}
+
+{% block title %}Sign in — Gekko{% endblock %}
+
+{% block content %}
+{# UI-SPEC §Surface 3 — login page contract (D-57 / D-58).
+   No inline <script> per CSP `script-src 'self'`.
+   autocomplete="off" on both form and input — this is the master key,
+   not a normal account password. #}
+<div class="login-page">
+  <h1 class="login-hero">🤖 Sign in to Gekko</h1>
+  <p class="login-subtitle">Enter your SQLCipher passphrase to unlock the dashboard.</p>
+
+  {% if error %}
+  <div class="login-error" role="alert" aria-live="assertive">
+    Incorrect passphrase. Try again.
+  </div>
+  {% endif %}
+
+  <form class="login-form" method="POST" action="/login" autocomplete="off">
+    <input type="hidden" name="next" value="{{ next_url or '/approvals' }}">
+    <label for="passphrase">Passphrase</label>
+    <input type="password"
+           id="passphrase"
+           name="passphrase"
+           class="login-input"
+           autocomplete="off"
+           required
+           autofocus
+           aria-describedby="passphrase-help">
+    <button type="submit" class="btn-primary">Sign in</button>
+  </form>
+
+  <p class="login-footer" id="passphrase-help">
+    Localhost only &middot; single-operator deployment &middot; session expires in 8 hours.
+  </p>
+</div>
+{% endblock %}

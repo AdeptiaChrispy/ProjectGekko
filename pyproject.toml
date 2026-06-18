@@ -39,6 +39,10 @@ dependencies = [
     "typer>=0.12",
     "aiosqlite>=0.22.1",
     "tenacity>=9.1,<10",
+    # Plan 03-05: SessionMiddleware cookie signing (P3 HITL dashboard auth — D-57/D-58).
+    # itsdangerous is starlette's session-cookie signing library; listed as
+    # "P1-audited" in the 03-05 threat model (T-03-05-SC).
+    "itsdangerous>=2.1",
 ]
 
 [project.optional-dependencies]
