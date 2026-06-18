@@ -30,6 +30,7 @@ from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -119,13 +120,27 @@ async def login_post(
 ) -> HTMLResponse:
     """POST /login — validate passphrase; mint session cookie on success.
 
-    T-03-05-02 open-redirect defense: `next` must start with `/` and not
-    contain `://`. Defaults to `/approvals` on validation failure.
+    T-03-05-02 open-redirect defense: `next` must be a same-origin absolute
+    path (no scheme, no netloc, single leading `/`). Defaults to `/approvals`
+    on validation failure.
     """
     from gekko.vault.passphrase import set_passphrase, verify_passphrase
 
-    # Sanitize redirect target against open-redirect (T-03-05-02)
-    safe_next = next if (next.startswith("/") and "://" not in next) else "/approvals"
+    # Sanitize redirect target against open-redirect (T-03-05-02).
+    # Require a same-origin absolute path: no scheme, no netloc, and a path
+    # starting with a single "/" — this rejects protocol-relative ("//evil.com")
+    # and backslash ("/\evil.com") variants that a bare startswith("/") allows.
+    _parsed = urlparse(next)
+    safe_next = (
+        next
+        if (
+            not _parsed.scheme
+            and not _parsed.netloc
+            and next.startswith("/")
+            and not next.startswith(("//", "/\\"))
+        )
+        else "/approvals"
+    )
 
     # Validate passphrase against in-memory cache
     try:
