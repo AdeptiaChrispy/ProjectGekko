@@ -50,6 +50,11 @@ _GUIDANCE_SCOPES: tuple[str, ...] = ("strategy", "global")
 #: holding state between Slack approve and dashboard confirm for the first
 #: live trade per HITL-06; ``APPROVED_LIVE`` is the post-dual-channel
 #: approved state that executes on the live broker per BLOCKER #1.
+#:
+#: Phase-3 addition (plan 03-01 Task 2): ``EXPIRED`` is the terminal state
+#: reached by the sweep when ``expires_at`` has passed without HITL approval
+#: (A6 / D-50). The state-machine edge (PENDING, EXPIRED) is added by
+#: plan 03-01 Task 3 in ``src/gekko/approval/proposals.py``.
 _PROPOSAL_STATUSES: tuple[str, ...] = (
     "PENDING",
     "APPROVED",
@@ -59,6 +64,7 @@ _PROPOSAL_STATUSES: tuple[str, ...] = (
     "FAILED",
     "AWAITING_2ND_CHANNEL",
     "APPROVED_LIVE",
+    "EXPIRED",
 )
 
 #: Allowed values for ``Proposal.account_mode`` (BLOCKER #5 / plan 02-01 Task 4).
@@ -78,6 +84,13 @@ _BROKER_CREDENTIAL_KINDS: tuple[str, ...] = ("alpaca_paper", "alpaca_live")
 #: "filter on event_type" forensic story. The Alembic migration that
 #: drops + recreates ``ck_event_type`` to accept these values is
 #: tracked separately.
+#:
+#: Phase-3 additions (plan 03-01 Task 2): four new event types for the
+#: P3 HITL UX feature set:
+#:   - ``expiration``   — sweep fired; proposal timed out without HITL approval
+#:   - ``dedup_click``  — duplicate Slack/dashboard action detected + logged
+#:   - ``edit_size``    — operator edited the proposed quantity before approval
+#:   - ``daily_pnl``    — daily P&L digest sent to the operator
 _EVENT_TYPES: tuple[str, ...] = (
     "decision",
     "proposal",
@@ -92,6 +105,10 @@ _EVENT_TYPES: tuple[str, ...] = (
     "live_mode_demoted",
     "first_live_trade_confirmed",
     "error",
+    "expiration",
+    "dedup_click",
+    "edit_size",
+    "daily_pnl",
 )
 
 
@@ -160,6 +177,19 @@ class User(Base):
     kill_active_reason: Mapped[str | None] = mapped_column(
         String, nullable=True
     )
+    # Phase-3 / D-47 + D-49 quiet-hours + timezone columns.
+    #
+    # ``quiet_hours_start`` and ``quiet_hours_end`` store HH:MM:SS strings
+    # (e.g. "22:00:00" for 10 PM). NULL means quiet hours are disabled.
+    # ``timezone`` is an IANA timezone name (e.g. "America/New_York");
+    # NULL defaults to "America/New_York" at read time per D-49.
+    #
+    # Per D-47: Strategy.timezone is NOT added — the strategy inherits the
+    # user's timezone. Strategy.quiet_hours_* CAN override the user's window
+    # (the resolver picks the narrower of the two per D-47 precedence rules).
+    quiet_hours_start: Mapped[str | None] = mapped_column(String, nullable=True)
+    quiet_hours_end: Mapped[str | None] = mapped_column(String, nullable=True)
+    timezone: Mapped[str | None] = mapped_column(String, nullable=True)
 
     def __repr__(self) -> str:
         return (
@@ -262,6 +292,87 @@ class StrategyMetadata(Base):
 
 
 # ---------------------------------------------------------------------------
+# slack_action_dedup (Phase 3 — plan 03-01 Task 2 / D-45)
+# ---------------------------------------------------------------------------
+
+
+class SlackActionDedup(Base):
+    """Dedup gate for approve / reject / edit-size actions (D-45).
+
+    Records every claimed (proposal_id, action_id, actor) tuple so the
+    approval handlers can distinguish first-write from duplicate clicks
+    across Slack, Dashboard, and CLI surfaces.
+
+    Two UNIQUE indexes enforce at-most-once semantics:
+
+    * ``uq_dedup_slack`` on ``(proposal_id, action_id, actor_slack_user_id)``
+      — prevents the same Slack user from double-approving or double-rejecting
+      the same proposal (D-42).
+    * ``uq_dedup_dashboard`` on ``(proposal_id, action_id, actor_gekko_user_id,
+      source)`` — prevents the same dashboard/CLI session from double-approving
+      across the cross-surface gate (D-56).
+
+    ``result`` records whether this write was a first-write or a duplicate
+    (detected via ``IntegrityError`` + rollback + re-query per PATTERNS §2b).
+    ``slack_trigger_id`` is excluded from ``__repr__`` per T-03-01-03 (mildly
+    sensitive — used for retry-debugging only; structlog ``_REDACT_KEYS`` also
+    covers ``trigger_id`` substring as a safety net).
+    """
+
+    __tablename__ = "slack_action_dedup"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    proposal_id: Mapped[str] = mapped_column(
+        String, ForeignKey("proposals.proposal_id"), nullable=False
+    )
+    action_id: Mapped[str] = mapped_column(String, nullable=False)
+    actor_slack_user_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    actor_gekko_user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.user_id"), nullable=False
+    )
+    source: Mapped[str] = mapped_column(String, nullable=False)
+    slack_trigger_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    inserted_at: Mapped[str] = mapped_column(String, nullable=False)
+    result: Mapped[str] = mapped_column(String, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            _in_check("source", ("slack", "dashboard", "cli")),
+            name="ck_dedup_source",
+        ),
+        CheckConstraint(
+            _in_check("result", ("first_write", "duplicate")),
+            name="ck_dedup_result",
+        ),
+        Index(
+            "uq_dedup_slack",
+            "proposal_id",
+            "action_id",
+            "actor_slack_user_id",
+            unique=True,
+        ),
+        Index(
+            "uq_dedup_dashboard",
+            "proposal_id",
+            "action_id",
+            "actor_gekko_user_id",
+            "source",
+            unique=True,
+        ),
+    )
+
+    def __repr__(self) -> str:
+        # slack_trigger_id excluded per T-03-01-03 (mildly sensitive).
+        return (
+            f"SlackActionDedup(id={self.id!r}, "
+            f"proposal_id={self.proposal_id!r}, "
+            f"action_id={self.action_id!r}, "
+            f"source={self.source!r}, "
+            f"result={self.result!r})"
+        )
+
+
+# ---------------------------------------------------------------------------
 # guidance (RES-08, STRAT-03)
 # ---------------------------------------------------------------------------
 
@@ -350,6 +461,17 @@ class Proposal(Base):
     account_mode: Mapped[str] = mapped_column(
         String, nullable=False, server_default=text("'PAPER'")
     )
+    # Phase-3 / D-51 + D-61: expires_at is stamped by ProposalWriter at
+    # insertion time using strategy.proposal_timeout_minutes or the
+    # PROPOSAL_TIMEOUT_DEFAULT_MIN=30 fallback (Plan 03-01 Task 3).
+    # NULL is the grandfathered value for pre-migration rows — the sweep
+    # treats NULL as "never expires" per D-61.
+    expires_at: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Phase-3 / D-53: captured by post_run_result() after chat_postMessage
+    # succeeds so the sweep's chat.update of the expired card has the
+    # ts+channel to target (Plan 03-01 Task 4 / BLOCKER #1 closure).
+    slack_message_ts: Mapped[str | None] = mapped_column(String, nullable=True)
+    slack_message_channel: Mapped[str | None] = mapped_column(String, nullable=True)
 
     __table_args__ = (
         CheckConstraint(
@@ -495,6 +617,7 @@ __all__: tuple[str, ...] = (
     "User",
     "Strategy",
     "StrategyMetadata",
+    "SlackActionDedup",
     "Guidance",
     "Proposal",
     "Event",

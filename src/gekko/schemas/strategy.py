@@ -60,6 +60,28 @@ class HardCaps(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+import re as _re
+
+_QUIET_HOURS_RE = _re.compile(r"^\d{2}:\d{2}$")
+
+
+def _validate_quiet_hours_format(v: str | None) -> str | None:
+    """Validate ``quiet_hours_start`` / ``quiet_hours_end`` of the form ``"HH:MM"``.
+
+    Returns the input unchanged on success; raises ``ValueError`` if the
+    format doesn't match the ``^\d{2}:\d{2}$`` regex (e.g. "22:00", "07:30").
+    Per D-47: the quiet-hours window is user-level (not strategy-level),
+    but strategies inherit this validator for the optional strategy-level
+    override fields.
+    """
+    if v is None:
+        return v
+    if not _QUIET_HOURS_RE.match(v):
+        msg = f"quiet_hours must be 'HH:MM' (e.g. '22:00'), got: {v!r}"
+        raise ValueError(msg)
+    return v
+
+
 def _validate_schedule_time(v: str | None) -> str | None:
     """Validate ``schedule_time`` of the form ``"HH:MM IANA/Timezone"``.
 
@@ -126,6 +148,17 @@ class Strategy(BaseModel):
     # Provenance flag — STRAT-01 NL chat vs STRAT-02 form authoring.
     created_by_chat: bool = False
     created_at: str
+    # Phase-3 / D-47 optional quiet-hours override fields.
+    # Per D-47: ``Strategy.timezone`` is NOT added — strategies inherit the
+    # user's timezone. Strategy quiet_hours_* can NARROW the user-level
+    # window (resolver picks the narrower of the two per D-47 precedence).
+    quiet_hours_start: str | None = None
+    quiet_hours_end: str | None = None
+    # Phase-3 / D-51 optional proposal timeout override.
+    # Positive int: minutes before an unactioned PENDING proposal expires.
+    # None uses PROPOSAL_TIMEOUT_DEFAULT_MIN=30 (plan 03-01 Task 3).
+    # Zero and negative values are rejected by Field(gt=0).
+    proposal_timeout_minutes: int | None = Field(default=None, gt=0)
 
     @field_validator("watchlist")
     @classmethod
@@ -148,6 +181,11 @@ class Strategy(BaseModel):
     @classmethod
     def _validate_schedule_time(cls, v: str | None) -> str | None:
         return _validate_schedule_time(v)
+
+    @field_validator("quiet_hours_start", "quiet_hours_end")
+    @classmethod
+    def _validate_quiet_hours_format(cls, v: str | None) -> str | None:
+        return _validate_quiet_hours_format(v)
 
 
 # ---------------------------------------------------------------------------
