@@ -61,7 +61,7 @@ References:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
@@ -85,6 +85,13 @@ log = get_logger(__name__)
 #: Default model name attributed to the persisted ``decision`` event.
 #: docs/sdk-shape.md delta #7: prefer the alias.
 _DEFAULT_PROMPT_MODEL: str = "sonnet"
+
+#: Default proposal timeout in minutes per D-51.
+#:
+#: ProposalWriter stamps ``expires_at = datetime.now(UTC) + timedelta(minutes=N)``
+#: where N is ``strategy.proposal_timeout_minutes or PROPOSAL_TIMEOUT_DEFAULT_MIN``.
+#: The sweep (plan 03-03) uses this to expire unactioned PENDING proposals.
+PROPOSAL_TIMEOUT_DEFAULT_MIN: int = 30
 
 
 async def write_proposal(
@@ -300,7 +307,14 @@ async def _write_trade(
         # first caller wrote, not a freshly constructed twin.
         return TradeProposal.model_validate_json(existing_row.payload_json)
 
-    now_iso = datetime.now(UTC).isoformat()
+    now_dt = datetime.now(UTC)
+    now_iso = now_dt.isoformat()
+    # Plan 03-01 Task 3 / D-51: stamp expires_at at insertion time.
+    # The timeout is strategy.proposal_timeout_minutes or the 30-minute
+    # default. ``getattr`` forward-compat: older Strategy rows (payload_json
+    # from Phase 1/2) lack the field, so None is safely handled by ``or``.
+    _timeout_min = getattr(strategy, "proposal_timeout_minutes", None) or PROPOSAL_TIMEOUT_DEFAULT_MIN
+    expires_at = (now_dt + timedelta(minutes=_timeout_min)).isoformat()
     session.add(
         ProposalRow(
             proposal_id=decision_id,
@@ -321,6 +335,8 @@ async def _write_trade(
             # strategies. Closes TOCTOU end-to-end by making the column
             # the authoritative live/paper signal for downstream callers.
             account_mode=account_mode,
+            # Plan 03-01 Task 3 / D-51: server-clock stamp; LLM cannot influence.
+            expires_at=expires_at,
         )
     )
     try:

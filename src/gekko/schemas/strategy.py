@@ -69,7 +69,7 @@ def _validate_quiet_hours_format(v: str | None) -> str | None:
     """Validate ``quiet_hours_start`` / ``quiet_hours_end`` of the form ``"HH:MM"``.
 
     Returns the input unchanged on success; raises ``ValueError`` if the
-    format doesn't match the ``^\d{2}:\d{2}$`` regex (e.g. "22:00", "07:30").
+    format doesn't match the ``^\\d{2}:\\d{2}$`` regex (e.g. "22:00", "07:30").
     Per D-47: the quiet-hours window is user-level (not strategy-level),
     but strategies inherit this validator for the optional strategy-level
     override fields.

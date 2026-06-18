@@ -97,6 +97,12 @@ STATE_TRANSITIONS: frozenset[tuple[str, str]] = frozenset(
         ("AWAITING_2ND_CHANNEL", "REJECTED"),
         ("AWAITING_2ND_CHANNEL", "EXPIRED"),
         ("APPROVED_LIVE", "EXECUTING"),
+        # Phase 3 — Plan 03-01 Task 3: sweep-side expiry edge per D-50.
+        # The sweep (plan 03-03 ``expire_stale_proposals``) calls this edge
+        # when ``proposals.expires_at <= utcnow()``. The idempotent same-state
+        # return at ``transition_status`` lines 139-141 is preserved — a row
+        # already in EXPIRED is a no-op (double-sweep safe).
+        ("PENDING", "EXPIRED"),
     }
 )
 
@@ -237,9 +243,60 @@ async def reject_proposal(
     return row
 
 
+async def expire_proposal(
+    session: AsyncSession,
+    proposal_id: str,
+    *,
+    reason: str,
+    expired_at: str,
+    configured_timeout_minutes: int,
+) -> ProposalRow:
+    """Sweep expiry — PENDING -> EXPIRED + append ``expiration`` audit event.
+
+    Convenience wrapper (mirrors :func:`approve_proposal` / :func:`reject_proposal`)
+    that combines the state-machine transition AND the D-50 audit event in one
+    call. Used by the ``expire_stale_proposals`` sweep (plan 03-03) and the
+    optional dashboard manual-expire path.
+
+    :param session: Async session inside the caller's transaction.
+    :param proposal_id: Row to transition.
+    :param reason: Human-readable reason for expiry (e.g. "timeout").
+    :param expired_at: ISO UTC timestamp when the expiry was processed.
+    :param configured_timeout_minutes: The timeout value at proposal-build time
+        (``strategy.proposal_timeout_minutes or PROPOSAL_TIMEOUT_DEFAULT_MIN``).
+        Included in the audit payload (D-50) so forensic analysis can distinguish
+        "default 30-min window" from "operator-configured window".
+
+    :returns: The updated Proposal row in EXPIRED status.
+    :raises ValueError: When the transition is invalid (e.g. APPROVED -> EXPIRED).
+    """
+    from gekko.audit.canonical import normalize_decimals
+
+    row = await transition_status(
+        session,
+        proposal_id,
+        from_status="PENDING",
+        to_status="EXPIRED",
+    )
+    await append_event(
+        session,
+        user_id=row.user_id,
+        strategy_id=row.strategy_id,
+        event_type="expiration",
+        payload=normalize_decimals({
+            "proposal_id": proposal_id,
+            "reason": reason,
+            "expired_at": expired_at,
+            "configured_timeout_minutes": configured_timeout_minutes,
+        }),
+    )
+    return row
+
+
 __all__: tuple[str, ...] = (
     "STATE_TRANSITIONS",
     "approve_proposal",
+    "expire_proposal",
     "reject_proposal",
     "transition_status",
 )
