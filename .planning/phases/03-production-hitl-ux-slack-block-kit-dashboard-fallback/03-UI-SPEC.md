@@ -1,10 +1,13 @@
 ---
 phase: 3
 slug: production-hitl-ux-slack-block-kit-dashboard-fallback
-status: draft
+status: approved
 shadcn_initialized: false
 preset: none
 created: 2026-06-17
+reviewed_at: 2026-06-17
+reviewed_by: gsd-ui-checker
+review_verdict: APPROVED (6/6 PASS)
 ---
 
 # Phase 3 — UI Design Contract
