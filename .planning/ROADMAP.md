@@ -47,7 +47,7 @@ See `milestones/v1.0-ROADMAP.md` for the full archived snapshot (with detailed p
 ### 🚧 v2.0 Safety & Trust (Planned)
 
 - [x] **Phase 2: OrderGuard & Real-Money Alpaca Live (Safety Floor)** — Non-LLM cap-enforcement layer; first real money flows (still HITL). CONTEXT.md captured 2026-06-11 (commit `3ca0b06`); ready for `/gsd-plan-phase 2`. (completed 2026-06-17)
-- [x] **Phase 3: Production HITL UX (Slack Block Kit + Dashboard Fallback)** — Idempotent approval flow, quiet hours, timeout=REJECT, first-live gate. Carry-forward item from v1.0: executor-error → Slack notification. (completed 2026-06-18)
+- [ ] **Phase 3: Production HITL UX (Slack Block Kit + Dashboard Fallback)** — Idempotent approval flow, quiet hours, timeout=REJECT, first-live gate. Carry-forward item from v1.0: executor-error → Slack notification. All 7 plans executed; verification found gaps (2/5 must-haves) — 4 BLOCKERs in 03-VERIFICATION.md. Run `/gsd-plan-phase 3 --gaps`.
 - [ ] **Phase 4: Agent Architecture & Cost Bounds** — Research/decision separation, prompt-injection defense, two-tier cost ceiling.
 - [ ] **Phase 5: Trust Ladder (Per-Strategy Promotion & Portfolio Caps)** — Propose-only → auto-within-caps; portfolio-level caps; capital scaling rung; anomaly demotion.
 
@@ -255,7 +255,7 @@ Plans:
 |-------|-----------|----------------|--------|-----------|
 | 1. Foundation & Vertical Slice | v1.0 | 9/9 | Complete ✅ | 2026-06-15 |
 | 2. OrderGuard & Real-Money Alpaca Live | v2.0 | 7/7 | Complete   | 2026-06-17 |
-| 3. Production HITL UX | v2.0 | 7/7 | Complete   | 2026-06-18 |
+| 3. Production HITL UX | v2.0 | 7/7 | Gaps found ⚠ | - |
 | 4. Agent Architecture & Cost Bounds | v2.0 | 0/0 | Not started | - |
 | 5. Trust Ladder | v2.0 | 0/0 | Not started | - |
 | 6. Web Dashboard & Multi-User Auth | v3.0 | 0/0 | Not started | - |
