@@ -468,6 +468,30 @@ async def trigger_strategy_run(
         decision_id=decision_id,
     )
 
+    # ---- Quiet-hours gate (HITL-05 / D-46) ----------------------------------
+    # Scheduled cycles (source="schedule") are skipped when the operative
+    # quiet-hours window is active.  Manual invocations (source="manual",
+    # "cli", "slack", "dashboard") bypass unconditionally — the operator's
+    # explicit intent overrides the quiet-hours setting (D-46).
+    if source == "schedule":
+        from gekko.approval.quiet_hours import _resolve_quiet_hours
+
+        _in_window = await _resolve_quiet_hours(
+            user_id, datetime.now(UTC), strategy_name=strategy_name
+        )
+        if _in_window:
+            log.info(
+                "agent.cycle.skipped_quiet_hours",
+                user_id=user_id,
+                strategy_name=strategy_name,
+                source=source,
+            )
+            return {
+                "run_id": run_id,
+                "outcome": "skipped_quiet_hours",
+                "source": source,
+            }
+
     # Determine session factory + engine ownership.
     own_engine = False
     engine = None
