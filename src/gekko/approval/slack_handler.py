@@ -5,8 +5,9 @@ Four ``@app.action(...)`` handlers register here (registration happens in
 
 * :func:`handle_approve` — PENDING -> APPROVED + fire Executor.
 * :func:`handle_reject` — PENDING -> REJECTED. No Executor.
-* :func:`handle_edit_size_stub` — P3-deferred. DMs "coming in Phase 3".
-* :func:`handle_escalate_stub` — P3-deferred. DMs "coming in Phase 3".
+* :func:`handle_edit_size` — P3 (Plan 03-05): opens the Block Kit modal via views.open.
+* :func:`handle_edit_size_view_submission` — P3 view_submission: drift check + transition.
+* :func:`handle_escalate_stub` — Deprecated (D-60). URL button replaces action button.
 
 The Pitfall 3 invariant per RESEARCH §"Slack Bolt + FastAPI adapter
 wiring": ``ack()`` is the FIRST awaited call in every handler. Slack
@@ -36,6 +37,8 @@ Production wiring (Plan 01-09):
 from __future__ import annotations
 
 import asyncio
+import json
+from decimal import Decimal, InvalidOperation
 from typing import Any, Awaitable, Callable
 
 import httpx
@@ -676,24 +679,264 @@ async def _reject_workflow(
 # ---------------------------------------------------------------------------
 
 
-async def handle_edit_size_stub(
+async def handle_edit_size(
     *, ack: _AckFn, body: dict[str, Any], client: Any
 ) -> None:
-    """Edit-size button — deferred to Plan 03 (HITL UX hardening).
+    """Edit-size button — opens Block Kit modal via views.open (D-54, Plan 03-05).
 
-    WR-06 fix: DM routes through the ``_send_slack_dm`` identity-split
-    seam (PATTERNS §10) so this stub follows the same single-chokepoint
-    pattern as every other Slack DM path.
+    Pitfall 3: ack() is the FIRST awaited call — before any DB work.
+    After ack the handler loads the Proposal row + TradeProposal, builds
+    the ref_price, and calls client.views_open with the edit_size_modal.
     """
     await ack()
-    from gekko.execution.executor import _send_slack_dm
+
+    decision_id = body["actions"][0]["value"]
+    trigger_id = body["trigger_id"]
 
     settings = get_settings()
-    await _send_slack_dm(
-        settings.gekko_user_id,
-        "Edit-size is coming in Phase 3. Click Approve or Reject for now.",
+    gekko_user_id = settings.gekko_user_id
+    sf, engine = _get_session_factory(gekko_user_id)
+    try:
+        async with sf() as session:
+            row = (
+                await session.execute(
+                    select(ProposalRow).where(
+                        ProposalRow.proposal_id == decision_id,
+                        ProposalRow.user_id == gekko_user_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                log.warning("slack.edit_size.proposal_not_found", decision_id=decision_id)
+                return
+            # Parse TradeProposal to get qty + pricing
+            from gekko.schemas.proposal import TradeProposal
+            tp = TradeProposal.model_validate_json(row.payload_json)
+    finally:
+        if engine is not None:
+            await engine.dispose()
+
+    # Determine ref_price: limit_price > stop_price > fallback (use target_notional / qty)
+    if tp.limit_price is not None:
+        ref_price = tp.limit_price
+    elif tp.stop_price is not None:
+        ref_price = tp.stop_price
+    elif tp.qty and tp.target_notional_usd:
+        ref_price = tp.target_notional_usd / tp.qty
+    else:
+        ref_price = Decimal("0")
+
+    target = tp.target_notional_usd or Decimal("0")
+    original_qty = tp.qty
+
+    await client.views_open(
+        trigger_id=trigger_id,
+        view={
+            "type": "modal",
+            "callback_id": "edit_size_modal",
+            "private_metadata": json.dumps({
+                "decision_id": decision_id,
+                "ref_price": str(ref_price),
+                "target_notional_usd": str(target),
+                "original_qty": str(original_qty),
+                "ticker": tp.ticker,
+                "side": str(tp.side),
+                "response_url": body.get("response_url"),
+            }),
+            "title": {"type": "plain_text", "text": f"Edit size — {tp.ticker}"},
+            "submit": {"type": "plain_text", "text": "Approve at this size"},
+            "close": {"type": "plain_text", "text": "Cancel"},
+            "blocks": [
+                {
+                    "type": "input",
+                    "block_id": "qty_block",
+                    "label": {"type": "plain_text", "text": "New quantity"},
+                    "element": {
+                        "type": "number_input",
+                        "action_id": "qty_input",
+                        "initial_value": str(original_qty),
+                        "is_decimal_allowed": True,
+                        "min_value": "0",
+                    },
+                },
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": (
+                            f"*Ref price:* ${ref_price}\n"
+                            f"*Target notional:* ${target}\n"
+                            f"*Original qty:* {original_qty} → "
+                            f"*Original notional:* ${original_qty * ref_price}"
+                        ),
+                    },
+                },
+                {
+                    "type": "context",
+                    "elements": [{
+                        "type": "mrkdwn",
+                        "text": "Drift > 2% will be rejected (OrderGuard).",
+                    }],
+                },
+            ],
+        },
     )
-    log.warning("feature.deferred", feature="edit_size", phase="P3")
+
+
+async def handle_edit_size_view_submission(
+    *, ack: _AckFn, body: dict[str, Any], client: Any, view: dict[str, Any]
+) -> None:
+    """view_submission handler for 'edit_size_modal' — D-54 drift check.
+
+    Validates the operator-submitted qty against the 2% drift threshold.
+    On failure: ``response_action='errors'`` re-renders the modal (no state change).
+    On pass: ``ack()`` closes modal + spawns ``_edit_size_submit_workflow``.
+
+    Pitfall 3: ack() is the FIRST call — either with errors dict or empty body.
+    Pitfall 8: response_action='errors' requires BOTH keys: response_action + errors.
+    """
+    from gekko.approval.actions import _drift_check
+
+    meta = json.loads(view["private_metadata"])
+    decision_id = meta["decision_id"]
+    ref_price = Decimal(meta["ref_price"])
+    target_notional = Decimal(meta["target_notional_usd"])
+
+    raw_qty = view["state"]["values"]["qty_block"]["qty_input"]["value"]
+
+    try:
+        new_qty = Decimal(raw_qty)
+    except (InvalidOperation, TypeError):
+        await ack({
+            "response_action": "errors",
+            "errors": {"qty_block": "Please enter a numeric quantity."},
+        })
+        return
+
+    drift_pct = _drift_check(new_qty, ref_price, target_notional)
+
+    if drift_pct > Decimal("0.02"):
+        new_notional = new_qty * ref_price
+        await ack({
+            "response_action": "errors",
+            "errors": {
+                "qty_block": (
+                    f"Drift {drift_pct:.2%} exceeds the 2% safety bound. "
+                    f"Target ${target_notional}; this qty = ${new_notional}. "
+                    "Adjust qty or re-run the strategy."
+                ),
+            },
+        })
+        return
+
+    # Pass: close the modal; do state-machine work in background.
+    await ack()
+    asyncio.create_task(
+        _edit_size_submit_workflow(
+            decision_id=decision_id,
+            new_qty=new_qty,
+            slack_user_id=body["user"]["id"],
+            meta=meta,
+        )
+    )
+
+
+async def _edit_size_submit_workflow(
+    *,
+    decision_id: str,
+    new_qty: Decimal,
+    slack_user_id: str,
+    meta: dict[str, Any],
+) -> None:
+    """Background: dedup + update proposal qty + PENDING -> APPROVED + executor.
+
+    D-54 step (a): dedup INSERT with action_id='edit_size', source='slack'.
+    D-54 step (c): write edit_size audit event, update proposal.qty, transition,
+    dispatch executor. The Knight Capital defense is preserved — never calls
+    place_order directly (T-03-05-07 / D-27 invariant).
+    """
+    from gekko.audit.canonical import normalize_decimals
+    from gekko.schemas.proposal import TradeProposal
+
+    settings = get_settings()
+    gekko_user_id = settings.gekko_user_id
+    sf, engine = _get_session_factory(gekko_user_id)
+    try:
+        async with sf() as session, session.begin():
+            outcome = await claim_action(
+                session,
+                proposal_id=decision_id,
+                action_id="edit_size",
+                actor_slack_user_id=slack_user_id,
+                actor_gekko_user_id=gekko_user_id,
+                source="slack",
+            )
+            if outcome == "duplicate":
+                return
+
+            row = (
+                await session.execute(
+                    select(ProposalRow).where(
+                        ProposalRow.proposal_id == decision_id,
+                        ProposalRow.user_id == gekko_user_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                log.warning(
+                    "slack.edit_size_workflow.proposal_not_found",
+                    decision_id=decision_id,
+                )
+                return
+
+            tp = TradeProposal.model_validate_json(row.payload_json)
+            ref_price = Decimal(meta["ref_price"])
+            old_qty = tp.qty
+            old_notional = old_qty * ref_price
+            new_notional = new_qty * ref_price
+
+            await append_event(
+                session,
+                user_id=gekko_user_id,
+                strategy_id=row.strategy_id,
+                event_type="edit_size",
+                payload=normalize_decimals({
+                    "old_qty": old_qty,
+                    "new_qty": new_qty,
+                    "old_notional": old_notional,
+                    "new_notional": new_notional,
+                    "drift_pct": abs(new_notional - Decimal(meta["target_notional_usd"]))
+                                  / Decimal(meta["target_notional_usd"]),
+                    "actor": slack_user_id,
+                }),
+            )
+
+            # Update payload_json with new qty (PATTERNS §3 re-serialize)
+            tp_updated = tp.model_copy(update={"qty": new_qty})
+            row.payload_json = tp_updated.model_dump_json()
+
+            await transition_status(
+                session,
+                decision_id,
+                from_status="PENDING",
+                to_status="APPROVED",
+            )
+
+        asyncio.create_task(execute_proposal(decision_id, gekko_user_id))
+
+    except Exception:
+        log.exception(
+            "slack.edit_size_workflow.failed",
+            decision_id=decision_id,
+            gekko_user_id=gekko_user_id,
+        )
+    finally:
+        if engine is not None:
+            await engine.dispose()
+
+
+# Backwards-compat alias — interactivity.py may still reference this
+handle_edit_size_stub = handle_edit_size
 
 
 async def handle_escalate_stub(
@@ -720,7 +963,9 @@ async def handle_escalate_stub(
 
 __all__: tuple[str, ...] = (
     "handle_approve",
-    "handle_edit_size_stub",
+    "handle_edit_size",
+    "handle_edit_size_stub",  # backwards-compat alias for handle_edit_size
+    "handle_edit_size_view_submission",
     "handle_escalate_stub",
     "handle_reject",
 )

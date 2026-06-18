@@ -1,0 +1,67 @@
+{# Settings page — Quiet Hours configuration form.
+   Plan 03-05 Task 3, UI-SPEC §Surface 5 (D-46, D-47, D-49).
+
+   Route: GET /settings + POST /settings
+
+   Context variables:
+     user          : User ORM row (or None for early-bootstrap)
+     iana_timezones : list[str]  sorted list of IANA timezone names
+     success       : bool
+     error         : str | None
+#}
+{% extends "base.html.j2" %}
+
+{% block content %}
+<div class="container">
+  <h1>Settings</h1>
+
+  {% if success %}
+  <div role="status" class="chip-live" style="margin-bottom: 1rem; display: inline-block;">
+    Settings saved.
+  </div>
+  {% endif %}
+
+  {% if error %}
+  <div class="login-error" role="alert" aria-live="assertive">
+    {{ error }}
+  </div>
+  {% endif %}
+
+  <form method="POST" action="/settings" class="form-stack">
+    <fieldset>
+      <legend>Quiet Hours</legend>
+      <p class="form-help">
+        Pauses the agent loop entirely during this window — no proposals
+        are created, no DMs are sent for routine fills or P&L. Safety
+        DMs (kill, errors, first-live fills) always fire regardless.
+      </p>
+
+      <label for="timezone">Timezone</label>
+      <select id="timezone" name="timezone" required>
+        {% for tz in iana_timezones %}
+        <option value="{{ tz }}"
+                {% if user and tz == user.timezone %}selected{% endif %}>{{ tz }}</option>
+        {% endfor %}
+      </select>
+
+      <label for="quiet_hours_start">Quiet hours start</label>
+      <input type="time"
+             id="quiet_hours_start"
+             name="quiet_hours_start"
+             value="{{ user.quiet_hours_start if user and user.quiet_hours_start else '' }}">
+
+      <label for="quiet_hours_end">Quiet hours end</label>
+      <input type="time"
+             id="quiet_hours_end"
+             name="quiet_hours_end"
+             value="{{ user.quiet_hours_end if user and user.quiet_hours_end else '' }}">
+
+      <p class="form-help">
+        Leave start and end blank to disable quiet hours (agent runs 24/7).
+      </p>
+    </fieldset>
+
+    <button type="submit" class="btn-primary">Save settings</button>
+  </form>
+</div>
+{% endblock %}

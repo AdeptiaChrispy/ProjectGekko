@@ -531,80 +531,113 @@ async def test_handle_reject_does_not_invoke_executor(
 
 
 @pytest.mark.asyncio
-async def test_handle_edit_size_stub_acks_and_dms_deferred_message(
+async def test_handle_edit_size_stub_acks_and_opens_modal(
     clean_settings_env: pytest.MonkeyPatch,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Edit-size stub: ack first; sends 'coming in Phase 3' DM; logs deferred.
+    """handle_edit_size (alias: handle_edit_size_stub) acks first + calls views_open.
 
-    WR-06 fix: DM now flows through the ``_send_slack_dm`` identity-split
-    seam (PATTERNS §10) instead of a direct ``client.chat_postMessage``
-    call. The test captures the seam invocation.
+    Plan 03-05 Task 3: the stub was replaced with the full modal handler (D-54).
+    The backwards-compat alias handle_edit_size_stub still exists and delegates
+    to handle_edit_size, which opens the Slack Block Kit modal via views.open.
+    This test verifies: (a) ack is called first (Pitfall 3 invariant);
+    (b) client.views_open is called (the modal is opened); (c) no direct DM sent.
     """
+    import json
     from gekko.approval import slack_handler
 
     events: list[str] = []
-    dms: list[tuple[str, str]] = []
 
-    async def _capture_dm(uid: str, text: str) -> None:
-        dms.append((uid, text))
-        events.append("dm")
+    # Mock the session factory so we don't need a real DB
+    mock_row = MagicMock()
+    mock_row.proposal_id = "decision-xyz"
+    mock_row.payload_json = json.dumps({
+        "ticker": "AAPL",
+        "side": "buy",
+        "qty": "10",
+        "order_type": "market",
+        "rationale": "test",
+        "evidence": [
+            {"source_type": "finnhub_news", "summary": "x", "fetched_at": "2026-01-01T00:00:00Z", "source_url": None, "quote_text": None, "relevance_score": None},
+            {"source_type": "web_fetch", "summary": "y", "fetched_at": "2026-01-01T00:00:00Z", "source_url": None, "quote_text": None, "relevance_score": None},
+            {"source_type": "edgar_filing", "summary": "z", "fetched_at": "2026-01-01T00:00:00Z", "source_url": None, "quote_text": None, "relevance_score": None},
+        ],
+        "alternatives_considered": [{"description": "alt", "why_rejected": "reason"}],
+        "confidence": "0.8",
+        "decision_id": "decision-xyz",
+        "strategy_name": "test-strat",
+        "user_id": "testuser",
+        "client_order_id": "a" * 32,
+        "account_mode": "PAPER",
+        "target_notional_usd": "1000",
+        "limit_price": None,
+        "stop_price": None,
+    })
+
+    mock_session = MagicMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = mock_row
+    mock_session.execute = AsyncMock(return_value=mock_result)
+    mock_sf = MagicMock(return_value=mock_session)
 
     monkeypatch.setattr(
-        "gekko.execution.executor._send_slack_dm", _capture_dm
+        "gekko.approval.slack_handler._get_session_factory",
+        lambda uid: (mock_sf, None),
     )
 
     ack = AsyncMock(side_effect=lambda: events.append("ack"))
+    views_open_calls = []
+
+    async def _capture_views_open(**kwargs):
+        views_open_calls.append(kwargs)
+        events.append("views_open")
+
     client = MagicMock()
+    client.views_open = _capture_views_open
     client.chat_postMessage = AsyncMock()  # must NOT be called
-    body = {"actions": [{"value": "decision-xyz"}], "user": {"id": "U_TEST"}}
+
+    body = {
+        "actions": [{"value": "decision-xyz"}],
+        "user": {"id": "U_TEST"},
+        "trigger_id": "trigger-123",
+    }
     await slack_handler.handle_edit_size_stub(
         ack=ack, body=body, client=client
     )
-    assert events[0] == "ack"
-    assert "dm" in events
-    # The DM mentioned Phase 3 and routed through the seam (not the bolt client).
-    assert client.chat_postMessage.await_count == 0
-    assert len(dms) == 1
-    _uid, text = dms[0]
-    assert "Phase 3" in text or "phase 3" in text.lower()
+    assert events[0] == "ack", "ack must be called first (Pitfall 3)"
+    assert "views_open" in events, "handle_edit_size must call views_open (D-54)"
+    assert client.chat_postMessage.await_count == 0, "no direct chat_postMessage"
+    assert len(views_open_calls) == 1
+    view = views_open_calls[0]["view"]
+    assert view["callback_id"] == "edit_size_modal"
 
 
 @pytest.mark.asyncio
-async def test_handle_escalate_stub_acks_and_dms_deferred_message(
+async def test_handle_escalate_stub_acks_and_is_noop(
     clean_settings_env: pytest.MonkeyPatch,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Escalate stub: ack first; sends 'coming in Phase 3' DM; logs deferred.
+    """Escalate stub: ack first; no DM sent; is a no-op (D-60 URL button deprecation).
 
-    WR-06 fix: DM flows through the identity-split seam.
+    Plan 03-05 Task 2: escalate button converted to URL button. URL buttons
+    do NOT trigger Slack action handlers. handle_escalate_stub is kept as a
+    no-op deprecation guard in case a stale button type reaches the handler.
     """
     from gekko.approval import slack_handler
 
     events: list[str] = []
-    dms: list[tuple[str, str]] = []
-
-    async def _capture_dm(uid: str, text: str) -> None:
-        dms.append((uid, text))
-        events.append("dm")
-
-    monkeypatch.setattr(
-        "gekko.execution.executor._send_slack_dm", _capture_dm
-    )
 
     ack = AsyncMock(side_effect=lambda: events.append("ack"))
     client = MagicMock()
-    client.chat_postMessage = AsyncMock()  # must NOT be called
+    client.chat_postMessage = AsyncMock()  # must NOT be called (D-60: URL button, no DM)
     body = {"actions": [{"value": "decision-xyz"}], "user": {"id": "U_TEST"}}
     await slack_handler.handle_escalate_stub(
         ack=ack, body=body, client=client
     )
-    assert events[0] == "ack"
-    assert "dm" in events
-    assert client.chat_postMessage.await_count == 0
-    assert len(dms) == 1
-    _uid, text = dms[0]
-    assert "Phase 3" in text or "phase 3" in text.lower()
+    assert events[0] == "ack", "ack must be called first"
+    assert client.chat_postMessage.await_count == 0, "no DM for escalate stub (D-60)"
 
 
 @pytest.mark.asyncio

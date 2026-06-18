@@ -1,0 +1,74 @@
+{# Edit-size HTMX modal partial — Plan 03-05 Task 3 (D-54).
+   UI-SPEC §Surface 2 (dashboard HTMX modal shape).
+   RESEARCH §Pattern 4 (HTMX modal + outerHTML/innerHTML swap).
+
+   Returned by:
+     GET  /approvals/{proposal_id}/edit-size   → initial render
+     POST /approvals/{proposal_id}/edit-submit → re-render on drift error
+
+   HTMX target: #modal-mount (innerHTML swap).
+   On success the POST returns an empty response; HTMX replaces #modal-mount.
+   Cancel clears #modal-mount via /modal/close.
+
+   Context variables:
+     proposal_id        : str
+     ticker             : str
+     qty                : str  (current / pre-fill value)
+     ref_price          : str  (server-derived, not operator input)
+     target_notional_usd : str
+     drift_error        : str | None  (error message when drift > 2%)
+#}
+<div class="modal-backdrop" id="edit-modal">
+  <div class="modal" role="dialog" aria-labelledby="edit-size-headline" aria-modal="true">
+    <h2 id="edit-size-headline" class="modal-headline">
+      Edit size — {{ ticker }}
+    </h2>
+    <div class="modal-body">
+
+      {% if drift_error %}
+      <div class="login-error" role="alert" aria-live="assertive">
+        {{ drift_error }}
+      </div>
+      {% endif %}
+
+      <p class="form-help">
+        Ref price: <strong>${{ ref_price }}</strong> &nbsp;&middot;&nbsp;
+        Target notional: <strong>${{ target_notional_usd }}</strong>
+      </p>
+      <p class="form-help">
+        Submitting a quantity that moves the notional more than 2% from the target
+        will be rejected by OrderGuard (D-27 Knight Capital defense).
+      </p>
+
+      <form hx-post="/approvals/{{ proposal_id }}/edit-submit"
+            hx-target="#modal-mount"
+            hx-swap="innerHTML">
+        <div class="form-stack">
+          <label for="edit-qty">New quantity</label>
+          <input type="number"
+                 id="edit-qty"
+                 name="qty"
+                 step="any"
+                 min="0"
+                 value="{{ qty }}"
+                 required
+                 autocomplete="off"
+                 class="login-input"
+                 aria-describedby="edit-qty-help">
+          <p id="edit-qty-help" class="form-help">
+            Enter the number of shares (fractional allowed).
+          </p>
+        </div>
+
+        <div class="modal-actions">
+          <a hx-get="/modal/close"
+             hx-target="#modal-mount"
+             hx-swap="innerHTML"
+             class="btn-secondary">Cancel</a>
+          <button type="submit" class="btn-primary">Approve at this size</button>
+        </div>
+      </form>
+
+    </div>
+  </div>
+</div>

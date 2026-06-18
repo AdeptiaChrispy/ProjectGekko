@@ -394,6 +394,408 @@ async def reject_proposal_endpoint(
     return templates.TemplateResponse("_proposal_card.html.j2", ctx)
 
 
+# ---------------------------------------------------------------------------
+# Edit-size modal — GET (render form) + POST (drift check + transition)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/approvals/{proposal_id}/edit-size", response_class=HTMLResponse)
+async def edit_size_get(
+    request: Request,
+    proposal_id: str,
+    user_id: str = Depends(require_session),
+) -> HTMLResponse:
+    """GET /approvals/{id}/edit-size — render HTMX edit-size modal partial.
+
+    Loads the Proposal row to pre-fill qty, ref_price, target_notional_usd.
+    Returns edit_size_modal.html.j2 which HTMX swaps into #modal-mount.
+    """
+    from decimal import Decimal as _Decimal
+    from gekko.db.models import Proposal as ProposalRow
+
+    sf, engine = _get_session_factory(user_id)
+    try:
+        async with sf() as session:
+            row = (
+                await session.execute(
+                    select(ProposalRow).where(
+                        ProposalRow.proposal_id == proposal_id,
+                        ProposalRow.user_id == user_id,
+                    )
+                )
+            ).scalar_one_or_none()
+    finally:
+        if engine is not None:
+            await engine.dispose()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+
+    import json as _json
+    payload = _json.loads(row.payload_json)
+    ticker = payload.get("ticker", row.ticker or "")
+    qty = payload.get("qty", "0")
+    limit_price = payload.get("limit_price")
+    stop_price = payload.get("stop_price")
+    target_notional_usd = payload.get("target_notional_usd", "0")
+
+    # Derive ref_price: limit > stop > target/qty fallback
+    if limit_price:
+        ref_price = str(limit_price)
+    elif stop_price:
+        ref_price = str(stop_price)
+    else:
+        try:
+            ref_price = str(_Decimal(target_notional_usd) / _Decimal(qty))
+        except Exception:
+            ref_price = "0"
+
+    return templates.TemplateResponse(
+        request,
+        "edit_size_modal.html.j2",
+        {
+            "proposal_id": proposal_id,
+            "ticker": ticker,
+            "qty": qty,
+            "ref_price": ref_price,
+            "target_notional_usd": target_notional_usd,
+            "drift_error": None,
+        },
+    )
+
+
+@router.post("/approvals/{proposal_id}/edit-submit", response_class=HTMLResponse)
+async def edit_size_submit(
+    request: Request,
+    proposal_id: str,
+    qty: str = Form(...),
+    user_id: str = Depends(require_session),
+) -> HTMLResponse:
+    """POST /approvals/{id}/edit-submit — D-54 drift check + dedup + transition.
+
+    Runs the same _drift_check as the Slack view_submission handler.
+    On drift fail: re-render edit_size_modal.html.j2 with error block.
+    On pass: dedup INSERT (source='dashboard') + edit_size event + qty update +
+    PENDING -> APPROVED + background execute_proposal. Returns empty (HTMX closes modal)
+    or _proposal_card.html.j2 with APPROVED state.
+    """
+    from decimal import Decimal as _Decimal, InvalidOperation as _InvalidOp
+    import json as _json
+    from gekko.approval.actions import _drift_check
+    from gekko.approval.dedup import claim_action
+    from gekko.approval.proposals import append_event as _append_event, transition_status
+    from gekko.audit.canonical import normalize_decimals
+    from gekko.db.models import Proposal as ProposalRow
+    from gekko.execution.executor import execute_proposal as _execute_proposal
+    from gekko.schemas.proposal import TradeProposal
+
+    # 1. Parse and validate qty input
+    try:
+        new_qty = _Decimal(qty.strip())
+        if new_qty <= 0:
+            raise _InvalidOp("qty must be positive")
+    except (_InvalidOp, Exception):
+        # Re-render modal with input error
+        return templates.TemplateResponse(
+            request,
+            "edit_size_modal.html.j2",
+            {
+                "proposal_id": proposal_id,
+                "ticker": "",
+                "qty": qty,
+                "ref_price": "0",
+                "target_notional_usd": "0",
+                "drift_error": "Please enter a valid positive quantity.",
+            },
+        )
+
+    # 2. Load proposal to get ref_price + target_notional
+    sf, engine = _get_session_factory(user_id)
+    row = None
+    try:
+        async with sf() as session:
+            row = (
+                await session.execute(
+                    select(ProposalRow).where(
+                        ProposalRow.proposal_id == proposal_id,
+                        ProposalRow.user_id == user_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                raise HTTPException(status_code=404, detail="Proposal not found")
+            # Keep a snapshot for processing outside the session
+            payload_json_snapshot = row.payload_json
+    finally:
+        if engine is not None:
+            await engine.dispose()
+
+    payload = _json.loads(payload_json_snapshot)
+    ticker = payload.get("ticker", "")
+    original_qty_str = payload.get("qty", "0")
+    limit_price = payload.get("limit_price")
+    stop_price = payload.get("stop_price")
+    target_notional_usd_str = payload.get("target_notional_usd", "0")
+
+    try:
+        target_notional = _Decimal(target_notional_usd_str)
+        original_qty = _Decimal(original_qty_str)
+    except _InvalidOp:
+        target_notional = _Decimal("0")
+        original_qty = _Decimal("0")
+
+    # Derive ref_price server-side (not from operator input)
+    if limit_price:
+        ref_price = _Decimal(str(limit_price))
+    elif stop_price:
+        ref_price = _Decimal(str(stop_price))
+    elif original_qty and target_notional:
+        ref_price = target_notional / original_qty
+    else:
+        ref_price = _Decimal("0")
+
+    # 3. Drift check (D-27 / D-54 Knight Capital defense)
+    if target_notional and ref_price:
+        drift_pct = _drift_check(new_qty, ref_price, target_notional)
+    else:
+        drift_pct = _Decimal("0")
+
+    if drift_pct > _Decimal("0.02"):
+        new_notional = new_qty * ref_price
+        return templates.TemplateResponse(
+            request,
+            "edit_size_modal.html.j2",
+            {
+                "proposal_id": proposal_id,
+                "ticker": ticker,
+                "qty": qty,
+                "ref_price": str(ref_price),
+                "target_notional_usd": target_notional_usd_str,
+                "drift_error": (
+                    f"Drift {drift_pct:.2%} exceeds the 2% safety bound. "
+                    f"Target ${target_notional}; this qty = ${new_notional}. "
+                    "Adjust qty or re-run the strategy."
+                ),
+            },
+        )
+
+    # 4. Drift passed — dedup INSERT + audit event + qty update + transition
+    sf2, engine2 = _get_session_factory(user_id)
+    try:
+        async with sf2() as session2, session2.begin():
+            outcome = await claim_action(
+                session2,
+                proposal_id=proposal_id,
+                action_id="edit_size",
+                actor_slack_user_id=None,
+                actor_gekko_user_id=user_id,
+                source="dashboard",
+            )
+            if outcome == "first_write":
+                row2 = (
+                    await session2.execute(
+                        select(ProposalRow).where(
+                            ProposalRow.proposal_id == proposal_id,
+                            ProposalRow.user_id == user_id,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if row2 is None:
+                    raise HTTPException(status_code=404, detail="Proposal not found")
+
+                tp = TradeProposal.model_validate_json(row2.payload_json)
+                old_qty = tp.qty
+                old_notional = old_qty * ref_price
+                new_notional = new_qty * ref_price
+
+                from gekko.audit.log import append_event as _ae
+                await _ae(
+                    session2,
+                    user_id=user_id,
+                    strategy_id=row2.strategy_id,
+                    event_type="edit_size",
+                    payload=normalize_decimals({
+                        "old_qty": old_qty,
+                        "new_qty": new_qty,
+                        "old_notional": old_notional,
+                        "new_notional": new_notional,
+                        "drift_pct": drift_pct,
+                        "actor": user_id,
+                    }),
+                )
+
+                # Update payload_json with new qty (PATTERNS §3 re-serialize)
+                tp_updated = tp.model_copy(update={"qty": new_qty})
+                row2.payload_json = tp_updated.model_dump_json()
+
+                await transition_status(
+                    session2,
+                    proposal_id,
+                    from_status="PENDING",
+                    to_status="APPROVED",
+                )
+                await session2.refresh(row2)
+                updated_row = row2
+            else:
+                # Duplicate — re-read
+                updated_row = (
+                    await session2.execute(
+                        select(ProposalRow).where(
+                            ProposalRow.proposal_id == proposal_id,
+                            ProposalRow.user_id == user_id,
+                        )
+                    )
+                ).scalar_one_or_none()
+    finally:
+        if engine2 is not None:
+            await engine2.dispose()
+
+    if outcome == "first_write":
+        asyncio.create_task(_execute_proposal(proposal_id, user_id))
+
+    if updated_row is None:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+
+    # 5. Return updated proposal card for HTMX swap (closes modal + refreshes card)
+    from fastapi.responses import HTMLResponse as _HTMLResponse
+    ctx = _build_proposal_ctx(updated_row)
+    ctx["request"] = request
+    return templates.TemplateResponse("_proposal_card.html.j2", ctx)
+
+
+# ---------------------------------------------------------------------------
+# Settings — GET (render form) + POST (validate + save quiet hours)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/settings", response_class=HTMLResponse)
+async def settings_get(
+    request: Request,
+    user_id: str = Depends(require_session),
+) -> HTMLResponse:
+    """GET /settings — render quiet hours configuration form (UI-SPEC §Surface 5)."""
+    import zoneinfo
+    from gekko.db.models import User as UserRow
+
+    sf, engine = _get_session_factory(user_id)
+    try:
+        async with sf() as session:
+            user = (
+                await session.execute(
+                    select(UserRow).where(UserRow.user_id == user_id)
+                )
+            ).scalar_one_or_none()
+    finally:
+        if engine is not None:
+            await engine.dispose()
+
+    # user may be None for early-bootstrap state; provide safe defaults
+    iana_timezones = sorted(zoneinfo.available_timezones())
+    return templates.TemplateResponse(
+        request,
+        "settings.html.j2",
+        {
+            "user": user,
+            "iana_timezones": iana_timezones,
+            "success": False,
+            "error": None,
+        },
+    )
+
+
+@router.post("/settings", response_class=HTMLResponse)
+async def settings_post(
+    request: Request,
+    timezone: str = Form(""),
+    quiet_hours_start: str = Form(""),
+    quiet_hours_end: str = Form(""),
+    user_id: str = Depends(require_session),
+) -> HTMLResponse:
+    """POST /settings — validate + save quiet hours (UI-SPEC §Surface 5).
+
+    Validation:
+    - timezone must be in zoneinfo.available_timezones()
+    - quiet_hours_start and quiet_hours_end must both be blank OR both set
+    """
+    import zoneinfo
+    from gekko.db.models import User as UserRow
+
+    iana_timezones = sorted(zoneinfo.available_timezones())
+
+    # Validation
+    error: str | None = None
+    if timezone and timezone not in zoneinfo.available_timezones():
+        error = f'Timezone "{timezone}" is not a valid IANA timezone.'
+    elif bool(quiet_hours_start) != bool(quiet_hours_end):
+        error = "Quiet hours start and end must both be set, or both be blank."
+
+    if error:
+        sf, engine = _get_session_factory(user_id)
+        try:
+            async with sf() as session:
+                user = (
+                    await session.execute(
+                        select(UserRow).where(UserRow.user_id == user_id)
+                    )
+                ).scalar_one_or_none()
+        finally:
+            if engine is not None:
+                await engine.dispose()
+        return templates.TemplateResponse(
+            request,
+            "settings.html.j2",
+            {
+                "user": user,
+                "iana_timezones": iana_timezones,
+                "success": False,
+                "error": error,
+            },
+        )
+
+    # Save settings
+    sf, engine = _get_session_factory(user_id)
+    try:
+        async with sf() as session, session.begin():
+            user = (
+                await session.execute(
+                    select(UserRow).where(UserRow.user_id == user_id)
+                )
+            ).scalar_one_or_none()
+            if user is not None:
+                if timezone:
+                    user.timezone = timezone
+                user.quiet_hours_start = quiet_hours_start or None
+                user.quiet_hours_end = quiet_hours_end or None
+            await session.flush()
+    finally:
+        if engine is not None:
+            await engine.dispose()
+
+    # Re-read for re-render
+    sf2, engine2 = _get_session_factory(user_id)
+    try:
+        async with sf2() as session2:
+            user = (
+                await session2.execute(
+                    select(UserRow).where(UserRow.user_id == user_id)
+                )
+            ).scalar_one_or_none()
+    finally:
+        if engine2 is not None:
+            await engine2.dispose()
+
+    return templates.TemplateResponse(
+        request,
+        "settings.html.j2",
+        {
+            "user": user,
+            "iana_timezones": iana_timezones,
+            "success": True,
+            "error": None,
+        },
+    )
+
+
 @router.get("/healthz")
 async def healthz() -> dict[str, str]:
     """Liveness probe — uvicorn / supervisor / dashboard self-checks."""
