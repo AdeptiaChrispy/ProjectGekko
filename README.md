@@ -370,6 +370,173 @@ Record for the audit trail:
 
 ---
 
+### Phase 3 — Production HITL UX demo
+
+This is the Phase-3 demo: a 10-15 minute end-to-end run that exercises every
+Phase-3 capability — idempotent Slack Block Kit buttons, quiet hours, proposal
+timeout (REJECT on expiry), edit-size modal, web dashboard fallback, and the
+16:30 ET daily P&L digest.
+
+**Before running the manual demo, ensure**
+`uv run pytest tests/integration/test_p3_walking_skeleton.py -x` **passes —
+that is the automated cassette that gates this recipe.**
+
+#### Prerequisites
+
+- Phase 1 + Phase 2 walking-skeleton demos above have been completed at least
+  once (the audit chain must have ≥22 events on disk).
+- `uv run alembic upgrade head` has been run to apply the Phase-3 migration
+  (``0004_p3_hitl_ux``) if not already applied. Verify with:
+  ```bash
+  uv run alembic current
+  # → should show head as 0004_...
+  ```
+- The same Slack + Anthropic + Alpaca paper + dashboard tunnel from the
+  Phase 1 demo are still configured.
+- Optional: a second browser window or device for the dashboard-fallback step.
+
+#### One-time setup
+
+```bash
+uv run alembic upgrade head   # apply 0004_p3_hitl_ux if not already applied
+uv run gekko serve             # starts FastAPI + Slack Socket Mode + APScheduler
+                               # boot log should show:
+                               #   scheduler.sweep_registered  (expire_stale sweep)
+                               #   scheduler.daily_pnl_registered (16:30 ET cron)
+```
+
+#### Verify idempotency (HITL-02)
+
+Trigger a strategy run and wait for the Slack proposal DM:
+
+```bash
+uv run gekko run <strategy_name>
+```
+
+When the HITL Block Kit card arrives in Slack, **click Approve twice rapidly**
+(within ~2 seconds of each other). Observe:
+
+- ONE execution fires (one "Approved … Placing order…" DM, one fill DM).
+- ONE ephemeral toast: "Already approved by @you at HH:MM. Status: APPROVED."
+  (only visible to you, disappears when you dismiss).
+- `uv run gekko audit verify` shows chain intact with no duplicate events.
+
+#### Verify quiet hours (HITL-05)
+
+From the dashboard (`http://localhost:8000/settings`) or via CLI, configure
+quiet hours on your user profile:
+
+```
+quiet_hours_start = 22:00
+quiet_hours_end   = 07:00
+timezone          = America/New_York
+```
+
+Trigger a strategy run at 23:00 ET. Observe that **no Slack proposal DM
+arrives** — the proposal is created in the DB but the DM is suppressed until
+the quiet window ends. To confirm suppression immediately without waiting:
+
+```bash
+uv run gekko audit dump --limit 5
+# → "proposal" event exists in the chain but no "approval" or "fill" follow it
+```
+
+At 07:01 ET the next morning (or by resetting quiet hours to None), run the
+strategy again and observe the DM lands normally.
+
+#### Verify timeout=REJECT (HITL-03)
+
+Create a strategy (or update an existing one) with a short proposal timeout:
+
+```bash
+uv run gekko strategy create \
+  --name quick-expire-test \
+  --thesis "Test expiry — short timeout" \
+  --watchlist NVDA \
+  --proposal-timeout-minutes 1
+```
+
+Trigger a run:
+
+```bash
+uv run gekko run quick-expire-test
+```
+
+Do **not** click Approve. After ~60 seconds the APScheduler sweep fires and:
+
+- The Slack card swaps to a greyed-out `[EXPIRED]` state (chat.update).
+- A separate DM arrives: "Your NVDA BUY proposal expired without action.
+  Reason: timeout=REJECT (configured at 1 min on strategy quick-expire-test)."
+- Attempting to click Approve on the expired card produces an ephemeral:
+  "Proposal already expired at HH:MM."
+
+#### Verify edit-size (HITL-04 / UI-SPEC Surface 1)
+
+Trigger a strategy run and wait for the Slack HITL card. Click **Edit-size**:
+
+- A modal opens with the current qty, ref price, and target notional.
+- Submit a new qty **within 2% drift** (e.g., same qty ± 1 share) → modal
+  closes, proposal transitions to APPROVED, executor fires normally.
+- On a second run, click Edit-size again and submit a qty **with > 2% drift**
+  (e.g., 10× the original qty). The modal re-renders with a red error message
+  and the state does NOT change — the proposal remains PENDING.
+
+#### Verify dashboard fallback (DASH-04)
+
+1. Stop the Slack Socket Mode adapter (Ctrl-C on the `gekko serve` process, or
+   configure the bot with an invalid token temporarily).
+2. Navigate to `http://localhost:8000/login` in your browser.
+3. Enter the SQLCipher passphrase you used in `gekko init`.
+4. The `/approvals` page lists all PENDING proposals.
+5. Click **Approve** on a proposal. The card updates inline (HTMX swap).
+6. The same execution chain fires (executor → Alpaca paper → fill DM).
+7. `uv run gekko audit verify` confirms chain intact with a dedup row
+   showing `source="dashboard"`.
+
+#### Verify daily P&L (REPT-01)
+
+Wait until **16:30 America/New_York** on a NYSE trading day (weekday, non-holiday). Observe:
+
+- A Slack DM arrives with the daily P&L digest:
+  - Header: "Daily P&L — YYYY-MM-DD"
+  - Gross P&L with 📈 or 📉 sign glyph
+  - Per-strategy breakdown with fills count
+  - Open positions count, fills today count, errors today count
+  - "Open dashboard" button linking to `/approvals`
+- `uv run gekko audit dump --event-type daily_pnl` shows the digest event
+  with `fills_count`, `errors_count`, `gross_pnl` in the payload.
+
+If it is outside market hours or a holiday, the DM is suppressed (NYSE calendar
+gate per D-59). Verify by checking `gekko audit dump` — no `daily_pnl` event
+on a non-trading day.
+
+#### Run the automated wave-gate test (cassette mode)
+
+```bash
+uv run pytest tests/integration/test_p3_walking_skeleton.py -x
+```
+
+This runs all four cassette scenarios in under 5 seconds — no real Slack, no
+real Alpaca, no Claude. All four must pass before attempting the manual demo:
+
+1. `test_p3_happy_path_approve` — Slack approve + dup-click dedup + fill + P&L
+2. `test_p3_happy_path_with_edit_size` — Edit-size modal flow + fill
+3. `test_dashboard_fallback` — /login → /approvals → approve → fill
+4. `test_expiry_chain` — sweep → EXPIRED + chat.update + expiry DM
+
+#### Demo closeout
+
+Record for the audit trail:
+
+- Which of the 5 manual-only verifications from
+  `.planning/phases/03-production-hitl-ux-slack-block-kit-dashboard-fallback/deferred-items.md`
+  were completed.
+- Any UI / copy / timing surprises (file as Phase-4 backlog if applicable).
+- The Phase-3 audit chain length: `uv run gekko audit verify` should show
+  "Chain intact across N events for user \<user\>".
+
+---
+
 ## License
 
 TBD.
