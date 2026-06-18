@@ -30,6 +30,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 from gekko.logging_config import get_logger
 
@@ -150,6 +151,54 @@ def schedule_strategy_daily(
         user_id=user_id,
         strategy_name=strategy_name,
         schedule_time=schedule_time,
+    )
+    return job_id
+
+
+def register_expire_stale_sweep(
+    scheduler: AsyncIOScheduler,
+    *,
+    user_id: str,
+) -> str:
+    """Register (or replace) the 60-second stale-proposal expiry sweep — Plan 03-04 Task 1.
+
+    :param scheduler: A running :class:`AsyncIOScheduler` built via
+        :func:`build_scheduler`.  MUST be started (``scheduler.start()``
+        called) before this registrar is invoked so ``replace_existing=True``
+        checks the jobstore (not the pending-job list).
+    :param user_id: Owner of the proposals to sweep.
+
+    :returns: The deterministic job id ``f"expire-stale-{user_id}"``.
+
+    **Restart-safe knobs** (per RESEARCH §HITL-03):
+
+    * ``coalesce=True`` — piled-up missed fires from a restart window are
+      collapsed into a single catch-up run, preventing double-expiry.
+    * ``max_instances=1`` — ensures the sweep never overlaps with itself.
+    * ``misfire_grace_time=300`` — 5-minute window before APScheduler discards
+      a missed fire entirely; restarts within 5 min always catch up.
+
+    The job references ``expire_stale_proposals`` via module:fn string so
+    APScheduler's ``SQLAlchemyJobStore`` can safely pickle it across restarts
+    (bound-function-ref pickling is fragile across refactors — Plan 01-09
+    SUMMARY lock).
+    """
+    job_id = f"expire-stale-{user_id}"
+
+    scheduler.add_job(
+        "gekko.approval.expiry:expire_stale_proposals",
+        IntervalTrigger(seconds=60),
+        kwargs={"user_id": user_id},
+        id=job_id,
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+        misfire_grace_time=300,
+    )
+    log.info(
+        "scheduler.sweep_registered",
+        job_id=job_id,
+        user_id=user_id,
     )
     return job_id
 
