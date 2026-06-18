@@ -3,19 +3,19 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Safety & Trust
 status: executing
-last_updated: "2026-06-18T13:13:38.327Z"
+last_updated: "2026-06-18T13:35:45.553Z"
 last_activity: 2026-06-18
 progress:
   total_phases: 3
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 26
-  completed_plans: 25
-  percent: 67
+  completed_plans: 26
+  percent: 100
 ---
 
 # Project State: Project Gekko
 
-**Last updated:** 2026-06-18 (**Plan 03-09 complete — CR-02/CR-03/CR-04 gap-closure.** fill_payload now includes strategy_name and side from tp_persisted (CR-02 — daily P&L aggregator now correctly buckets by strategy and signs SELL fills). _send_dm_blocks_respecting_quiet_hours returns bool; daily_pnl audit events record delivered + suppressed_by_quiet_hours fields (CR-03 — audit log now honest about DM delivery). Expiry DM changed from routine_fill to executor_error category (CR-04 — proposal expiry now always pages operator regardless of quiet window). 10 new TDD tests (test_fill_payload_fields.py x4, test_daily_pnl_audit_honesty.py x4, test_expiry_quiet_hours_bypass.py x2). Gap-closure plan 03-10 remains.)
+**Last updated:** 2026-06-18 (**Plan 03-10 complete — WR-08 gap closure (HITL-02).** Deleted _extract_retry_num and removed dead X-Slack-Retry-Num retry gate blocks from handle_approve and handle_reject (both read body['headers']['x-slack-retry-num'], absent in Socket Mode/WebSocket transport — always returned 0 in production). claim_action UNIQUE INSERT is now the documented sole exactly-once dedup primitive. 4 tests updated: test_slack_retry_gate.py (3 new Socket Mode dedup contract tests), test_slack_retry_header.py (2 obsolete gate tests removed, 1 backward-compat test retained). Phase 3 all 10 plans complete — HITL-02 gap fully closed.)
 
 ## Project Reference
 
@@ -26,7 +26,7 @@ progress:
 ## Current Position
 
 Phase: 03 (production-hitl-ux-slack-block-kit-dashboard-fallback) — EXECUTING
-Plan: 3 of 10
+Plan: 4 of 10
 Status: Ready to execute
 Last activity: 2026-06-18
 
@@ -49,6 +49,7 @@ Last activity: 2026-06-18
 | Phase 03 P06 | 45min | 3 tasks | 9 files |
 | Phase 03 P07 | 120min | 3 tasks | 3 files |
 | Phase 03 P09 | 25 | 2 tasks | 6 files |
+| Phase 03 P10 | 20 | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -67,6 +68,11 @@ Last activity: 2026-06-18
 | SQLCipher whole-DB encryption + passphrase-on-start | ARCH recommendation chosen over STACK's Fernet+keychain for cross-platform parity (avoids silent failures when service runs without logged-in user session) |
 | Decimal for money math, idempotency via `client_order_id` | Non-negotiable per PITFALLS Pitfall 1 (Knight Capital prevention) |
 | Robinhood Agentic Trading API status check in P1 | Re-validate the official API before committing to browser adapter in P9 (per BROK-R-01 and PITFALLS Pitfall 8) |
+
+### Decisions from Plan 03-10 (added 2026-06-18)
+
+- _claim_action UNIQUE INSERT is the sole and sufficient exactly-once dedup primitive in Socket Mode._ The X-Slack-Retry-Num HTTP header is absent in Socket Mode (WebSocket delivery). The former retry-gate blocks in handle_approve and handle_reject that read body['headers']['x-slack-retry-num'] always returned 0 in production (Socket Mode) and were dead code. Deleted _extract_retry_num and both gate blocks. claim_action's UNIQUE constraint handles all duplicate-delivery scenarios — the DB constraint is the enforceable guarantee regardless of transport (HTTP or WebSocket).
+- _Test-suite update for dead-code removal: replace assertions on defunct gate behavior with assertions on the actual dedup primitive._ test_slack_retry_header.py removed 2 tests asserting old short-circuit behavior; test_slack_retry_gate.py adds 3 new Socket Mode contract tests confirming claim_action is the dedup layer and that Socket Mode body shape (no 'headers' key) does not raise.
 
 ### Decisions from Plan 03-08 (added 2026-06-18)
 
