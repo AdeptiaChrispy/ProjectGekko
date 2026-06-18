@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Safety & Trust
 status: executing
-last_updated: "2026-06-18T05:23:47.887Z"
+last_updated: "2026-06-18T06:32:24.394Z"
 last_activity: 2026-06-18
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 23
-  completed_plans: 17
+  completed_plans: 18
   percent: 67
 ---
 
@@ -26,7 +26,7 @@ progress:
 ## Current Position
 
 Phase: 03 (production-hitl-ux-slack-block-kit-dashboard-fallback) — EXECUTING
-Plan: 2 of 7
+Plan: 3 of 7
 Status: Ready to execute
 Last activity: 2026-06-18
 
@@ -42,6 +42,7 @@ Last activity: 2026-06-18
 | Granularity | standard |
 | Mode | mvp (Vertical MVP) |
 | Phase 02 P02-03 | 1h45m | 3 tasks | 11 files |
+| Phase 03 P03-02 | 1h15m | 3 tasks | 5 files |
 | Phase 02 P02-06 | 4h30m | 3 tasks | 22 files |
 
 ## Accumulated Context
@@ -244,6 +245,15 @@ After the manual demo passes, the next milestone-level step is either `/gsd-comp
 - _The 6 monkeypatch sites in Phase-1 tests switched from `lambda _u: broker` to `lambda *a, **k: broker`._ The new `_build_broker(user_id, strategy, account_mode, *, proposal=None)` signature has 4 positional + 1 kwarg; tests stay signature-agnostic via *a / **k so future signature changes (plan 02-06 live branch) don't break them again.
 - _Plan executed across 3 executor sessions due to crashes (API 500 + wifi loss); no work was rewritten._ Task 1+2 were committed by the first executor (`a671c7f`) just before an API-500 at 79 tool uses. The second executor lost socket before any disk changes. The third executor inspected the surviving in-flight diff via `python -m py_compile` + targeted test runs, verified coherence, and committed Task 3 (`fa78387`) and Task 4 (`0a4a962`) as separate commits per crash-resilience guidance. All 6 integration tests passed first-try on the resumed run — confirming the in-flight diff from the API-500 crash was already coherent.
 
+### Decisions from Plan 03-02 (added 2026-06-18)
+
+- _claim_action uses `try: await session.flush() except IntegrityError: await session.rollback()` (MANDATORY)._ SQLAlchemy's IntegrityError leaves the transaction in an aborted state; any subsequent operation on the same session raises `InvalidRequestError`. The `await session.rollback()` call is mandatory before opening any fresh session. This mirrors `proposal_writer.py:344-360` verbatim (the two-analog stack per PATTERNS §1a / §2b).
+- _dedup_click audit event is written in a FRESH session after rollback (D-45 contract)._ The IntegrityError rollback would silently discard any audit event appended to the original session. `claim_action` opens a fresh `async with fresh_sf() as fresh_session, fresh_session.begin():` block via `_get_session_factory(actor_gekko_user_id)` to write the event. Both sessions use the SAME underlying engine in tests (monkeypatched).
+- _duplicate branch in _approve_workflow/_reject_workflow opens a new read session to query original dedup row._ The session passed to `claim_action` is rolled back on duplicate; subsequent `.execute()` on it would fail. The ephemeral builder opens `async with sf() as read_session:` separately. This is an auto-fix for a latent bug in the plan spec (Rule 1: correctness).
+- _X-Slack-Retry-Num gate fires at handle_approve/handle_reject entry (BEFORE asyncio.create_task)._ Short-circuits when `retry_num > 0` AND a prior dedup row exists. Defensive: falls through to normal workflow when `retry_num > 0` but no row exists (Slack retry may precede the first delivery in rare ordering scenarios). Gate failure (DB error) also falls through.
+- _D-43 ephemeral uses original first-writer's actor_slack_user_id (identity-split invariant)._ The ephemeral message resolves `<@{actor}>` via the ORIGINAL dedup row's `actor_slack_user_id`, never the current clicker's `gekko_user_id`. This matches PATTERNS §10 (quick-260612-nlv identity-split lesson) and D-43's UX requirement: the duplicate-clicker needs to know WHO already approved/rejected.
+- _cross-actor test (D-42) uses different action_ids._ In the single-operator model, two different Slack users share the same `actor_gekko_user_id`. The `uq_dedup_dashboard` UNIQUE on `(proposal_id, action_id, actor_gekko_user_id, source)` would fire for same-action_id cross-actor clicks. D-42's scenario ("User A approves; a different Slack user fires Reject") implies different `action_id` values — approve and reject. Test (d) uses this to verify both rows succeed.
+
 ### Decisions from Plan 02-01 (added 2026-06-16)
 
 - _tenacity 9.1.4 added behind operator-verified PyPI legitimacy gate._ Maintainer "jd" / Julien Danjou; Apache-2.0; repo github.com/jd/tenacity. Used by plan 02-03 for tenacity-decorated GET retries on Alpaca read endpoints (EXEC-08). Per BLOCKER #4 / EXEC-03, place_order MUST stay zero-decorator — enforced by a grep gate in tests/unit/test_alpaca_retry.py + tests/unit/test_orderguard.py.
@@ -291,6 +301,7 @@ After the manual demo passes, the next milestone-level step is either `/gsd-comp
 *Updated: 2026-06-16 after Plan 02-04 complete (Wave-2 RES-06/07 prompt-injection minimums — WEB_ALLOWLIST module + <untrusted_content> wrap at web_fetch + finnhub_news + D-40 warning in DECISION_SYSTEM_PROMPT + directory-wide AST walk over src/gekko/agent/ for RES-06 isolation hardening)*
 *Updated: 2026-06-16 after Plan 02-03 complete (Wave-3 OrderGuard BLOCK/FLAG matrix completion — tenacity retry_on_rate_limit on AlpacaBroker GETs + AST-walk gate over place_order/cancel_order zero-decorator invariants + check_pdt two-source defense + check_t1_settlement on cash accounts + flag_wash_sale 30-day FLAG-only helper + ProposalWriter stamps wash_sale_flag at proposal-build time; 4 commits; 522 unit + 37 integration tests pass)*
 *Updated: 2026-06-16 after Plan 02-06 complete (Wave-5 live-mode unlock end-to-end — SQLCipher live credentials vault + HITL-06 dual-channel state machine + ProposalWriter account_mode stamp closing BLOCKER #5 TOCTOU + AlpacaBroker _allow_live with AST-walk grep gate closing BLOCKER #4 + dashboard live banner + Slack first-live URL-button card; 3 commits; 107 unit + 28 integration tests pass)*
+*Updated: 2026-06-18 after Plan 03-02 complete (HITL-02 dedup gate — claim_action() UNIQUE-INSERT helper + dedup_click audit event + wire into _approve_workflow/_reject_workflow + D-43 ephemeral response + X-Slack-Retry-Num gate + integration race test proving exactly-once execution; 3 commits a7e4cdd/e219523/bb9ef6d)*
 
 ### Decisions from Plan 02-06 (added 2026-06-16)
 

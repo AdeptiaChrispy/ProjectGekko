@@ -118,7 +118,7 @@ Plans:
   4. User can edit proposed order size from the Slack card and approve the edited order in a single interaction, with the edit recorded in audit
   5. When Slack is unavailable, user can complete the same approve / reject / edit flow via the web dashboard `/approvals` page and the order executes identically
 
-**Plans:** 1/7 plans executed
+**Plans:** 2/7 plans executed
 Plans:
 **Wave 1**
 
@@ -126,7 +126,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1)*
 
-- [ ] 03-02-PLAN.md — HITL-02 dedup table claim_action + Slack handler INSERT at top of approve/reject + D-43 ephemeral + X-Slack-Retry-Num gating + dedup-race integration cassette
+- [x] 03-02-PLAN.md — HITL-02 dedup table claim_action + Slack handler INSERT at top of approve/reject + D-43 ephemeral + X-Slack-Retry-Num gating + dedup-race integration cassette
 - [ ] 03-03-PLAN.md — HITL-05 quiet hours predicate (IANA tz, DST, strategy override wins) + DM bypass-category routing (kill/error/first-live always fire) + AST gate for every _send_slack_dm call site + scheduler integration test
 
 **Wave 3** *(blocked on Wave 2)*
@@ -255,7 +255,7 @@ Plans:
 |-------|-----------|----------------|--------|-----------|
 | 1. Foundation & Vertical Slice | v1.0 | 9/9 | Complete ✅ | 2026-06-15 |
 | 2. OrderGuard & Real-Money Alpaca Live | v2.0 | 7/7 | Complete   | 2026-06-17 |
-| 3. Production HITL UX | v2.0 | 1/7 | In Progress|  |
+| 3. Production HITL UX | v2.0 | 2/7 | In Progress|  |
 | 4. Agent Architecture & Cost Bounds | v2.0 | 0/0 | Not started | - |
 | 5. Trust Ladder | v2.0 | 0/0 | Not started | - |
 | 6. Web Dashboard & Multi-User Auth | v3.0 | 0/0 | Not started | - |
