@@ -665,3 +665,104 @@ async def test_send_slack_dm_preserves_text_verbatim(
     await executor._send_slack_dm(user_id="chris", text=body)
 
     assert chat_postMessage.await_args.kwargs["text"] == body
+
+
+# ---------------------------------------------------------------------------
+# 12. Paper approve path — Plan 03-12 triage
+#
+# Root cause of the "broker not configured" UAT observation was Scenario A
+# (market closed): the string only exists in alpaca_data.py (Researcher tool
+# fallback) and is NEVER on the executor path.  During off-hours UAT the
+# market-closed guard fires → FAILED.  These tests prove:
+#
+#   (a) With is_market_open=True the paper path goes APPROVED -> EXECUTING
+#       with a monkeypatched broker — no BrokerOrderError raised.
+#   (b) The string "broker not configured" is absent from executor.py and
+#       routes.py source bytes (architectural assertion for CI).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_paper_approve_path_executes_without_broker_not_configured_error(
+    temp_sqlcipher_db: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Plan 03-12 triage: paper approve path reaches broker.place_order.
+
+    Scenario A confirmed: with is_market_open monkeypatched to True, a
+    paper proposal transitions APPROVED -> EXECUTING without raising
+    BrokerOrderError('broker not configured').  The 'broker not configured'
+    log message the operator observed during UAT originated in
+    alpaca_data.py (Researcher tool fallback; ctx.broker is None when no
+    broker context is set for the agent run) — not the executor path.
+    """
+    from gekko.execution import executor
+
+    sf = make_session_factory(temp_sqlcipher_db)
+    proposal_id, _, tp = await _seed(sf)
+
+    monkeypatch.setattr(
+        executor, "_get_session_factory", lambda _u: (sf, None)
+    )
+    monkeypatch.setattr(executor, "is_market_open", lambda *a, **k: True)
+
+    # Monkeypatched broker — simulates successful paper order placement.
+    broker = MagicMock()
+    broker.place_order = AsyncMock(
+        return_value=_success_order_result(client_order_id=tp.client_order_id)
+    )
+    # _build_broker is the test seam; return a plain MagicMock (no awaitable
+    # needed because the executor's isawaitable check handles sync returns).
+    monkeypatch.setattr(executor, "_build_broker", lambda *a, **k: broker)
+
+    # Must NOT raise BrokerOrderError (or any exception).
+    await executor.execute_proposal(proposal_id, "test-user")
+
+    # Paper broker was called exactly once — confirms the executor reached
+    # step 4 (broker submission) without being blocked by the market-closed
+    # guard or by any 'broker not configured' error path.
+    broker.place_order.assert_awaited_once()
+
+    # Proposal is EXECUTING (not FAILED) — confirms the paper path succeeded.
+    async with sf() as session:
+        row = (
+            await session.execute(
+                select(ProposalRow).where(ProposalRow.proposal_id == proposal_id)
+            )
+        ).scalar_one()
+        assert row.status == "EXECUTING", (
+            f"Expected EXECUTING on the paper path but got {row.status!r}. "
+            "If FAILED, check whether is_market_open monkeypatch fired correctly."
+        )
+
+    # order_submitted audit event was written — full happy path completed.
+    async with sf() as session:
+        submitted_events = (
+            await session.execute(
+                select(Event).where(Event.event_type == "order_submitted")
+            )
+        ).scalars().all()
+        assert len(submitted_events) == 1
+
+
+def test_broker_not_configured_string_absent_from_executor_source() -> None:
+    """Plan 03-12 triage: architectural grep gate.
+
+    'broker not configured' must NEVER appear in executor.py or routes.py.
+    The string is confined to alpaca_data.py (Researcher get_quote fallback).
+    Any future accidental copy-paste of that error message into the executor
+    path would be a misleading log — this gate catches it at CI time.
+    """
+    import gekko.execution.executor as _exec_mod
+    import gekko.dashboard.routes as _routes_mod
+
+    executor_src = open(_exec_mod.__file__, encoding="utf-8").read()
+    routes_src = open(_routes_mod.__file__, encoding="utf-8").read()
+
+    assert "broker not configured" not in executor_src, (
+        "executor.py must not contain 'broker not configured' — that string "
+        "belongs in alpaca_data.py (Researcher fallback) only. Its presence "
+        "here would produce misleading logs when the executor path fails."
+    )
+    assert "broker not configured" not in routes_src, (
+        "routes.py must not contain 'broker not configured' — same reason."
+    )
