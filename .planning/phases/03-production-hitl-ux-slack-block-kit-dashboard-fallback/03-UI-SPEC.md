@@ -395,47 +395,80 @@ The qty input retains the operator's last-typed value. NO state change, NO audit
 4. **Page hero** (24px display): "Pending Approvals" (left-aligned, 32px margin-top below the nav).
 5. **Proposal-card list** (HTMX-rendered, 16px gap between cards) OR **empty state**.
 
-**Proposal card structure (`_proposal_card.html.j2` partial — SHARED between dashboard render and Slack render via a `surface` context flag):**
+**Compact Card Contract** (formalized 2026-06-19 — Plan 03-13)
+
+> "The card is scannable at-a-glance: SIDE/QTY/TICKER is the action, $cost is the exposure, the 1-line summary is the why. Full rationale/evidence are secondary — collapsed by default under `<details>`. This layout was prototyped live during UAT 2026-06-19 and formalized here."
+
+Card header: `SIDE QTY TICKER` (left, 24px semibold) + `$X,XXX.XX` cost chip (right-aligned).
+Below header: `proposal-card-summary` — 1-line truncated summary (max 140 chars) visible by default.
+Below summary: `<details>` collapsed block with full rationale + evidence list.
+Actions row: Approve / Reject / Edit size / Open in Slack.
+
+**Proposal card structure (`_proposal_card.html.j2` partial):**
 
 ```html
 <article class="proposal-card {{ 'expired' if status == 'EXPIRED' else '' }}"
          aria-label="Proposal for {{ ticker }} {{ side }} {{ qty }} shares"
          data-proposal-id="{{ proposal_id }}">
+
+  {# Card header: SIDE QTY TICKER + dollar cost + status chips #}
   <div class="proposal-card-header">
-    <span class="proposal-card-ticker">{{ ticker }} {{ side }} {{ qty }}</span>
+    <span class="proposal-card-ticker">{{ side }} {{ qty }} {{ ticker }}</span>
     <div>
+      {% if cost %}<span class="proposal-card-cost" aria-label="estimated cost">{{ cost }}</span>{% endif %}
       {% if account_mode == "LIVE" %}<span class="chip-live">LIVE</span>{% endif %}
       {% if status == "EXPIRED" %}<span class="chip-expired">EXPIRED</span>{% endif %}
       {% if status == "AWAITING_2ND_CHANNEL" %}<span class="chip-awaiting">AWAITING 2ND CHANNEL</span>{% endif %}
     </div>
   </div>
 
-  <div class="proposal-card-rationale">{{ rationale }}</div>
+  {# 1-line summary — visible by default; max 140 chars truncated with ellipsis #}
+  {% if summary %}<div class="proposal-card-summary">{{ summary }}</div>{% endif %}
 
-  <details class="proposal-card-evidence">
-    <summary>Evidence ({{ evidence | length }} snippets)</summary>
-    <ul>{% for e in evidence %}<li>{{ e.summary }} — <a href="{{ e.url }}">{{ e.source_type }}</a></li>{% endfor %}</ul>
+  {# Full rationale + evidence — collapsed by default (scannable card) #}
+  {% if rationale or evidence %}
+  <details class="proposal-card-details">
+    <summary>Details</summary>
+    {% if rationale %}<p class="proposal-card-rationale">{{ rationale }}</p>{% endif %}
+    {% if evidence %}
+    <ul>{% for e in evidence %}<li>{{ e.summary }} — <a href="{{ e.url }}" rel="noopener noreferrer">{{ e.source_type }}</a></li>{% endfor %}</ul>
+    {% endif %}
   </details>
+  {% endif %}
 
   {% if status == "PENDING" %}
     <div class="proposal-card-actions">
-      <button class="btn-primary"   hx-post="/approvals/{{ proposal_id }}/approve"   hx-target="closest article" hx-swap="outerHTML" hx-disable-elt="this">Approve</button>
-      <button class="btn-secondary" hx-post="/approvals/{{ proposal_id }}/reject"    hx-target="closest article" hx-swap="outerHTML" hx-disable-elt="this">Reject</button>
-      <button class="btn-secondary" hx-get ="/approvals/{{ proposal_id }}/edit-size" hx-target="#modal-mount"     hx-swap="innerHTML">Edit size</button>
-      {# Escalate from dashboard is just "Open in Slack" — symmetric with the Slack-side URL button to /approvals #}
+      <button class="btn-primary" hx-post="/approvals/{{ proposal_id }}/approve" hx-target="closest article" hx-swap="outerHTML" hx-disable-elt="this">Approve</button>
+      <button class="btn-secondary" hx-post="/approvals/{{ proposal_id }}/reject" hx-target="closest article" hx-swap="outerHTML" hx-disable-elt="this">Reject</button>
+      <button class="btn-secondary" hx-get="/approvals/{{ proposal_id }}/edit-size" hx-target="#modal-mount" hx-swap="innerHTML">Edit size</button>
+      {% if slack_team_id and slack_channel_id %}
       <a href="slack://channel?team={{ slack_team_id }}&id={{ slack_channel_id }}" class="btn-tertiary">Open in Slack</a>
+      {% endif %}
     </div>
   {% elif status == "EXPIRED" %}
     <div class="proposal-card-expired-status">
-      ⏰ Expired at {{ expired_at_local }} — not executed (timeout=REJECT after {{ timeout_minutes }} min).
+      Expired{% if expired_at_local %} at {{ expired_at_local }}{% endif %} — not executed (timeout=REJECT after {{ timeout_minutes }} min).
     </div>
   {% elif status == "AWAITING_2ND_CHANNEL" %}
     <div class="proposal-card-actions">
       <a class="btn-primary" href="/live-confirm/{{ proposal_id }}">Open dual-channel confirm</a>
     </div>
   {% endif %}
+
 </article>
 ```
+
+**Context builder (`_build_proposal_ctx` in `routes.py`):**
+
+| Field | Source | Format |
+|-------|--------|--------|
+| `side` | `proposal.side` column (UPPER) | `"BUY"` / `"SELL"` |
+| `qty` | `proposal.qty` column | string |
+| `ticker` | `proposal.ticker` column | string |
+| `cost` | `payload.target_notional_usd` | `f"${Decimal(str(cost_raw)):,.2f}"` (e.g. `"$1,234.56"`) |
+| `summary` | `rationale` first 140 chars + ellipsis | 1-line truncated prose |
+| `rationale` | `payload.rationale` | full text (inside `<details>`) |
+| `evidence` | `payload.evidence[]` | `{summary, url, source_type}` list |
 
 **Empty state (when zero PENDING/AWAITING_2ND_CHANNEL/EXPIRED proposals):**
 
@@ -469,6 +502,8 @@ The qty input retains the operator's last-typed value. NO state change, NO audit
 
 1. An `expired=True` branch that swaps the action buttons for the disabled-status text line (Surface 4 below).
 2. The escalate button's `action_id` is replaced with a `url` field pointing at `f"{DASHBOARD_BASE_URL}/approvals/{proposal_id}"` (D-60). This is the **Slack-to-dashboard handoff**; symmetric with the dashboard's `slack://` deeplink.
+
+**Slack compact-card parity: DEFERRED.** The dashboard compact card (SIDE/QTY/TICKER/$cost/summary) was prototyped live during UAT 2026-06-19 and formalized in Plan 03-13. Bringing the Slack Block Kit card to the same compact-card layout is a lower-priority change — it requires a `build_proposal_card` rewrite and carries no safety risk (Slack card uses full rationale format, which is verbose but correct). This Slack Block Kit redesign is deferred to a future plan and is not part of the Plan 03-13 scope.
 
 ---
 
