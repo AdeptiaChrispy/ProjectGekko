@@ -24,10 +24,14 @@
          aria-label="Proposal for {{ ticker }} {{ side }} {{ qty }} shares"
          data-proposal-id="{{ proposal_id }}">
 
-  {# Card header: ticker + side + qty + status chips #}
+  {# Card header: the trade (SIDE QTY TICKER) + dollar cost + status chips.
+     Deliberately compact — full rationale/evidence are secondary (collapsed). #}
   <div class="proposal-card-header">
-    <span class="proposal-card-ticker">{{ ticker }} {{ side }} {{ qty }}</span>
+    <span class="proposal-card-ticker">{{ side }} {{ qty }} {{ ticker }}</span>
     <div>
+      {% if cost %}
+      <span class="proposal-card-cost" aria-label="estimated cost">{{ cost }}</span>
+      {% endif %}
       {% if account_mode == "LIVE" %}
       <span class="chip-live" aria-label="status: live mode">LIVE</span>
       {% endif %}
@@ -39,18 +43,23 @@
     </div>
   </div>
 
-  {# Rationale — LLM-authored text (escaped by Jinja2 autoescape) #}
-  <div class="proposal-card-rationale">{{ rationale }}</div>
+  {# One-line summary — the gist, not the full rationale (escaped by autoescape) #}
+  {% if summary %}
+  <div class="proposal-card-summary">{{ summary }}</div>
+  {% endif %}
 
-  {# Evidence snippets — collapsible #}
-  {% if evidence %}
-  <details class="proposal-card-evidence">
-    <summary>Evidence ({{ evidence | length }} snippets)</summary>
+  {# Full rationale + evidence — collapsed by default so the card stays scannable #}
+  {% if rationale or evidence %}
+  <details class="proposal-card-details">
+    <summary>Details</summary>
+    {% if rationale %}<p class="proposal-card-rationale">{{ rationale }}</p>{% endif %}
+    {% if evidence %}
     <ul>
       {% for e in evidence %}
       <li>{{ e.summary }} — <a href="{{ e.url }}" rel="noopener noreferrer">{{ e.source_type }}</a></li>
       {% endfor %}
     </ul>
+    {% endif %}
   </details>
   {% endif %}
 

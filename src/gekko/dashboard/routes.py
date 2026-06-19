@@ -220,11 +220,24 @@ def _build_proposal_ctx(row: Any) -> dict[str, Any]:
         except (ValueError, TypeError):
             pass
 
+    # Compact-card fields (legibility): dollar cost + one-line summary so the
+    # operator sees "what + how much + why (briefly)" without a wall of text.
+    cost_raw = payload.get("target_notional_usd")
+    try:
+        cost = f"${Decimal(str(cost_raw)):,.2f}" if cost_raw not in (None, "") else ""
+    except (InvalidOperation, ValueError, TypeError):
+        cost = ""
+    summary = rationale.strip().replace("\n", " ")
+    if len(summary) > 140:
+        summary = summary[:139].rstrip() + "…"
+
     return {
         "proposal_id": row.proposal_id,
         "ticker": getattr(row, "ticker", payload.get("ticker", "")),
         "side": str(getattr(row, "side", payload.get("side", ""))).upper(),
         "qty": str(getattr(row, "qty", payload.get("qty", ""))),
+        "cost": cost,
+        "summary": summary,
         "rationale": rationale,
         "evidence": evidence,
         "status": row.status,
