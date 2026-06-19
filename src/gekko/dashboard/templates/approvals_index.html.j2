@@ -12,7 +12,24 @@
 {# Proposal-card list or empty state #}
 {% if proposals %}
   {% for proposal in proposals %}
-    {% include "_proposal_card.html.j2" %}
+    {# _proposal_card.html.j2 reads FLAT context vars (proposal_id, ticker, ...),
+       so unpack each proposal dict into the include's namespace. Without this the
+       bare names are undefined and every card renders blank (DASH-04 regression). #}
+    {% with proposal_id=proposal.proposal_id,
+            ticker=proposal.ticker,
+            side=proposal.side,
+            qty=proposal.qty,
+            rationale=proposal.rationale,
+            evidence=proposal.evidence,
+            status=proposal.status,
+            account_mode=proposal.account_mode,
+            expires_at=proposal.expires_at,
+            expired_at_local=proposal.expired_at_local,
+            timeout_minutes=proposal.timeout_minutes,
+            slack_team_id=proposal.slack_team_id,
+            slack_channel_id=proposal.slack_channel_id %}
+      {% include "_proposal_card.html.j2" %}
+    {% endwith %}
   {% endfor %}
 {% else %}
 <div class="empty-state" role="status">

@@ -137,3 +137,55 @@ def test_proposal_card_shared_partial_schema() -> None:
     assert "hx-post" in html, "proposal card must have HTMX hx-post actions"
     assert "approve" in html.lower(), "approve button must be present for PENDING card"
     assert "reject" in html.lower(), "reject button must be present for PENDING card"
+
+
+def test_approvals_index_unpacks_proposal_dict_into_cards() -> None:
+    """DASH-04 regression: the /approvals index must render populated cards.
+
+    The index loops `{% for proposal in proposals %}` and includes the shared
+    partial, which reads FLAT context vars (proposal_id, ticker, ...). If the
+    index doesn't unpack each proposal dict into those names, every card renders
+    blank (data-proposal-id="", empty ticker) — which reads as "no proposals" to
+    the operator and breaks the Slack-down fallback. This renders the real index
+    with a route-shaped proposal dict and asserts the card is NOT blank.
+    """
+    templates_dir = (
+        Path(__file__).parent.parent.parent
+        / "src" / "gekko" / "dashboard" / "templates"
+    )
+    env = Environment(
+        loader=FileSystemLoader(str(templates_dir)),
+        autoescape=True,
+    )
+
+    # Mirrors _build_proposal_ctx() output shape (dashboard/routes.py).
+    proposal_ctx = {
+        "proposal_id": "deadbeef-pid-0001",
+        "ticker": "NVDA",
+        "side": "BUY",
+        "qty": "2",
+        "rationale": "AI infra tailwinds remain strong into Q3",
+        "evidence": [],
+        "status": "PENDING",
+        "account_mode": "PAPER",
+        "expires_at": None,
+        "expired_at_local": "",
+        "timeout_minutes": 30,
+        "slack_team_id": "",
+        "slack_channel_id": "",
+    }
+
+    tmpl = env.get_template("approvals_index.html.j2")
+    # No request → base.html.j2 banner blocks are guarded and skipped.
+    html = tmpl.render(proposals=[proposal_ctx], request=None, user_id="testuser")
+
+    # The card must carry the real proposal_id (was "" before the unpack fix).
+    assert 'data-proposal-id="deadbeef-pid-0001"' in html, (
+        "index must unpack proposal.proposal_id into the card (DASH-04 blank-card regression)"
+    )
+    assert "NVDA" in html, "ticker must render in the index card"
+    assert "/approvals/deadbeef-pid-0001/approve" in html, (
+        "PENDING card must wire the approve action with the real proposal_id"
+    )
+    # The empty-state must NOT appear when proposals are present.
+    assert "agent is waiting for the next research cycle" not in html
