@@ -3,17 +3,12 @@ status: partial
 phase: 03-production-hitl-ux-slack-block-kit-dashboard-fallback
 source: [03-VERIFICATION.md]
 started: 2026-06-18T14:00:00Z
-updated: 2026-06-18T14:00:00Z
+updated: 2026-06-19T00:00:00Z
 ---
 
 ## Current Test
 
-number: 2
-name: Edit-size modal interaction
-expected: |
-  Modal closes, card updates to APPROVED state, executor fires in background;
-  the OrderGuard 2% drift check re-applies on the edited size.
-awaiting: user response
+[testing complete — 2026-06-19; findings routed to gap-closure]
 
 ## Tests
 
@@ -49,37 +44,97 @@ finding: |
 
 ### 3. Quiet-hours queuing behavior over time
 expected: No Slack DM arrives during the quiet window; DM arrives when the window opens. Safety-critical categories (kill, executor errors, first-live fills, proposal expiry) still fire during quiet hours.
-result: [pending]
+result: skipped
+reason: "Time-gated — requires a real multi-hour quiet window. Deferred; verify naturally during overnight running. Unit/integration coverage exists (test_quiet_hours_*, test_scheduler_quiet_hours)."
 
 ### 4. Dashboard fallback end-to-end (Slack unavailable)
 expected: Operator logs in (passphrase), approves/rejects/edits via /approvals; proposal transitions to APPROVED, executor fires, fill recorded in audit log — identical to the Slack path. Unauthenticated access to /live-confirm, /kill, /unkill, /promote-to-live, /trigger redirects to /login.
-result: [pending]
+result: issue
+reported: "Auth gate works (unauth → /login). But /approvals showed NOTHING despite PENDING proposals (DASH-04 blank-card bug — fixed this session). Also: approve → executor fails with 'broker not configured' so the order never fills; and the page is not live (new proposals don't appear without a manual reload)."
+severity: major
+finding: |
+  Three sub-findings under DASH-04 dashboard fallback:
+  (a) FIXED this session: /approvals rendered blank cards — the index didn't unpack the
+      proposal dict into the partial's flat vars. Cards now render + are actionable.
+  (b) OPEN: paper order PLACEMENT fails on approve — executor logs
+      'BrokerOrderError: broker not configured; falling back to yahooquery' and the proposal
+      goes FAILED (14ef...). Trading STREAM connects (paper) but the order-placement client
+      appears unconfigured. Needs triage: config vs code wiring gap. Blocks the 'executes
+      identically' half of SC-5.
+  (c) UX gap: /approvals is not live — new proposals don't appear until manual reload (no
+      polling/SSE). Compounded by the 30-min expiry, the operator can miss/lose proposals.
+  Plus compact-card redesign (logged separately) — too text-heavy; reworked to trade+cost+summary.
 
 ### 5. Daily P&L digest at 16:30 ET on a NYSE trading day
 expected: Block Kit digest with correct gross P&L (BUYs subtract, SELLs add), per-strategy breakdown by strategy name — no `_unknown_` buckets, no sign-flipped SELLs.
-result: [pending]
+result: skipped
+reason: "Time-gated — fires at 16:30 ET on a trading day. Deferred; verify at a real market close. CR-02 fix (strategy_name+side in fill payload) is unit-tested (test_daily_pnl_aggregation, test_fill_payload_fields)."
 
 ## Summary
 
 total: 5
-passed: 0
-issues: 0
-pending: 5
-skipped: 0
+passed: 1
+issues: 2
+pending: 0
+skipped: 2
 blocked: 0
 
 ## Gaps
 
+# NOTE: Bugs marked [RESOLVED-IN-SESSION] were fixed live during this UAT (committed).
+# Remaining OPEN gaps are the gap-closure scope for /gsd-plan-phase 3 --gaps.
+
 - truth: "Operator can run the app against an existing database (migrations apply cleanly to a DB that already holds rows)"
-  status: failed
-  reason: "User ran `alembic upgrade head` against the live DB (at rev 0001). 0002_orderguard's `batch_alter_table('users')` recreates the table (DROP TABLE users) but FK enforcement is ON and child rows reference users → `FOREIGN KEY constraint failed`. migrations/env.py sets render_as_batch=True but never disables PRAGMA foreign_keys around the migration (and the pragma is a no-op inside a transaction). The Alembic round-trip test only runs on an empty DB, so the FK-with-data path was never exercised. Blocks the app from starting (expiry sweep then fails on missing proposals.account_mode). Prerequisite blocker for UAT Tests 2-5."
+  status: resolved   # [RESOLVED-IN-SESSION] via /gsd-debug → migrations/env.py FK-toggle + regression test
+  reason: "0002/0004 batch_alter_table recreated FK-referenced parents with FK enforcement ON → DROP TABLE refused. Fixed: env.py disables PRAGMA foreign_keys on the raw connection outside the transaction. Live DB migrated to 0004 successfully."
   severity: blocker
   test: prerequisite
+
+- truth: "HITL proposal card is delivered to the operator's Slack DM"
+  status: resolved   # [RESOLVED-IN-SESSION]
+  reason: "post_run_result posted channel=gekko_user_id ('chris') → channel_not_found. Fixed to settings.slack_user_id (+ regression test). Card now delivers."
+  severity: blocker
+  test: 1
+
+- truth: "Operator can edit the order size from an understandable UI and approve the resized order"
+  status: failed   # OPEN — gap-closure
+  reason: "Edit-size modal rejects any real resize (2% drift vs agent notional blocks even 2->3) and shows a cryptic 'outside the range'. See Test 2 finding for the full operator-approved redesign (plain-language shares+$total, easy increment + live feedback, validate against OrderGuard hard caps not 2% notional, plain-language bounds). UI-contract change: update 03-UI-SPEC.md + D-54."
+  severity: major
+  test: 2
   artifacts:
-    - "migrations/env.py — _do_run_migrations / run_migrations_online: no PRAGMA foreign_keys=OFF around batch table-rebuild"
-    - "migrations/versions/0002_orderguard.py — batch_alter_table('users') triggers table recreate + DROP"
-    - "tests: alembic round-trip test runs on empty DB; no seeded-data + FK-children migration test"
+    - "src/gekko/approval/slack_handler.py — handle_edit_size (modal) + handle_edit_size_view_submission (_drift_check vs target_notional)"
+    - "src/gekko/approval/actions.py — _drift_check"
+    - "src/gekko/dashboard/ — D-55 dashboard edit-size mirror must match"
   missing:
-    - "Disable FK enforcement during migrations on the raw connection OUTSIDE the transaction (PRAGMA foreign_keys=OFF before run, ON after), per Alembic SQLite batch guidance"
-    - "Add a regression test that seeds users + child rows then runs `alembic upgrade head` end-to-end (would have caught this)"
-    - "Document/automate cleanup of a stray _alembic_tmp_* table left by a failed batch, and a DB backup step"
+    - "Redesign edit-size modal for legibility (Slack + dashboard): plain-language framing, share stepper w/ live $total"
+    - "Validate edited qty against strategy OrderGuard hard caps (max position/order size), not 2% target-notional drift"
+    - "Plain-language rejection messages with the actual allowed bound"
+    - "Update 03-UI-SPEC.md + D-54 to reflect the new contract"
+
+- truth: "Dashboard /approvals card is scannable (trade + cost + short summary), not a wall of text"
+  status: in_progress   # prototyped live this session; formalize + reconcile with UI-SPEC
+  reason: "Card was too text-heavy (full rationale + evidence). Reworked live to SIDE QTY TICKER + $cost + 1-line summary, with full rationale/evidence collapsed. Needs serve restart to surface cost/summary (Python not hot-reloaded), and 03-UI-SPEC.md Surface 2 must be updated to match."
+  severity: minor
+  test: 4
+  missing:
+    - "Finalize compact-card design + dollar formatting; update 03-UI-SPEC.md Surface 2"
+    - "Apply the same compact treatment to the Slack Block Kit card if desired (parity)"
+
+- truth: "Approving a paper proposal executes the order and records a fill (executes identically to Slack path)"
+  status: failed   # OPEN — needs triage (config vs code)
+  reason: "On approve, executor logs 'BrokerOrderError: broker not configured; falling back to yahooquery' and the proposal goes FAILED — the order never places/fills. Trading STREAM connects (paper) but the order-placement broker client appears unconfigured. Blocks the execution half of DASH-04 / SC-5."
+  severity: major
+  test: 4
+  artifacts:
+    - "src/gekko/execution/executor.py — broker resolution / place_order path"
+    - "src/gekko/agent/tools/alpaca_data.py — 'broker not configured' fallback origin"
+  missing:
+    - "Triage whether paper order placement needs broker_credentials config or a code wiring gap; fix so approve → place → fill works on paper"
+
+- truth: "Dashboard /approvals reflects new proposals without a manual reload"
+  status: failed   # OPEN — UX gap
+  reason: "/approvals is static — new proposals don't appear until the operator reloads (no polling/SSE). Combined with the 30-min expiry, proposals can be missed/lost. Operator expected the dashboard to surface new trades live."
+  severity: minor
+  test: 4
+  missing:
+    - "Add lightweight live refresh to /approvals (HTMX polling or SSE) so new/expired proposals update without manual reload"
