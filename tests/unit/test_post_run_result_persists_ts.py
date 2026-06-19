@@ -191,6 +191,14 @@ async def test_happy_path_ts_persisted(temp_sqlcipher_db: Any) -> None:
             account_mode="PAPER",
         )
 
+    # Regression (channel_not_found): the card must be DM'd to the operator's
+    # Slack member ID (settings.slack_user_id), NOT the internal gekko user_id.
+    from gekko.config import get_settings
+
+    call_kwargs = mock_slack.client.chat_postMessage.call_args.kwargs
+    assert call_kwargs["channel"] == get_settings().slack_user_id
+    assert call_kwargs["channel"] != "test-post-run-user"
+
     # Verify the Proposal row was updated with ts + channel
     async with sf() as session:
         row = (

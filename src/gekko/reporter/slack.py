@@ -696,8 +696,14 @@ async def post_run_result(
     # Lazy imports — slack_app construction requires env vars, and the
     # schemas pull in heavy validation logic we don't need at module
     # load time.
+    from gekko.config import get_settings
     from gekko.schemas.proposal import NoActionProposal, TradeProposal
     from gekko.slack.app import slack_app
+
+    # The DM target is the operator's Slack member ID, NOT the internal gekko
+    # user_id. Passing user_id (e.g. "chris") as channel yields channel_not_found.
+    # Mirrors gekko.execution.executor._send_slack_dm (the canonical DM path).
+    slack_channel = get_settings().slack_user_id
 
     outcome = result.get("outcome")
     payload = result.get("proposal")
@@ -714,7 +720,7 @@ async def post_run_result(
             f"(strategy={tp.strategy_name})"
         )
         response = await slack_app.client.chat_postMessage(
-            channel=user_id, blocks=blocks, text=fallback
+            channel=slack_channel, blocks=blocks, text=fallback
         )
         # Persist ts + channel so Plan 03-04's chat.update of the expired card
         # has the coordinates to target (D-53). Best-effort: failure is logged
@@ -728,7 +734,7 @@ async def post_run_result(
     elif outcome == "propose_no_action":
         na = NoActionProposal.model_validate(payload)
         await slack_app.client.chat_postMessage(
-            channel=user_id, text=build_no_action_message(na)
+            channel=slack_channel, text=build_no_action_message(na)
         )
     # else: unknown outcome -> no-op (defensive; tests use sentinel values).
 
