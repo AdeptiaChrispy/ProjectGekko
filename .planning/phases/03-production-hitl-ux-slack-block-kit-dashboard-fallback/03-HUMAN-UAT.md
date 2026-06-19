@@ -3,7 +3,7 @@ status: partial
 phase: 03-production-hitl-ux-slack-block-kit-dashboard-fallback
 source: [03-VERIFICATION.md]
 started: 2026-06-18T14:00:00Z
-updated: 2026-06-19T00:00:00Z
+updated: 2026-06-19T18:00:00Z
 ---
 
 ## Current Test
@@ -82,7 +82,10 @@ blocked: 0
 ## Gaps
 
 # NOTE: Bugs marked [RESOLVED-IN-SESSION] were fixed live during this UAT (committed).
-# Remaining OPEN gaps are the gap-closure scope for /gsd-plan-phase 3 --gaps.
+# The 4 OPEN gaps were closed by gap-closure plans 03-11/03-12/03-13 (verified static,
+#   2026-06-19) and are now status: resolved. Live/time-gated behaviors (edit-size in a
+#   real Slack modal, dashboard approve→fill during market hours, quiet-hours timing,
+#   daily P&L digest) remain human-verify items — confirm via /gsd-verify-work 3.
 
 - truth: "Operator can run the app against an existing database (migrations apply cleanly to a DB that already holds rows)"
   status: resolved   # [RESOLVED-IN-SESSION] via /gsd-debug → migrations/env.py FK-toggle + regression test
@@ -97,7 +100,8 @@ blocked: 0
   test: 1
 
 - truth: "Operator can edit the order size from an understandable UI and approve the resized order"
-  status: failed   # OPEN — gap-closure
+  status: resolved   # closed by Plan 03-11 (verified static; live Slack modal behavior still a human-verify item)
+  reason_resolved: "Plan 03-11: _check_edit_size_caps validates operator edits against OrderGuard hard caps (max_position_pct * equity), not 2% drift; wired on both Slack + dashboard paths; plain-language framing + bounds; 03-UI-SPEC.md Surface 1 + D-54 updated. Code-review CR-01 (fail-open-on-strategy-load-failure) fixed to mode-aware fail-closed (LIVE blocks, PAPER lenient). 6 unit tests in test_edit_size_caps.py + dashboard cap-rejection + LIVE-fail-closed tests green."
   reason: "Edit-size modal rejects any real resize (2% drift vs agent notional blocks even 2->3) and shows a cryptic 'outside the range'. See Test 2 finding for the full operator-approved redesign (plain-language shares+$total, easy increment + live feedback, validate against OrderGuard hard caps not 2% notional, plain-language bounds). UI-contract change: update 03-UI-SPEC.md + D-54."
   severity: major
   test: 2
@@ -112,7 +116,8 @@ blocked: 0
     - "Update 03-UI-SPEC.md + D-54 to reflect the new contract"
 
 - truth: "Dashboard /approvals card is scannable (trade + cost + short summary), not a wall of text"
-  status: in_progress   # prototyped live this session; formalize + reconcile with UI-SPEC
+  status: resolved   # closed by Plan 03-13 Task 2
+  reason_resolved: "Plan 03-13: _proposal_card.html.j2 finalized to SIDE QTY TICKER + $cost chip + 1-line summary with rationale/evidence in collapsed <details>; cost formatted $X,XXX.XX via _build_proposal_ctx; 03-UI-SPEC.md Surface 2 updated with Compact Card Contract. (Slack-card parity left as a deferred note.)"
   reason: "Card was too text-heavy (full rationale + evidence). Reworked live to SIDE QTY TICKER + $cost + 1-line summary, with full rationale/evidence collapsed. Needs serve restart to surface cost/summary (Python not hot-reloaded), and 03-UI-SPEC.md Surface 2 must be updated to match."
   severity: minor
   test: 4
@@ -121,7 +126,8 @@ blocked: 0
     - "Apply the same compact treatment to the Slack Block Kit card if desired (parity)"
 
 - truth: "Approving a paper proposal executes the order and records a fill (executes identically to Slack path)"
-  status: failed   # OPEN — needs triage (config vs code)
+  status: resolved   # closed by Plan 03-12 (triage: no code bug; live paper fill still a human-verify item)
+  reason_resolved: "Plan 03-12 triage: 'broker not configured' string lives ONLY in alpaca_data.py (Researcher get_quote fallback), NEVER on the executor path (grep-confirmed absent from executor.py + routes.py). The observed FAILED proposal was the market-closed guard firing during off-hours testing (Scenario A) — correct behavior. Tests added: paper approve path reaches EXECUTING with a configured broker; architectural grep gate keeps the string off the executor path. NOTE: actual paper place-then-fill during market hours remains a human-verify item."
   reason: "On approve, executor logs 'BrokerOrderError: broker not configured; falling back to yahooquery' and the proposal goes FAILED — the order never places/fills. Trading STREAM connects (paper) but the order-placement broker client appears unconfigured. Blocks the execution half of DASH-04 / SC-5."
   severity: major
   test: 4
@@ -132,7 +138,8 @@ blocked: 0
     - "Triage whether paper order placement needs broker_credentials config or a code wiring gap; fix so approve → place → fill works on paper"
 
 - truth: "Dashboard /approvals reflects new proposals without a manual reload"
-  status: failed   # OPEN — UX gap
+  status: resolved   # closed by Plan 03-13 Task 1
+  reason_resolved: "Plan 03-13: GET /approvals/poll registered on the authenticated router (require_session); approvals_index polls via hx-get=/approvals/poll hx-trigger='every 30s'; _proposals_list.html.j2 fragment added; modal-mount placed outside the polling container so edit-size modal survives refreshes."
   reason: "/approvals is static — new proposals don't appear until the operator reloads (no polling/SSE). Combined with the 30-min expiry, proposals can be missed/lost. Operator expected the dashboard to surface new trades live."
   severity: minor
   test: 4
