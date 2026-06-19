@@ -3,19 +3,19 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Safety & Trust
 status: executing
-last_updated: "2026-06-19T17:29:58.878Z"
+last_updated: "2026-06-19T17:45:45.800Z"
 last_activity: 2026-06-19
 progress:
   total_phases: 3
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 29
-  completed_plans: 28
-  percent: 67
+  completed_plans: 29
+  percent: 100
 ---
 
 # Project State: Project Gekko
 
-**Last updated:** 2026-06-19 (**Plan 03-12 complete — Triage: broker-not-configured failure on paper approve.** Root cause confirmed as Scenario A (market closed): the 'broker not configured' log during UAT originated in alpaca_data.py Researcher tool fallback (ctx.broker=None), never the executor path. executor.py and routes.py are correctly wired. Paper approve path confirmed working with monkeypatched broker. Two new tests added: paper path reaches EXECUTING when is_market_open=True, and architectural grep gate prevents 'broker not configured' from entering executor/routes source. 13/13 executor unit tests pass.)
+**Last updated:** 2026-06-19 (**Plan 03-13 complete — HTMX polling on /approvals + compact card formalization.** GET /approvals/poll added to authenticated router; _proposals_list.html.j2 fragment partial extracted; approvals_index.html.j2 polls every 30s with modal-mount outside polling container. Compact card (SIDE/QTY/TICKER/$cost/1-line summary/collapsed details) verified correct in code; 03-UI-SPEC.md Surface 2 updated with Compact Card Contract. Slack compact-card parity deferred.)
 
 ## Project Reference
 
@@ -26,7 +26,7 @@ progress:
 ## Current Position
 
 Phase: 03 (production-hitl-ux-slack-block-kit-dashboard-fallback) — EXECUTING
-Plan: 3 of 13
+Plan: 4 of 13
 Status: Ready to execute
 Last activity: 2026-06-19
 
@@ -52,6 +52,7 @@ Last activity: 2026-06-19
 | Phase 03 P10 | 20 | 2 tasks | 3 files |
 | Phase 03 P11 | 35min | 2 tasks | 6 files |
 | Phase 03 P12 | 30min | 1 tasks | 1 files |
+| Phase 03 P13 | 6min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -70,6 +71,12 @@ Last activity: 2026-06-19
 | SQLCipher whole-DB encryption + passphrase-on-start | ARCH recommendation chosen over STACK's Fernet+keychain for cross-platform parity (avoids silent failures when service runs without logged-in user session) |
 | Decimal for money math, idempotency via `client_order_id` | Non-negotiable per PITFALLS Pitfall 1 (Knight Capital prevention) |
 | Robinhood Agentic Trading API status check in P1 | Re-validate the official API before committing to browser adapter in P9 (per BROK-R-01 and PITFALLS Pitfall 8) |
+
+### Decisions from Plan 03-13 (added 2026-06-19)
+
+- _HTMX polling container wraps only the proposal list — modal-mount div is OUTSIDE the polling container._ The edit-size modal is loaded into #modal-mount; if the poll container wrapped modal-mount, the 30s refresh would clear the open modal. The boundary is explicit and load-bearing for correct UX.
+- _fragment partial _proposals_list.html.j2 does NOT extend base.html.j2._ The poll route returns this fragment directly; it must be a bare HTML fragment without a full page wrapper. This mirrors the _proposal_card.html.j2 pattern.
+- _Slack compact-card parity is deferred._ The dashboard compact card (SIDE/QTY/TICKER/$cost/summary) was verified and formalized. The Slack Block Kit card redesign is lower-priority, carries no safety risk, and is deferred to a future plan. Documented in 03-UI-SPEC.md Surface 2.
 
 ### Decisions from Plan 03-12 (added 2026-06-19)
 
