@@ -1,184 +1,246 @@
 ---
 phase: 03-production-hitl-ux-slack-block-kit-dashboard-fallback
-verified: 2026-06-18T14:00:00Z
+verified: 2026-06-19T18:00:00Z
 status: human_needed
-score: 5/5
+score: 4/4
 overrides_applied: 0
 re_verification:
-  previous_status: gaps_found
-  previous_score: 2/5
+  previous_status: human_needed
+  previous_score: 5/5
   gaps_closed:
-    - "CR-01: Dashboard auth gap — router-level Depends(require_session) now gates all safety-critical routes"
-    - "CR-02: Fill payload missing strategy_name+side — both fields added to on_fill_event fill_payload from tp_persisted"
-    - "CR-03: Audit integrity violation — _send_dm_blocks_respecting_quiet_hours now returns bool; send_daily_pnl_digest captures dispatched and writes delivered/suppressed_by_quiet_hours fields"
-    - "CR-04: Silent proposal expiry during quiet hours — expiry DM category changed from routine_fill to executor_error (D-48 bypass)"
-    - "WR-08: Dead retry gate — _extract_retry_num deleted; claim_action UNIQUE INSERT confirmed sole dedup primitive"
+    - "GAP 1 (edit-size redesign): _check_edit_size_caps replaces _drift_check as sole operator-edit gate on both Slack and dashboard paths; CR-01 mode-aware fail-closed wired; CR-02 division-by-zero guard wired"
+    - "GAP 2 (broker-not-configured triage): root cause confirmed as market-closed guard (Scenario A); 'broker not configured' is architecturally absent from executor.py and routes.py; test_paper_approve_path and test_broker_not_configured_string_absent_from_executor_source added"
+    - "GAP 3 (compact /approvals card): _proposal_card.html.j2 shows SIDE QTY TICKER + $cost + 1-line summary + collapsed details; cost formatted as $X,XXX.XX; 03-UI-SPEC.md Surface 2 updated with Compact Card Contract"
+    - "GAP 4 (/approvals live refresh): GET /approvals/poll registered on authenticated router; hx-get=/approvals/poll hx-trigger='every 30s' wired on approvals_index; _proposals_list.html.j2 fragment created; modal-mount outside polling container"
   gaps_remaining: []
   regressions: []
 human_verification:
-  - test: "Slack Block Kit card rendering and button layout"
-    expected: "Proposal card appears with approve / reject / edit-size / escalate-to-dashboard buttons; card is visually distinct for paper vs. live (paper chip vs. live chip)"
-    why_human: "Visual appearance and live Slack API response cannot be verified via grep"
-  - test: "Edit-size modal interaction"
-    expected: "Modal closes, card updates to APPROVED state, executor fires in background"
-    why_human: "Slack modal interaction requires live workspace; cannot simulate view_submission flow without Slack credentials"
+  - test: "Edit-size live behavior (cap validation in Slack modal)"
+    expected: "47→50 shares passes; 47→500 shares shows 'That's above your max of $X (~N shares)'; plain-language framing 'Edit order size — BUY 47 AAPL (~$9,400.00)'"
+    why_human: "Requires live Slack workspace; view_submission callback cannot be simulated without Slack credentials and a running socket connection"
+  - test: "Dashboard fallback end-to-end approval flow"
+    expected: "Approve from /approvals during market hours → proposal transitions APPROVED → EXECUTING → FILLED; audit log contains order_submitted + fill events; page polling surfaces status without reload"
+    why_human: "Requires live executor, open market hours, and a running ASGI stack; cannot simulate execute_proposal + broker.place_order via grep"
   - test: "Quiet-hours queuing behavior over time"
-    expected: "No Slack DM arrives during the quiet window; DM arrives when the window opens"
+    expected: "No Slack DM arrives during the quiet window; DM arrives when the window opens; executor_error DMs (expiry, kill) still fire during quiet hours"
     why_human: "Real-time behavior over 2+ hours cannot be verified statically"
-  - test: "Dashboard fallback end-to-end (Slack unavailable)"
-    expected: "Proposal transitions to APPROVED, executor fires, fill recorded in audit log — identical to Slack path"
-    why_human: "Requires live dashboard session + executor running; cannot simulate ASGI transport without full app stack"
   - test: "Daily P&L digest at 16:30 ET on a NYSE trading day"
-    expected: "Block Kit digest with correct gross P&L (BUYs subtract, SELLs add), per-strategy breakdown by strategy name — no _unknown_ buckets, no sign-flipped SELLs"
-    why_human: "Requires real fill events post-fix; static analysis confirms the fix is in place but cannot produce actual fill events to observe digest output"
+    expected: "Block Kit digest shows gross P&L (BUYs subtract, SELLs add), per-strategy breakdown by strategy name — no _unknown_ buckets, no sign-flipped SELLs"
+    why_human: "Requires real fill events from a live or paper trading session; static analysis confirms the implementation is correct but cannot produce actual fills"
 ---
 
-# Phase 3: Production HITL UX Verification Report
+# Phase 03: Production HITL UX — Gap-Closure Re-Verification Report
 
 **Phase Goal:** User has a production-grade approval surface — idempotent Slack buttons that survive at-least-once delivery, configurable quiet hours, timeout=REJECT default, edit-size and escalate-to-dashboard options, stale-proposal expiry, dashboard fallback, and a daily P&L digest with severity-tier executor-error DMs.
-**Verified:** 2026-06-18T14:00:00Z
+**Verified:** 2026-06-19T18:00:00Z
 **Status:** human_needed
-**Re-verification:** Yes — after gap closure (plans 03-08, 03-09, 03-10)
+**Re-verification:** Yes — gap-closure plans 03-11, 03-12, 03-13 (verifying 4 OPEN UAT gaps)
 
-## Gap Closure Status
+## Re-verification Scope
 
-All four BLOCKERs from the initial verification (2026-06-18T00:00:00Z, score 2/5) are closed. The WR-08 WARNING (dead retry gate) is also closed. No new regressions introduced.
+This is a targeted re-verification of the 4 OPEN gaps from 03-HUMAN-UAT.md. The previous verification (2026-06-18T14:00:00Z, status: human_needed, score 5/5) confirmed all core truths. The gap-closure plans 03-11/12/13 addressed the 4 remaining open gaps. Previously-verified surfaces receive regression checks only.
 
-| Gap | Prior Status | Now | Closure Evidence |
-|-----|-------------|-----|-----------------|
-| CR-01: Dashboard auth | BLOCKER | CLOSED | `router = APIRouter(dependencies=[Depends(require_session)])` at line 116 of routes.py; all 8 safety-critical routes on gated `router`; `/login` and `/healthz` on separate `public_router`; 14-test regression suite in test_dashboard_auth_safety_routes.py |
-| CR-02: Fill payload strategy_name+side | BLOCKER | CLOSED | `fill_payload` dict at lines 849-875 of executor.py now includes `strategy_name` (from `tp_persisted.strategy_name`) and `side` (`str(tp_persisted.side).lower()`); defensive fallback for `tp_persisted is None` |
-| CR-03: Audit integrity violation | BLOCKER | CLOSED | `_send_dm_blocks_respecting_quiet_hours` returns `bool` (line 328 daily_pnl.py); `dispatched` captured at line 422; `daily_pnl` audit event writes `delivered=dispatched` and `suppressed_by_quiet_hours=not dispatched` at lines 446-447 |
-| CR-04: Silent proposal expiry | BLOCKER | CLOSED | expiry.py line 386: `category="executor_error"` (was `"routine_fill"`); `executor_error` is in `_BYPASS_CATEGORIES` frozenset — bypasses quiet hours unconditionally |
-| WR-08: Dead retry gate | WARNING | CLOSED | `_extract_retry_num` function deleted from slack_handler.py (grep confirms no `def _extract_retry_num` definition); retry gate blocks removed from `handle_approve` and `handle_reject`; `claim_action` documented as sole dedup primitive |
+## Gap Closure Verification
 
-## Goal Achievement
+### GAP 1: Edit-size redesign (Plan 03-11)
 
-### Observable Truths
+**Required truth:** `_check_edit_size_caps` in `src/gekko/approval/actions.py` validates operator edits against OrderGuard hard caps (`max_position_pct * account_equity`), NOT the 2% target-notional drift. Wired into both Slack and dashboard paths. Mode-aware fail-closed for LIVE proposals (CR-01). Division-by-zero guard on zero `target_notional_usd` in audit event (CR-02).
+
+**Verification findings:**
+
+1. `src/gekko/approval/actions.py` — `_check_edit_size_caps(qty, ref_price, strategy, account_equity) -> tuple[bool, str]` exists at lines 63-119. Logic is Decimal-exact. Returns `(False, "Quantity must be at least 1 share.")` for qty <= 0. Returns `(False, "That's above your max of ${max_order_notional:,.2f} (~{max_shares_approx} shares) — pick a smaller number.")` when new_notional > max_order_notional. Fail-open when account_equity == 0. `_drift_check` preserved unchanged for agent-output validation. Status: VERIFIED
+
+2. `src/gekko/approval/slack_handler.py` — `handle_edit_size_view_submission` imports `_check_edit_size_caps` from `gekko.approval.actions` (confirmed line 733). `_drift_check` appears only in a docstring comment ("why _drift_check is wrong here"), NOT in the submission handler body. Cap check called at line 858: `ok, cap_msg = _check_edit_size_caps(new_qty, ref_price, strategy, equity)`. Status: VERIFIED
+
+3. `src/gekko/dashboard/routes.py` — `edit_size_submit` imports `_check_edit_size_caps` (line 586). Comment documents "_drift_check is NOT applied" (lines 576-578). Cap check called at line 767: `_ok, _cap_msg = _check_edit_size_caps(new_qty, ref_price, strategy_obj, equity)`. Status: VERIFIED
+
+4. **CR-01 (mode-aware fail-closed):** Both paths implement `if strategy is None:` check with mode-aware branching. LIVE proposals return an explicit cap-load-failed error to the operator; PAPER proposals remain fail-open (with OrderGuard as backstop). Confirmed at `slack_handler.py:833-858` and `routes.py:731-766`. Status: VERIFIED
+
+5. **CR-02 (division-by-zero guard):** `_edit_size_submit_workflow` in `slack_handler.py` now guards the `drift_pct` audit field computation at lines 932-940: `_drift_pct = abs(...) / _target_notional if _target_notional > Decimal("0") else Decimal("0")`. The `InvalidOperation` crash on market orders with `target_notional_usd == "0"` is fixed. Status: VERIFIED
+
+6. `src/gekko/dashboard/templates/edit_size_modal.html.j2` — Modal headline is `Edit order size — {{ side }} {{ qty }} {{ ticker }} (~${{ original_notional }})` (line 30). Help text reads "Ref price: / Current order: / Adjust quantity below. Max order size is enforced at submit." The `drift_error` div still present, reused for cap messages. "Drift > 2% will be rejected" copy removed. Status: VERIFIED
+
+7. `tests/unit/test_edit_size_caps.py` — 6 tests present: `test_pass_within_cap`, `test_fail_exceeds_cap`, `test_fail_zero_qty`, `test_fail_negative_qty`, `test_pass_exact_cap`, `test_zero_equity_skip`. All cover the required acceptance criteria. Status: VERIFIED
+
+8. `03-UI-SPEC.md` — Contains `"That's above your max"` in Surface 1 and error copy table (confirmed via grep). `_drift_check is NOT called for operator edits` noted. Status: VERIFIED
+
+9. `03-CONTEXT.md` — D-54 contains `_check_edit_size_caps` (line 75). UAT finding 2026-06-19 documented. Two-layer defense (cap check + OrderGuard) explained. Status: VERIFIED
+
+**GAP 1 STATUS: VERIFIED**
+
+### GAP 2: Broker-not-configured triage (Plan 03-12)
+
+**Required truth:** "broker not configured" string is confined to `src/gekko/agent/tools/alpaca_data.py` (Researcher path get_quote fallback). It does NOT appear in `src/gekko/execution/executor.py` or `src/gekko/dashboard/routes.py`. Paper approve path reaches execution with a configured broker.
+
+**Verification findings:**
+
+1. `grep "broker not configured" src/gekko/execution/executor.py` — 0 matches. Status: VERIFIED
+
+2. `grep "broker not configured" src/gekko/dashboard/routes.py` — 0 matches. Status: VERIFIED
+
+3. `tests/unit/test_executor.py` — `test_paper_approve_path_executes_without_broker_not_configured_error` exists at line 686: monkeypatches `is_market_open` to True, confirms paper APPROVED proposal reaches EXECUTING without BrokerOrderError. `test_broker_not_configured_string_absent_from_executor_source` exists at line 747: architectural grep gate on source bytes of both files. Status: VERIFIED
+
+4. Root cause documented in 03-12-SUMMARY.md as Scenario A (market closed): the observed UAT failure was `is_market_open()` returning False during off-hours testing, not a code wiring gap. `_build_broker` constructs `AlpacaBroker(paper=True)` correctly from settings credentials. Status: VERIFIED (documented)
+
+**GAP 2 STATUS: VERIFIED**
+
+### GAP 3: Compact /approvals card (Plan 03-13)
+
+**Required truth:** `_proposal_card.html.j2` shows `SIDE QTY TICKER` + `$cost` + 1-line summary + collapsed details. Cost formatted as `$X,XXX.XX`. `03-UI-SPEC.md` Surface 2 documents the Compact Card Contract.
+
+**Verification findings:**
+
+1. `src/gekko/dashboard/templates/_proposal_card.html.j2` — Line 30: `<span class="proposal-card-ticker">{{ side }} {{ qty }} {{ ticker }}</span>`. Line 33: `<span class="proposal-card-cost" aria-label="estimated cost">{{ cost }}</span>`. Lines 47-49: `{% if summary %}<div class="proposal-card-summary">{{ summary }}</div>{% endif %}`. Lines 52-64: `<details class="proposal-card-details">` wraps full rationale + evidence, collapsed by default. Status: VERIFIED
+
+2. `src/gekko/dashboard/routes.py` `_build_proposal_ctx` — Line 227: `cost = f"${Decimal(str(cost_raw)):,.2f}" if cost_raw not in (None, "") else ""`. `$X,XXX.XX` format confirmed. Status: VERIFIED
+
+3. `03-UI-SPEC.md` Surface 2 — `"Compact Card Contract"` found at line 398: "The card is scannable at-a-glance: SIDE/QTY/TICKER is the action, $cost is the exposure, the 1-line summary is the why. Full rationale/evidence are secondary — collapsed by default under `<details>`. This layout was prototyped live during UAT 2026-06-19 and formalized here." Status: VERIFIED
+
+**GAP 3 STATUS: VERIFIED**
+
+### GAP 4: /approvals live refresh (Plan 03-13)
+
+**Required truth:** `GET /approvals/poll` route registered on the authenticated `router` (inherits `require_session`). `approvals_index.html.j2` has `hx-get="/approvals/poll"` and `hx-trigger="every 30s"` on the proposal list container. `_proposals_list.html.j2` fragment exists and contains the proposal loop. `modal-mount` div is outside the polling container.
+
+**Verification findings:**
+
+1. `src/gekko/dashboard/routes.py` — `@router.get("/approvals/poll", response_class=HTMLResponse)` declared at line 289. Route handler signature: `async def approvals_poll(request: Request, user_id: str = Depends(require_session))`. Registered on `router` (the authenticated `APIRouter(dependencies=[Depends(require_session)])`) — not on `public_router`. Status: VERIFIED
+
+2. `src/gekko/dashboard/templates/approvals_index.html.j2` — Lines 19-25 confirmed:
+   ```
+   <div id="proposals-list-container"
+        hx-get="/approvals/poll"
+        hx-trigger="every 30s"
+        hx-target="#proposals-list-container"
+        hx-swap="innerHTML">
+     {% include "_proposals_list.html.j2" %}
+   </div>
+   ```
+   Line 29: `<div id="modal-mount"></div>` — **outside** the polling container div (closed at line 25). Status: VERIFIED
+
+3. `src/gekko/dashboard/templates/_proposals_list.html.j2` — File exists. Contains the `{% if proposals %} / {% for proposal in proposals %} / {% with ... %} {% include "_proposal_card.html.j2" %}` block plus empty-state div. Fragment only — does not extend `base.html.j2`. Status: VERIFIED
+
+4. WR-02 note: `approvals_poll` declares `Depends(require_session)` explicitly to capture `user_id`, in addition to the router-level dependency. This is the standard pattern used by all other routes on this router. The double-invocation is benign (each call reads `request.session` — no side effects). The 03-REVIEW.md WR-02 recommendation was to add a clarifying comment; this is informational only and does not block the truth.
+
+**GAP 4 STATUS: VERIFIED**
+
+## Observable Truths (Full Phase — Regression Check)
 
 | # | Truth | Status | Evidence |
 |---|-------|--------|----------|
-| 1 | Slack Block Kit card with idempotent approve/reject/edit-size/escalate buttons; clicking same button twice = exactly one action | VERIFIED | `claim_action` UNIQUE-INSERT is the sole dedup primitive (WR-08 closed). `_extract_retry_num` deleted; retry gate blocks gone from `handle_approve`/`handle_reject`. `claim_action` present 9 times in slack_handler.py. `dedup.py` 200-line substantive implementation with IntegrityError + rollback + fresh-session pattern. 3 new tests in test_slack_retry_gate.py confirm Socket Mode body (no "headers" key) does not raise and double-click yields exactly one first_write. |
-| 2 | Quiet hours configurable; proposals queue during window, delivered when it opens | VERIFIED (regression check: unchanged) | `_resolve_quiet_hours` in quiet_hours.py (IANA tz, DST, overnight wrap, strategy-override). `_send_slack_dm_respecting_quiet_hours` in executor.py (lines 219-295) wired. `_send_dm_blocks_respecting_quiet_hours` in daily_pnl.py (lines 322-373) returns `bool`. executor_error bypass category confirmed active for expiry DMs. No regressions in quiet-hours plumbing. |
-| 3 | Proposal expires after configurable timeout (default 30 min), auto-rejects with notification; timeout=EXECUTE not configurable | VERIFIED (regression check: unchanged) | `expire_stale_proposals` sweep wired to 60s IntervalTrigger in scheduler/jobs.py. `STATE_TRANSITIONS` includes `("PENDING", "EXPIRED")`. Expiry DM now uses `category="executor_error"` (CR-04 closed) — notification guaranteed even during quiet hours. |
-| 4 | User can edit proposed order size from Slack card and approve in a single interaction with audit record | VERIFIED (regression check: unchanged) | `_drift_check` helper in actions.py used by both Slack and dashboard paths. 2% drift guard present. `views.open` modal wiring confirmed. Dashboard edit-submit has `require_session` via router-level dep. |
-| 5 | Dashboard /approvals page: same approve/reject/edit flow executes identically when Slack unavailable | VERIFIED | CR-01 closed. All routes on `router = APIRouter(dependencies=[Depends(require_session)])`: `/live-confirm GET+POST` (lines 1336, 1414), `/kill` (line 1147), `/unkill` (line 1191), `/kill/state` (line 1220), `/strategies/{name}/promote-to-live` (line 1293), `/trigger/{name}` (line 1062), `/strategies` CRUD — all inherit auth. Only `/login` (lines 124, 134) and `/healthz` (line 833) on `public_router`. `app.py` imports both `public_router` and `router` (line 48) and registers both (lines 231-233). `/slack/events` is mounted on `app` directly — not subject to `require_session` (correct: Bolt uses its own signature verification). |
+| 1 | Idempotent Slack approve/reject/edit-size/escalate buttons; at-least-once delivery = exactly one action | VERIFIED (regression: unchanged) | `claim_action` UNIQUE-INSERT sole dedup primitive; `_extract_retry_num` absent; 9 occurrences of `claim_action` in slack_handler.py — verified in prior run, no changes to dedup.py or slack_handler.py dedup path |
+| 2 | Quiet hours configurable; proposals queue during window, delivered when window opens | VERIFIED (regression: unchanged) | quiet_hours.py + _send_slack_dm_respecting_quiet_hours wiring unchanged; executor_error bypass confirmed; no modifications to these files in 03-11/12/13 |
+| 3 | Proposal expires after configurable timeout (default 30 min), auto-rejects with non-suppressible notification | VERIFIED (regression: unchanged) | expiry.py + scheduler wiring unchanged; category="executor_error" confirmed in prior run |
+| 4 | Operator can edit order size and approve in single interaction with audit record; uses OrderGuard hard caps (not 2% drift) | VERIFIED | Plans 03-11 gap closure — see GAP 1 above |
+| 5 | Dashboard /approvals: same approve/reject/edit flow works identically when Slack unavailable; live proposals surface without reload | VERIFIED | Plan 03-12 (broker triage confirmed correct wiring) + Plan 03-13 (HTMX polling) — see GAP 2/4 above |
 
-**Score:** 5/5 truths verified
+**Score:** 4/4 gap-closure truths verified; 5/5 full-phase truths passing
 
-### Required Artifacts
+## Required Artifacts
 
 | Artifact | Expected | Status | Details |
 |----------|----------|--------|---------|
-| `src/gekko/approval/dedup.py` | claim_action UNIQUE-INSERT idempotency | VERIFIED | Substantive — 200 lines, correct IntegrityError + rollback + fresh-session pattern. Sole dedup primitive per Plan 03-10. |
-| `src/gekko/approval/quiet_hours.py` | _resolve_quiet_hours predicate | VERIFIED | IANA tz, overnight wrap, strategy-override, DST handling present. |
-| `src/gekko/approval/expiry.py` | expire_stale_proposals sweep + non-suppressible DM | VERIFIED | Sweep + chat.update + DM. Wired to scheduler. CR-04 closed: category="executor_error" at line 386. |
-| `src/gekko/approval/proposals.py` | STATE_TRANSITIONS + transition_status | VERIFIED | EXPIRED edge present at lines 98, 105; transition_status atomic. |
-| `src/gekko/dashboard/routes.py` | Fail-closed router-level auth + /approvals + /live-confirm routes | VERIFIED | `public_router` (no auth) for /login + /healthz; `router = APIRouter(dependencies=[Depends(require_session)])` for all other routes (line 116). All 8 safety-critical routes confirmed on `router` via grep. 14-test regression suite asserts 302 for all 11 safety-critical route variants. |
-| `src/gekko/dashboard/app.py` | public_router + router both imported and registered | VERIFIED | Line 48: `from gekko.dashboard.routes import public_router, router`. Lines 231-233: `app.include_router(public_router)` then `app.include_router(router)`. `/slack/events` mounted on `app` (line 259) outside both routers. |
-| `src/gekko/reporter/daily_pnl.py` | Daily P&L digest aggregation + honest audit + bool return | VERIFIED | `_send_dm_blocks_respecting_quiet_hours` signature is `-> bool` (line 328). Returns `True` when dispatched, `False` when suppressed. `dispatched` captured at line 422. Audit event writes `delivered` + `suppressed_by_quiet_hours` fields (lines 446-447). |
-| `src/gekko/execution/executor.py` | on_fill_event fill payload with strategy_name+side | VERIFIED | `fill_payload` dict at lines 849-875 includes `"strategy_name"` and `"side"` keys sourced from `tp_persisted`. Defensive fallback `""` when `tp_persisted is None`. |
-| `src/gekko/approval/actions.py` | _drift_check shared helper | VERIFIED (regression check: unchanged) | Used by both Slack and dashboard edit-size paths. |
-| `src/gekko/approval/slack_handler.py` | claim_action sole dedup primitive; no retry gate | VERIFIED | `_extract_retry_num` definitively absent (grep: no `def _extract_retry_num`). `retry_num` variable absent from `handle_approve`/`handle_reject`. `claim_action` present 9 times. Docstring and handler comments document Socket Mode dedup contract. |
-| `tests/unit/test_dashboard_auth_safety_routes.py` | 14 auth regression tests | VERIFIED | File exists; 11-route parametrized unauth-redirects suite + 3 public-route controls. |
-| `tests/unit/test_fill_payload_fields.py` | 4 tests for CR-02 | VERIFIED | 4 tests: strategy_name/side in fill payload; SELL positive P&L; _unknown_ fallback. 32-char client_order_id fix applied. |
-| `tests/unit/test_daily_pnl_audit_honesty.py` | 4 tests for CR-03 | VERIFIED | 4 tests: audit event delivered/suppressed_by_quiet_hours fields; bool return from _send_dm_blocks_respecting_quiet_hours. |
-| `tests/unit/test_expiry_quiet_hours_bypass.py` | 2 tests for CR-04 | VERIFIED | 2 tests: expiry DM fires with executor_error category during and outside quiet hours. |
-| `tests/unit/test_slack_retry_gate.py` | 3 Socket Mode dedup contract tests | VERIFIED | File created by Plan 03-10. 3 tests: double-click approve/reject dedup; no-raise on Socket Mode body without "headers" key. |
+| `src/gekko/approval/actions.py` | `_check_edit_size_caps` helper | VERIFIED | 57-line substantive implementation; Decimal-exact; `_drift_check` preserved unchanged |
+| `tests/unit/test_edit_size_caps.py` | 6 cap-check unit tests | VERIFIED | All 6 tests as specified in plan: pass/fail/zero/negative/exact-boundary/zero-equity |
+| `src/gekko/approval/slack_handler.py` | Cap check wired; drift check removed from submission handler; CR-01 mode-aware fail-closed; CR-02 division guard | VERIFIED | `_check_edit_size_caps` imported and called; `_drift_check` in comments only (not called); `if strategy is None` mode-aware rejection at line 833; division guard at lines 932-940 |
+| `src/gekko/dashboard/routes.py` | Cap check wired in edit_size_submit; GET /approvals/poll on authenticated router | VERIFIED | `_check_edit_size_caps` called at line 767; `if strategy_obj is None` mode-aware rejection at line 731; poll route at line 289 on `router` |
+| `src/gekko/dashboard/templates/edit_size_modal.html.j2` | Plain-language framing SIDE QTY TICKER ~$total | VERIFIED | Headline line 30 confirmed; help text updated; drift copy removed |
+| `src/gekko/dashboard/templates/approvals_index.html.j2` | HTMX polling container + modal-mount outside | VERIFIED | hx-get, hx-trigger="every 30s", hx-target, hx-swap all present; modal-mount outside container |
+| `src/gekko/dashboard/templates/_proposals_list.html.j2` | Fragment with proposal loop; does not extend base | VERIFIED | File exists; `{% for proposal in proposals %}` + `{% with %}` unpack + `{% include "_proposal_card.html.j2" %}` pattern; no extends |
+| `src/gekko/dashboard/templates/_proposal_card.html.j2` | Compact card: ticker/cost/summary/details | VERIFIED | `proposal-card-ticker`, `proposal-card-cost`, `proposal-card-summary`, `<details>` all present |
+| `tests/unit/test_executor.py` | Paper approve + architectural grep gate tests | VERIFIED | `test_paper_approve_path_executes_without_broker_not_configured_error` at line 686; `test_broker_not_configured_string_absent_from_executor_source` at line 747 |
+| `03-UI-SPEC.md` Surface 1 | "That's above your max" error copy; _drift_check NOT called note | VERIFIED | Error string found in error copy table and error block example |
+| `03-UI-SPEC.md` Surface 2 | "Compact Card Contract" prose note | VERIFIED | Found at line 398 |
+| `03-CONTEXT.md` D-54 | `_check_edit_size_caps` as sole operator-edit gate; UAT finding documented | VERIFIED | Line 75 and 78 confirmed |
 
-### Key Link Verification
+## Key Link Verification
 
 | From | To | Via | Status | Details |
 |------|----|-----|--------|---------|
-| Slack approve button | executor.place_order | claim_action -> transition_status -> execute_proposal | WIRED | Verified in slack_handler.py + dedup.py chain. claim_action is sole dedup primitive. |
-| Dashboard /approvals/approve | executor.place_order | require_session (router-level) -> claim_action -> execute_proposal | WIRED | Router-level dep means all /approvals routes inherit auth. claim_action wired at line 262 of slack_handler.py (dashboard path). |
-| Dashboard /live-confirm POST | executor.place_order | require_session (router-level) -> transition_status -> execute_proposal | WIRED (SAFE) | CR-01 closed: line 1414 is on `router` with Depends(require_session). HITL-06 dual-channel gate is now authenticated. |
-| on_fill_event | daily_pnl aggregation | fill audit event payload (strategy_name + side) | WIRED | CR-02 closed: fill_payload now carries strategy_name and side from tp_persisted. Per-strategy bucketing and sign-correct SELL P&L are both enabled. |
-| _send_daily_pnl_digest | audit log | daily_pnl event with delivered/suppressed_by_quiet_hours | CORRECT | CR-03 closed: audit event always written; delivered/suppressed_by_quiet_hours reflect actual DM delivery status. |
-| expire_stale_proposals | operator DM | category="executor_error" (D-48 bypass) | NON-SUPPRESSIBLE | CR-04 closed: expiry DM uses executor_error category — bypasses quiet hours unconditionally. |
-| expire_stale_proposals | APScheduler | 60s IntervalTrigger | WIRED | Confirmed in scheduler/jobs.py + app.py lifespan (unchanged). |
-| /slack/events | slack-bolt handler | Mounted on app directly (not on router) | WIRED (CORRECT) | Line 259 of app.py: `@app.post("/slack/events")` declared on `app`, not on `router` — not subject to require_session. Bolt uses its own signature verification. |
+| `slack_handler.py handle_edit_size_view_submission` | `actions.py _check_edit_size_caps` | explicit import + call | WIRED | `from gekko.approval.actions import _check_edit_size_caps` at line 733; called at line 858 |
+| `routes.py edit_size_submit` | `actions.py _check_edit_size_caps` | explicit import + call | WIRED | `from gekko.approval.actions import _check_edit_size_caps` at line 586; called at line 767 |
+| `approvals_index.html.j2` polling container | `routes.py GET /approvals/poll` | `hx-get="/approvals/poll"` | WIRED | hx-get attribute present; route exists on authenticated router at line 289 |
+| `_proposals_list.html.j2` | `approvals_index.html.j2` | `{% include "_proposals_list.html.j2" %}` | WIRED | Include present inside polling container |
 
-### Data-Flow Trace (Level 4)
+## Data-Flow Trace (Level 4)
 
 | Artifact | Data Variable | Source | Produces Real Data | Status |
 |----------|--------------|--------|--------------------|--------|
-| `daily_pnl.py _aggregate_today_events` | strategy_name (per-strategy breakdown) | fill audit event payload.get('strategy_name') | YES — CR-02 closed: on_fill_event writes strategy_name from tp_persisted | FLOWING |
-| `daily_pnl.py _aggregate_today_events` | side (sign of P&L) | fill audit event payload.get('side', 'buy') | YES — CR-02 closed: on_fill_event writes str(tp_persisted.side).lower() | FLOWING |
-| `daily_pnl.py send_daily_pnl_digest` | dispatched (DM actually sent) | return value of _send_dm_blocks_respecting_quiet_hours | YES — CR-03 closed: function returns bool; caller captures and writes to audit event | FLOWING |
+| `_proposal_card.html.j2` `{{ cost }}` | `cost` | `_build_proposal_ctx` → `f"${Decimal(str(cost_raw)):,.2f}"` | YES — Decimal-formatted from `payload.get("target_notional_usd")` | FLOWING |
+| `_proposal_card.html.j2` `{{ summary }}` | `summary` | `_build_proposal_ctx` → `rationale.strip().replace("\n", " ")[:140]` | YES — truncated rationale from proposal payload | FLOWING |
+| `_check_edit_size_caps` `account_equity` | broker.get_account() | async `asyncio.wait_for(broker.get_account(), timeout=2.5)` in both Slack and dashboard callers | YES — fetched from Alpaca paper API; fail-open on equity=0 | FLOWING |
 
-### Behavioral Spot-Checks
+## Behavioral Spot-Checks
 
-Step 7b: SKIPPED — no runnable entry points accessible without active SQLCipher DB and Slack credentials. Unit test suites (10 new tests across 03-08/09/10) substitute for automated spot-checks on the specific behaviors closed by gap-closure plans.
+Step 7b: SKIPPED — no runnable entry points accessible without active SQLCipher DB, Slack credentials, and market-hours timing. The unit tests in `test_edit_size_caps.py` (6 tests) and `test_executor.py` (2 new tests) provide equivalent behavioral coverage for the gap-closure changes.
 
-### Probe Execution
+## Probe Execution
 
 No probe-*.sh files defined for Phase 3.
 
-### Requirements Coverage
+## Requirements Coverage
 
 | Requirement | Source Plan | Description | Status | Evidence |
 |-------------|------------|-------------|--------|---------|
-| HITL-02 | 03-02, 03-10 | Slack buttons idempotent — at-least-once delivery cannot cause double-execution | SATISFIED | claim_action UNIQUE-INSERT is sole dedup primitive. _extract_retry_num deleted. Socket Mode body (no "headers" key) does not raise. 3 tests in test_slack_retry_gate.py confirm exactly-once guarantee. |
-| HITL-03 | 03-04, 03-09 | Timeout = REJECT default; proposals expire after 30 min configurable | SATISFIED | Sweep + expires_at + STATE_TRANSITIONS verified. CR-04 closed: expiry DM now uses executor_error (non-suppressible) — no silent expiry during quiet hours. |
-| HITL-05 | 03-03 | Quiet hours configurable; no 2am pings | SATISFIED | _resolve_quiet_hours + _send_slack_dm_respecting_quiet_hours wired (unchanged). executor_error bypass category confirmed active. |
-| DASH-04 | 03-05, 03-08 | Web dashboard approval fallback | SATISFIED | CR-01 closed. All safety-critical routes gated by router-level require_session. /live-confirm HITL-06 gate is authenticated. 14-test regression suite confirms 302 for all unauth requests. |
-| REPT-01 | 03-06, 03-09 | Slack DM: daily P&L digest + executor errors + alerts | SATISFIED | CR-02+CR-03 closed. Fill payload carries strategy_name+side. Audit event reflects actual delivery. Digest fires via APScheduler CronTrigger (unchanged). Severity-tier emoji prefixes in executor.py (unchanged). |
+| HITL-02 | 03-02, 03-10 | Slack buttons idempotent — at-least-once delivery cannot cause double-execution | SATISFIED | Unchanged from prior verification; `claim_action` UNIQUE-INSERT confirmed sole dedup primitive |
+| HITL-03 | 03-04, 03-09 | Timeout = REJECT default; proposals expire after 30 min configurable | SATISFIED | Unchanged from prior verification; CR-04 closed (executor_error category) |
+| HITL-04 | 03-05, 03-11 | User can approve, reject, edit-size from Slack card | SATISFIED | Edit-size now uses OrderGuard hard caps (Plan 03-11); drift check removed from operator path |
+| HITL-05 | 03-03 | Quiet hours configurable; no 2am pings | SATISFIED | Unchanged from prior verification |
+| DASH-04 | 03-05, 03-08, 03-12, 03-13 | Dashboard approval fallback | SATISFIED | Broker triage confirmed executor path correct (03-12); HTMX polling adds live refresh (03-13) |
+| REPT-01 | 03-06, 03-09 | Slack DM for proposals, executions, daily P&L, errors | SATISFIED | Unchanged from prior verification |
 
-### Anti-Patterns Found
+## Anti-Patterns Found
 
 | File | Line | Pattern | Severity | Impact |
 |------|------|---------|----------|--------|
-| `src/gekko/dashboard/app.py` | 245 | `os.urandom(32).hex()` session secret rotates on every restart | WARNING (pre-existing) | Restart under NSSM/launchd invalidates operator session mid-day; not a blocker but can surprise operators. Known from initial verification; unchanged. |
-| `src/gekko/dashboard/routes.py` | ~1429 | page_load_ts read from Form(...) — client-controlled | WARNING (pre-existing) | 5-second read timer uses client-supplied baseline; bypassed by supplying a past timestamp. Known from initial verification; unchanged. |
+| `src/gekko/approval/actions.py` | 27 | `__all__` exports private names (`_check_edit_size_caps`, `_drift_check`) | INFO | Not a risk — modules use explicit imports, not `*`. Noted in 03-REVIEW.md IN-01. No change needed for correctness. |
+| `src/gekko/dashboard/templates/approvals_index.html.j2` | 19-25 | HTMX poll replaces container while operator may be clicking a button (mid-flight DOM swap) | INFO | Noted in 03-REVIEW.md IN-02. Not a data-correctness issue (dedup prevents double-execution); can produce confusing UX if button click races the 30s poll. Low-frequency concern for a single-operator localhost deployment. |
+| `src/gekko/dashboard/routes.py` | 289-292 | `require_session` applied at both router level and poll route handler level (WR-02) | INFO | Benign double-invocation; both calls read request.session. Pattern is consistent with all other routes on this router that capture `user_id`. No security or correctness concern. |
 
-No TBD, FIXME, or XXX markers found in any of the files modified by plans 03-08, 03-09, or 03-10.
+No TBD, FIXME, or XXX debt markers found in any file modified by plans 03-11, 03-12, or 03-13.
 
-### Human Verification Required
+## Human Verification Required
 
-#### 1. Slack Block Kit card rendering
+### 1. Edit-size live behavior (cap validation in Slack modal)
 
-**Test:** Trigger a strategy run via `/gekko trigger <name>`. Observe the Slack DM in the operator's workspace.
-**Expected:** Proposal card appears with approve / reject / edit-size / escalate-to-dashboard buttons; card is visually distinct for paper vs. live (paper chip vs. live chip).
-**Why human:** Visual appearance and live Slack API response cannot be verified via grep.
+**Test:** Click edit-size on a pending proposal card in Slack. Try (a) 47→50 shares (within cap) and (b) 47→500 shares (exceeds cap). Submit each.
+**Expected:** (a) Modal closes, card updates to APPROVED, executor fires. (b) Modal re-renders with "That's above your max of $X (~N shares) — pick a smaller number." in red. Modal title reads "Edit order size — BUY 47 AAPL (~$9,400.00)".
+**Why human:** Requires live Slack workspace with socket connection; view_submission callback cannot be simulated without Slack credentials.
 
-#### 2. Edit-size modal interaction
+### 2. Dashboard fallback end-to-end approval flow
 
-**Test:** Click edit-size on a pending proposal card in Slack. Modify the quantity within 2% drift. Submit.
-**Expected:** Modal closes, card updates to APPROVED state, executor fires in background.
-**Why human:** Slack modal interaction requires live workspace; cannot simulate view_submission flow without Slack credentials.
+**Test:** Navigate to /approvals during NYSE market hours. Approve a pending paper proposal.
+**Expected:** Proposal transitions from PENDING to APPROVED, executor fires in background, proposal card updates to FILLED on next 30s poll refresh. No "broker not configured" error in logs.
+**Why human:** Requires live executor, open market hours, running ASGI stack. The market-closed guard will produce FAILED if tested outside NYSE hours — that is expected correct behavior, not a bug (documented root cause of UAT observation).
 
-#### 3. Quiet-hours queuing behavior
+### 3. Quiet-hours queuing behavior over time
 
 **Test:** Configure quiet hours covering the current time. Trigger a strategy run. Wait until the quiet window closes.
-**Expected:** No Slack DM arrives during the quiet window; DM arrives when the window opens.
+**Expected:** No Slack DM arrives during the quiet window; DM arrives when the window opens. Safety-critical categories (kill, executor errors, expiry) still fire during quiet hours.
 **Why human:** Real-time behavior over 2+ hours cannot be verified statically.
 
-#### 4. Dashboard fallback end-to-end (Slack unavailable)
+### 4. Daily P&L digest at 16:30 ET on a NYSE trading day
 
-**Test:** Disable the Slack socket connection. Navigate to /approvals. Log in. Approve a pending proposal.
-**Expected:** Proposal transitions to APPROVED, executor fires, fill recorded in audit log — identical to Slack path.
-**Why human:** Requires live dashboard session + executor running; cannot simulate ASGI transport without full app stack.
+**Test:** On a NYSE trading day, trigger fills for a strategy with BUY and SELL fills. Observe the 16:30 ET APScheduler cron DM.
+**Expected:** Block Kit digest shows correct gross P&L (BUYs subtract, SELLs add), per-strategy breakdown by strategy name — no `_unknown_` buckets, no sign-flipped SELLs.
+**Why human:** Requires real fill events from a live session; static analysis confirms the implementation but cannot produce fill events to observe.
 
-#### 5. Daily P&L digest correctness post-fix
+## Gaps Summary
 
-**Test:** On a NYSE trading day, trigger fills for a strategy with both BUY and SELL fills. Observe the 16:30 ET APScheduler cron DM.
-**Expected:** Block Kit digest shows: gross P&L = (SELL_fills - BUY_fills), per-strategy breakdown showing the actual strategy name (not `_unknown_`), correct sign on SELL P&L (positive when sell price > buy cost).
-**Why human:** Requires real fill events with the CR-02 fix active; static analysis confirms the fix but cannot produce actual fill events to observe the output.
+All 4 OPEN UAT gaps are now closed by plans 03-11, 03-12, 03-13:
 
-### Gaps Summary
+1. **Edit-size redesign (GAP 1):** `_check_edit_size_caps` is the sole operator-edit gate on both Slack and dashboard paths. `_drift_check` removed from both submission handlers. CR-01 mode-aware fail-closed prevents silent cap bypass when strategy is unavailable. CR-02 prevents `InvalidOperation` crash on market-order edits. 6 unit tests confirm the cap math. 03-UI-SPEC.md Surface 1 and 03-CONTEXT.md D-54 document the new contract.
 
-All four BLOCKERs from the initial verification are closed. Five human verification items remain — these are behavioral/visual checks that cannot be done statically and were present in the initial verification. No automated BLOCKER or FAILED items remain.
+2. **Broker-not-configured triage (GAP 2):** Confirmed Scenario A (market closed) as the root cause. The string "broker not configured" is architecturally absent from the executor path. Two new tests in `test_executor.py` prove this as a CI-enforceable architectural assertion.
 
-**Gap closure summary:**
-- CR-01 (dashboard auth): Closed by Plan 03-08. Fail-closed router-level `Depends(require_session)` with explicit public exemptions is the correct FastAPI pattern and is fully implemented.
-- CR-02 (fill payload): Closed by Plan 03-09. `strategy_name` and `side` now flow from `tp_persisted` into fill audit events; the daily P&L aggregator will produce correct per-strategy bucketing and sign-correct SELL P&L.
-- CR-03 (audit honesty): Closed by Plan 03-09. `_send_dm_blocks_respecting_quiet_hours` returns `bool`; the audit event's `delivered`/`suppressed_by_quiet_hours` fields reflect what actually happened.
-- CR-04 (silent expiry): Closed by Plan 03-09. Expiry DM uses `executor_error` category — a D-48 bypass category that is guaranteed to reach the operator regardless of quiet window.
-- WR-08 (dead retry gate): Closed by Plan 03-10. `_extract_retry_num` deleted; `claim_action` UNIQUE INSERT documented as sole dedup primitive; Socket Mode dedup contract tests confirm no regression.
+3. **Compact /approvals card (GAP 3):** Card shows SIDE/QTY/TICKER + $cost chip + 1-line summary + collapsed details. Cost formatted with `$X,XXX.XX`. `03-UI-SPEC.md` Surface 2 contains the Compact Card Contract prose.
+
+4. **Live refresh (GAP 4):** `GET /approvals/poll` on authenticated router. HTMX `hx-trigger="every 30s"` polling container in `approvals_index.html.j2`. `_proposals_list.html.j2` fragment serves the partial. `modal-mount` div is outside the polling container (edit-size modal unaffected by poll refreshes).
+
+No automated blockers or failures. 4 human verification items remain — behavioral/live checks that require market hours, Slack credentials, or a running ASGI stack. These were identified in the prior verification and are unchanged in scope.
 
 ---
 
-_Verified: 2026-06-18T14:00:00Z_
+_Verified: 2026-06-19T18:00:00Z_
 _Verifier: Claude (gsd-verifier)_
-_Re-verification: Yes — after gap closure plans 03-08, 03-09, 03-10_
+_Re-verification: Yes — gap-closure plans 03-11, 03-12, 03-13_
