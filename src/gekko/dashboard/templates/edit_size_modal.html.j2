@@ -1,27 +1,33 @@
-{# Edit-size HTMX modal partial — Plan 03-05 Task 3 (D-54).
+{# Edit-size HTMX modal partial — Plan 03-05 Task 3 (D-54), updated Plan 03-11.
    UI-SPEC §Surface 2 (dashboard HTMX modal shape).
    RESEARCH §Pattern 4 (HTMX modal + outerHTML/innerHTML swap).
 
    Returned by:
      GET  /approvals/{proposal_id}/edit-size   → initial render
-     POST /approvals/{proposal_id}/edit-submit → re-render on drift error
+     POST /approvals/{proposal_id}/edit-submit → re-render on cap error
 
    HTMX target: #modal-mount (innerHTML swap).
-   On success the POST returns an empty response; HTMX replaces #modal-mount.
+   On success the POST returns the updated _proposal_card.html.j2 partial;
+   HTMX swaps the modal-mount and card in place.
    Cancel clears #modal-mount via /modal/close.
 
    Context variables:
      proposal_id        : str
      ticker             : str
+     side               : str  (BUY / SELL)
      qty                : str  (current / pre-fill value)
      ref_price          : str  (server-derived, not operator input)
      target_notional_usd : str
-     drift_error        : str | None  (error message when drift > 2%)
+     original_notional  : str  (precomputed: qty * ref_price)
+     drift_error        : str | None  (plain-language cap error or None)
+
+   Validation: _check_edit_size_caps (Plan 03-11).
+   The 2% drift check (_drift_check) is NOT the gate for operator edits.
 #}
 <div class="modal-backdrop" id="edit-modal">
   <div class="modal" role="dialog" aria-labelledby="edit-size-headline" aria-modal="true">
     <h2 id="edit-size-headline" class="modal-headline">
-      Edit size — {{ ticker }}
+      Edit order size — {{ side }} {{ qty }} {{ ticker }} (~${{ original_notional }})
     </h2>
     <div class="modal-body">
 
@@ -33,11 +39,10 @@
 
       <p class="form-help">
         Ref price: <strong>${{ ref_price }}</strong> &nbsp;&middot;&nbsp;
-        Target notional: <strong>${{ target_notional_usd }}</strong>
+        Current order: <strong>{{ qty }} shares (~${{ original_notional }})</strong>
       </p>
       <p class="form-help">
-        Submitting a quantity that moves the notional more than 2% from the target
-        will be rejected by OrderGuard (D-27 Knight Capital defense).
+        Adjust quantity below. Max order size is enforced at submit.
       </p>
 
       <form hx-post="/approvals/{{ proposal_id }}/edit-submit"

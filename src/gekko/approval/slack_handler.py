@@ -652,6 +652,9 @@ async def handle_edit_size(
     target = tp.target_notional_usd or Decimal("0")
     original_qty = tp.qty
 
+    side_str = str(tp.side).upper()
+    original_notional = original_qty * ref_price
+
     await client.views_open(
         trigger_id=trigger_id,
         view={
@@ -663,10 +666,13 @@ async def handle_edit_size(
                 "target_notional_usd": str(target),
                 "original_qty": str(original_qty),
                 "ticker": tp.ticker,
-                "side": str(tp.side),
+                "side": side_str,
                 "response_url": body.get("response_url"),
             }),
-            "title": {"type": "plain_text", "text": f"Edit size — {tp.ticker}"},
+            "title": {
+                "type": "plain_text",
+                "text": f"Edit order size — {side_str} {original_qty} {tp.ticker} (~${original_notional:,.2f})",
+            },
             "submit": {"type": "plain_text", "text": "Approve at this size"},
             "close": {"type": "plain_text", "text": "Cancel"},
             "blocks": [
@@ -683,22 +689,25 @@ async def handle_edit_size(
                     },
                 },
                 {
-                    "type": "section",
-                    "text": {
+                    "type": "context",
+                    "elements": [{
                         "type": "mrkdwn",
                         "text": (
-                            f"*Ref price:* ${ref_price}\n"
-                            f"*Target notional:* ${target}\n"
-                            f"*Original qty:* {original_qty} → "
-                            f"*Original notional:* ${original_qty * ref_price}"
+                            f"Current: {side_str} {original_qty} {tp.ticker}"
+                            f" (~${original_notional:,.2f})\n"
+                            f"Ref price: ${ref_price}\n"
+                            "Adjust shares below — cap enforced at submit"
                         ),
-                    },
+                    }],
                 },
                 {
                     "type": "context",
                     "elements": [{
                         "type": "mrkdwn",
-                        "text": "Drift > 2% will be rejected (OrderGuard).",
+                        "text": (
+                            "Your change is validated against your strategy's risk caps,"
+                            " not against the agent's original target."
+                        ),
                     }],
                 },
             ],
@@ -709,21 +718,23 @@ async def handle_edit_size(
 async def handle_edit_size_view_submission(
     *, ack: _AckFn, body: dict[str, Any], client: Any, view: dict[str, Any]
 ) -> None:
-    """view_submission handler for 'edit_size_modal' — D-54 drift check.
+    """view_submission handler for 'edit_size_modal' — D-54 cap check (Plan 03-11).
 
-    Validates the operator-submitted qty against the 2% drift threshold.
+    Validates the operator-submitted qty against the strategy's OrderGuard hard
+    caps via _check_edit_size_caps (NOT the 2% drift check — see Plan 03-11
+    objective for why _drift_check is wrong here).
+
     On failure: ``response_action='errors'`` re-renders the modal (no state change).
     On pass: ``ack()`` closes modal + spawns ``_edit_size_submit_workflow``.
 
     Pitfall 3: ack() is the FIRST call — either with errors dict or empty body.
     Pitfall 8: response_action='errors' requires BOTH keys: response_action + errors.
     """
-    from gekko.approval.actions import _drift_check
+    from gekko.approval.actions import _check_edit_size_caps
 
     meta = json.loads(view["private_metadata"])
     decision_id = meta["decision_id"]
     ref_price = Decimal(meta["ref_price"])
-    target_notional = Decimal(meta["target_notional_usd"])
 
     raw_qty = view["state"]["values"]["qty_block"]["qty_input"]["value"]
 
@@ -736,21 +747,88 @@ async def handle_edit_size_view_submission(
         })
         return
 
-    drift_pct = _drift_check(new_qty, ref_price, target_notional)
+    # Cap check — validate against strategy hard caps, not 2% drift.
+    # Fetch account equity from the paper broker (async); use equity=0
+    # (fail-open) if broker call fails or times out within the 3-second
+    # Slack ack window.
+    settings = get_settings()
+    gekko_user_id = settings.gekko_user_id
+    equity = Decimal("0")
 
-    if drift_pct > Decimal("0.02"):
-        new_notional = new_qty * ref_price
-        await ack({
-            "response_action": "errors",
-            "errors": {
-                "qty_block": (
-                    f"Drift {drift_pct:.2%} exceeds the 2% safety bound. "
-                    f"Target ${target_notional}; this qty = ${new_notional}. "
-                    "Adjust qty or re-run the strategy."
-                ),
-            },
-        })
-        return
+    try:
+        from gekko.brokers.alpaca import AlpacaBroker
+        from gekko.schemas.strategy import Strategy as _Strategy
+
+        paper_key = settings.alpaca_paper_api_key
+        paper_secret = settings.alpaca_paper_secret_key
+        broker_tmp = AlpacaBroker(
+            api_key=paper_key.get_secret_value(),
+            secret_key=paper_secret.get_secret_value(),
+            paper=True,
+        )
+        try:
+            account = await asyncio.wait_for(broker_tmp.get_account(), timeout=2.5)
+            equity_raw = account.get("equity") or account.get("portfolio_value") or "0"
+            equity = Decimal(str(equity_raw))
+        except Exception:  # noqa: BLE001 — timeout / broker error → fail-open
+            log.warning(
+                "slack.edit_size.equity_fetch_failed",
+                decision_id=decision_id,
+                note="cap check will skip (equity=0 fail-open); OrderGuard re-checks at execute",
+            )
+            equity = Decimal("0")
+
+        # Load strategy from DB for hard caps
+        strategy: _Strategy | None = None
+        sf, engine = _get_session_factory(gekko_user_id)
+        try:
+            async with sf() as session:
+                row = (
+                    await session.execute(
+                        select(ProposalRow).where(
+                            ProposalRow.proposal_id == decision_id,
+                            ProposalRow.user_id == gekko_user_id,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if row is not None:
+                    from gekko.db.models import Strategy as StrategyRow
+                    strategy_row = (
+                        await session.execute(
+                            select(StrategyRow).where(
+                                StrategyRow.user_id == gekko_user_id,
+                                StrategyRow.strategy_id == row.strategy_id,
+                            )
+                        )
+                    ).scalar_one_or_none()
+                    if strategy_row is not None and strategy_row.payload_json:
+                        try:
+                            strategy = _Strategy.model_validate_json(
+                                strategy_row.payload_json
+                            )
+                        except Exception:  # noqa: BLE001 — corrupt payload → skip
+                            strategy = None
+        finally:
+            if engine is not None:
+                await engine.dispose()
+
+    except Exception:  # noqa: BLE001 — broker construction failed
+        log.warning(
+            "slack.edit_size.broker_construction_failed",
+            decision_id=decision_id,
+            note="cap check will skip (equity=0 fail-open)",
+        )
+        strategy = None
+        equity = Decimal("0")
+
+    if strategy is not None:
+        ok, cap_msg = _check_edit_size_caps(new_qty, ref_price, strategy, equity)
+        if not ok:
+            await ack({
+                "response_action": "errors",
+                "errors": {"qty_block": cap_msg},
+            })
+            return
 
     # Pass: close the modal; do state-machine work in background.
     await ack()

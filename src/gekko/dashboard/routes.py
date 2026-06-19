@@ -497,6 +497,14 @@ async def edit_size_get(
         except Exception:
             ref_price = "0"
 
+    side = payload.get("side", "")
+
+    # Compute original_notional for plain-language framing
+    try:
+        original_notional = str(_Decimal(qty) * _Decimal(ref_price))
+    except Exception:
+        original_notional = "0"
+
     return templates.TemplateResponse(
         request,
         "edit_size_modal.html.j2",
@@ -504,8 +512,10 @@ async def edit_size_get(
             "proposal_id": proposal_id,
             "ticker": ticker,
             "qty": qty,
+            "side": side,
             "ref_price": ref_price,
             "target_notional_usd": target_notional_usd,
+            "original_notional": original_notional,
             "drift_error": None,
         },
     )
@@ -518,17 +528,19 @@ async def edit_size_submit(
     qty: str = Form(...),
     user_id: str = Depends(require_session),
 ) -> HTMLResponse:
-    """POST /approvals/{id}/edit-submit — D-54 drift check + dedup + transition.
+    """POST /approvals/{id}/edit-submit — D-54 cap check + dedup + transition (Plan 03-11).
 
-    Runs the same _drift_check as the Slack view_submission handler.
-    On drift fail: re-render edit_size_modal.html.j2 with error block.
+    Runs _check_edit_size_caps (NOT _drift_check) to validate the operator's
+    edited qty against the strategy's OrderGuard hard caps. _drift_check is the
+    agent's output-consistency guard (D-27) and is NOT applied to operator edits.
+    On cap fail: re-render edit_size_modal.html.j2 with plain-language error block.
     On pass: dedup INSERT (source='dashboard') + edit_size event + qty update +
-    PENDING -> APPROVED + background execute_proposal. Returns empty (HTMX closes modal)
-    or _proposal_card.html.j2 with APPROVED state.
+    PENDING -> APPROVED + background execute_proposal. Returns _proposal_card.html.j2
+    with APPROVED state.
     """
     from decimal import Decimal as _Decimal, InvalidOperation as _InvalidOp
     import json as _json
-    from gekko.approval.actions import _drift_check
+    from gekko.approval.actions import _check_edit_size_caps
     from gekko.approval.dedup import claim_action
     from gekko.approval.proposals import append_event as _append_event, transition_status
     from gekko.audit.canonical import normalize_decimals
@@ -550,13 +562,15 @@ async def edit_size_submit(
                 "proposal_id": proposal_id,
                 "ticker": "",
                 "qty": qty,
+                "side": "",
                 "ref_price": "0",
                 "target_notional_usd": "0",
+                "original_notional": "0",
                 "drift_error": "Please enter a valid positive quantity.",
             },
         )
 
-    # 2. Load proposal to get ref_price + target_notional
+    # 2. Load proposal to get ref_price + strategy for cap check
     sf, engine = _get_session_factory(user_id)
     row = None
     try:
@@ -573,12 +587,14 @@ async def edit_size_submit(
                 raise HTTPException(status_code=404, detail="Proposal not found")
             # Keep a snapshot for processing outside the session
             payload_json_snapshot = row.payload_json
+            strategy_id_snapshot = row.strategy_id
     finally:
         if engine is not None:
             await engine.dispose()
 
     payload = _json.loads(payload_json_snapshot)
     ticker = payload.get("ticker", "")
+    side = payload.get("side", "")
     original_qty_str = payload.get("qty", "0")
     limit_price = payload.get("limit_price")
     stop_price = payload.get("stop_price")
@@ -601,35 +617,89 @@ async def edit_size_submit(
     else:
         ref_price = _Decimal("0")
 
-    # 3. Drift check (D-27 / D-54 Knight Capital defense)
-    if target_notional and ref_price:
-        drift_pct = _drift_check(new_qty, ref_price, target_notional)
-    else:
-        drift_pct = _Decimal("0")
+    original_notional_str = str(original_qty * ref_price)
 
-    if drift_pct > _Decimal("0.02"):
-        new_notional = new_qty * ref_price
-        return templates.TemplateResponse(
-            request,
-            "edit_size_modal.html.j2",
-            {
-                "proposal_id": proposal_id,
-                "ticker": ticker,
-                "qty": qty,
-                "ref_price": str(ref_price),
-                "target_notional_usd": target_notional_usd_str,
-                "drift_error": (
-                    f"Drift {drift_pct:.2%} exceeds the 2% safety bound. "
-                    f"Target ${target_notional}; this qty = ${new_notional}. "
-                    "Adjust qty or re-run the strategy."
-                ),
-            },
-        )
+    # 3. Cap check — validate against strategy hard caps, not 2% drift (Plan 03-11)
+    #    Fetch account equity from the paper broker; use 0 (fail-open) on any error.
+    from gekko.schemas.strategy import Strategy as _Strategy
 
-    # 4. Drift passed — dedup INSERT + audit event + qty update + transition
+    equity = _Decimal("0")
+    strategy_obj: _Strategy | None = None
+
+    # Load strategy for hard caps
     sf2, engine2 = _get_session_factory(user_id)
     try:
-        async with sf2() as session2, session2.begin():
+        async with sf2() as session2:
+            from gekko.db.models import Strategy as _StrategyRow
+            strategy_row = (
+                await session2.execute(
+                    select(_StrategyRow).where(
+                        _StrategyRow.user_id == user_id,
+                        _StrategyRow.strategy_id == strategy_id_snapshot,
+                    )
+                )
+            ).scalar_one_or_none()
+            if strategy_row is not None and strategy_row.payload_json:
+                try:
+                    strategy_obj = _Strategy.model_validate_json(
+                        strategy_row.payload_json
+                    )
+                except Exception:  # noqa: BLE001 — corrupt payload → skip cap
+                    strategy_obj = None
+    finally:
+        if engine2 is not None:
+            await engine2.dispose()
+
+    # Fetch account equity from paper broker
+    try:
+        from gekko.brokers.alpaca import AlpacaBroker as _AlpacaBroker
+        _settings = get_settings()
+        _paper_key = _settings.alpaca_paper_api_key
+        _paper_secret = _settings.alpaca_paper_secret_key
+        _broker = _AlpacaBroker(
+            api_key=_paper_key.get_secret_value(),
+            secret_key=_paper_secret.get_secret_value(),
+            paper=True,
+        )
+        import asyncio as _asyncio
+        try:
+            _account = await _asyncio.wait_for(_broker.get_account(), timeout=2.5)
+            _eq_raw = _account.get("equity") or _account.get("portfolio_value") or "0"
+            equity = _Decimal(str(_eq_raw))
+        except Exception:  # noqa: BLE001 — timeout/broker error → fail-open
+            from gekko.logging_config import get_logger as _get_logger
+            _log = _get_logger(__name__)
+            _log.warning(
+                "dashboard.edit_size.equity_fetch_failed",
+                proposal_id=proposal_id,
+                note="cap check will skip (equity=0 fail-open)",
+            )
+            equity = _Decimal("0")
+    except Exception:  # noqa: BLE001 — broker construction failed → fail-open
+        equity = _Decimal("0")
+
+    if strategy_obj is not None:
+        _ok, _cap_msg = _check_edit_size_caps(new_qty, ref_price, strategy_obj, equity)
+        if not _ok:
+            return templates.TemplateResponse(
+                request,
+                "edit_size_modal.html.j2",
+                {
+                    "proposal_id": proposal_id,
+                    "ticker": ticker,
+                    "qty": qty,
+                    "side": side,
+                    "ref_price": str(ref_price),
+                    "target_notional_usd": target_notional_usd_str,
+                    "original_notional": original_notional_str,
+                    "drift_error": _cap_msg,
+                },
+            )
+
+    # 4. Cap passed — dedup INSERT + audit event + qty update + transition
+    sf3, engine3 = _get_session_factory(user_id)
+    try:
+        async with sf3() as session2, session2.begin():
             outcome = await claim_action(
                 session2,
                 proposal_id=proposal_id,
@@ -666,7 +736,6 @@ async def edit_size_submit(
                         "new_qty": new_qty,
                         "old_notional": old_notional,
                         "new_notional": new_notional,
-                        "drift_pct": drift_pct,
                         "actor": user_id,
                     }),
                 )
@@ -694,8 +763,8 @@ async def edit_size_submit(
                     )
                 ).scalar_one_or_none()
     finally:
-        if engine2 is not None:
-            await engine2.dispose()
+        if engine3 is not None:
+            await engine3.dispose()
 
     if outcome == "first_write":
         asyncio.create_task(_execute_proposal(proposal_id, user_id))
@@ -704,7 +773,6 @@ async def edit_size_submit(
         raise HTTPException(status_code=404, detail="Proposal not found")
 
     # 5. Return updated proposal card for HTMX swap (closes modal + refreshes card)
-    from fastapi.responses import HTMLResponse as _HTMLResponse
     ctx = _build_proposal_ctx(updated_row)
     ctx["request"] = request
     return templates.TemplateResponse("_proposal_card.html.j2", ctx)

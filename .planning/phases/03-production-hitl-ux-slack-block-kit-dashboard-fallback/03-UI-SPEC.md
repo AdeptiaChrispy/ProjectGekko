@@ -280,18 +280,27 @@ Phase 3 inherits **every** P2 semantic token verbatim. The full color matrix (li
 
 Seven surfaces in scope. Each is declared with placement, copy, state transitions, idempotency posture, ARIA semantics, and (where applicable) Slack parallel.
 
-### Surface 1: Slack Edit-Size Modal (D-54)
+### Surface 1: Slack Edit-Size Modal (D-54) — updated Plan 03-11
 
 **Trigger:** operator clicks the `Edit size` button on a PENDING proposal card in Slack. The button's `action_id="edit_size"` callback fires `views_open` with `private_metadata = proposal_id`.
+
+**Plan 03-11 change:** `_drift_check` is NOT called for operator edits. `_check_edit_size_caps` is the sole gate. See `src/gekko/approval/actions.py`.
 
 **Modal payload shape (slack-bolt `views_open`):**
 
 ```python
 {
     "type": "modal",
-    "callback_id": "edit_size_submit",
-    "private_metadata": proposal_id,  # round-trips through Slack
-    "title":  {"type": "plain_text", "text": f"Edit order size — {ticker} {side}"},
+    "callback_id": "edit_size_modal",
+    "private_metadata": json.dumps({
+        "decision_id": proposal_id,
+        "ref_price": str(ref_price),
+        "target_notional_usd": str(target_notional),
+        "original_qty": str(original_qty),
+        "ticker": tp.ticker,
+        "side": side_str,   # e.g. "BUY"
+    }),
+    "title":  {"type": "plain_text", "text": f"Edit order size — {side_str} {original_qty} {tp.ticker} (~${original_notional:,.2f})"},
     "submit": {"type": "plain_text", "text": "Approve at this size"},
     "close":  {"type": "plain_text", "text": "Cancel"},
     "blocks": [
@@ -302,57 +311,63 @@ Seven surfaces in scope. Each is declared with placement, copy, state transition
             "label": {"type": "plain_text", "text": "New quantity"},
             "element": {
                 "type": "number_input",
-                "action_id": "qty",
-                "is_decimal_allowed": True,         # supports fractional shares
-                "initial_value": str(tp.qty),       # pre-fills with current qty
-                "min_value": "0.01",                # cannot zero out — that's Reject
+                "action_id": "qty_input",
+                "is_decimal_allowed": True,
+                "initial_value": str(original_qty),
+                "min_value": "0",
             },
         },
-        # Block 2 — computed notional + drift (read-only, re-rendered on view_submission)
+        # Block 2 — plain-language framing (read-only context block)
         {
             "type": "context",
-            "block_id": "notional_preview",
             "elements": [{
                 "type": "mrkdwn",
-                "text": f"*Notional* = qty × ref_price (${ref_price}) = `${computed_notional}`\n"
-                        f"*Drift vs target* ${target_notional_usd} = `{drift_pct:+.2f}%` "
-                        f"{'✅' if abs(drift_pct) <= 2.0 else '❌'}",
+                "text": (
+                    f"Current: {side_str} {original_qty} {tp.ticker} (~${original_notional:,.2f})\n"
+                    f"Ref price: ${ref_price}\n"
+                    "Adjust shares below — cap enforced at submit"
+                ),
+            }],
+        },
+        # Block 3 — validation context
+        {
+            "type": "context",
+            "elements": [{
+                "type": "mrkdwn",
+                "text": (
+                    "Your change is validated against your strategy's risk caps,"
+                    " not against the agent's original target."
+                ),
             }],
         },
     ],
 }
 ```
 
-**Drift-exceeded re-render (server-side validation in `handle_edit_size_submit`):**
+**Cap-exceeded error (server-side validation in `handle_edit_size_view_submission`):**
 
-When `abs((new_qty × ref_price) − target_notional_usd) / target_notional_usd > 0.02`, respond with `response_action = "update"` and the same modal SHELL plus a `❌` error block prepended:
+When `_check_edit_size_caps(new_qty, ref_price, strategy, account_equity)` returns `(False, msg)`, respond with:
 
 ```python
 {
-    "type": "section",
-    "block_id": "drift_error",
-    "text": {
-        "type": "mrkdwn",
-        "text": (
-            f"❌ *Drift {drift_pct:+.2f}% exceeds the 2% safety bound.* "
-            f"The agent set target = `${target_notional_usd}`; this qty would be "
-            f"`${new_notional}`. Adjust qty or close this modal and re-run the strategy."
-        ),
-    },
+    "response_action": "errors",
+    "errors": {"qty_block": "That's above your max of $12,000.00 (~60 shares) — pick a smaller number."}
 }
 ```
 
-The qty input retains the operator's last-typed value (Slack preserves it via `initial_value` on re-render). NO state change, NO audit event on a drift failure. The modal stays open; the operator either fixes the qty or cancels.
+The qty input retains the operator's last-typed value. NO state change, NO audit event on a cap failure. The modal stays open; the operator either fixes the qty or cancels.
+
+`_drift_check` is NOT called for operator edits. `_check_edit_size_caps` is the sole gate.
 
 **State transitions (success path):**
 
-1. Operator submits qty within 2% of `target_notional_usd`.
+1. Operator submits qty within the strategy's hard cap (`max_position_pct * account_equity`).
 2. Server INSERTs dedup row with `(proposal_id, action_id='edit_size', actor_slack_user_id, source='slack')` per D-41.
-3. Re-runs OrderGuard 2% drift check (D-27 invariant — Knight Capital defense, P2 lock).
-4. Writes `edit_size` audit event with payload `{old_qty, new_qty, old_notional, new_notional, drift_pct}` per D-45.
+3. Validates via `_check_edit_size_caps(qty, ref_price, strategy, account_equity)` — OrderGuard hard caps, NOT 2% drift.
+4. Writes `edit_size` audit event with payload `{old_qty, new_qty, old_notional, new_notional}` per D-45.
 5. Updates `proposal.qty`, transitions `PENDING → APPROVED`, dispatches to executor.
 6. Closes modal (Slack closes on 200 OK response).
-7. The original proposal card in the channel updates via `chat.update` to show `[APPROVED]` chip + final qty (same `build_proposal_card` render path with `mode="APPROVED"`).
+7. The original proposal card in the channel updates via `chat.update` to show `[APPROVED]` chip + final qty.
 
 **Idempotency posture:**
 
@@ -362,7 +377,7 @@ The qty input retains the operator's last-typed value (Slack preserves it via `i
 **ARIA / accessibility:**
 
 - Slack handles modal a11y semantics natively — Slack client renders an accessible dialog. We do NOT inject custom ARIA inside Block Kit payloads.
-- The drift indicator pairs the `✅` / `❌` glyph with explicit text (`drift_pct +1.23%` and the literal word "exceeds") so screen readers reading the modal context block don't depend on glyph semantics.
+- The plain-language cap error ("That's above your max of $X (~N shares)") is explicit text; screen readers do not depend on glyph semantics.
 
 **Slack parallel:** this IS the Slack parallel — there's a dashboard parallel below (Surface 2c, the HTMX modal swap inside `/approvals`).
 
@@ -902,7 +917,7 @@ The block uses the `.quiet-hours-warning` CSS class declared above (P2 caution-y
 | Scenario | Copy |
 |----------|------|
 | Login — incorrect passphrase | `Incorrect passphrase. Try again.` |
-| Edit-size modal — drift > 2% | `❌ Drift {drift_pct:+.2f}% exceeds the 2% safety bound. The agent set target = ${target_notional_usd}; this qty would be ${new_notional}. Adjust qty or close this modal and re-run the strategy.` |
+| Edit-size modal — cap exceeded (Plan 03-11) | `That's above your max of ${max_order_notional:,.2f} (~{max_shares_approx} shares) — pick a smaller number.` |
 | Settings — invalid IANA timezone | `Timezone "{value}" is not a valid IANA timezone.` |
 | Settings — half-configured quiet window (one of start/end set, other blank) | `Quiet hours start and end must both be set, or both be blank.` |
 | Approve/Reject duplicate click (Slack) | `✅ Already approved by @{slack_user} at {HH:MM}. Status: {status}.` (D-43 — see Surface 7 for all four variants) |
