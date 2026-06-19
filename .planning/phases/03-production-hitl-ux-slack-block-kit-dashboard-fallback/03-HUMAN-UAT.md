@@ -23,7 +23,29 @@ result: pass
 
 ### 2. Edit-size modal interaction
 expected: Modal closes, card updates to APPROVED state, executor fires in background; the OrderGuard 2% drift check re-applies on the edited size.
-result: [pending]
+result: issue
+reported: "Modal opens fine, but any meaningful size change ('+1', a decimal) is rejected as 'outside the range'. The 2% drift check is anchored to the agent's original target_notional, so only ~+/-2% of the original qty is accepted — you can't actually resize."
+severity: major
+finding: |
+  Design contradiction in D-54: the modal's stated use case is "I want 50 shares not 47"
+  (~6% change) but D-54 step 2 validates qty x ref_price within 2% of the ORIGINAL
+  target_notional_usd, rejecting any change >2%. Implementation (handle_edit_size_view_submission
+  -> _drift_check vs target_notional) faithfully follows the rule, but the rule makes edit-size
+  unusable for resizing. Modal also never shows the allowed qty range; "New quantity"/"Edit size"
+  implies more freedom than 2% allows.
+
+  OPERATOR DECISION (2026-06-19): the core problem is UI legibility for a non-technical /
+  non-finance user, not the threshold math. Required redesign of edit-size (Slack modal + the
+  D-55 dashboard mirror):
+  - State the action in plain language: "Buy N shares of TICKER (~$total)" — shares + dollar total.
+  - Let the user adjust the share count easily and intuitively, with LIVE "New: N shares ~ $total" feedback.
+  - Allow real resizing (current +/-2% vs agent notional blocks even 2->3). Validate the edited size
+    against the strategy's OrderGuard HARD CAPS (max position / order size) instead of the 2% target-
+    notional consistency check (that check is for the agent's output, not the operator's deliberate edit).
+    This preserves the true Knight-Capital defense (absolute risk bounds) while enabling legible resizing.
+  - Replace "outside the range" with plain-language bounds: e.g. "That's above your max of $Z (~W shares) —
+    pick a smaller number."
+  This is a UI-contract change (update 03-UI-SPEC.md + D-54) → handle via gap-closure planning.
 
 ### 3. Quiet-hours queuing behavior over time
 expected: No Slack DM arrives during the quiet window; DM arrives when the window opens. Safety-critical categories (kill, executor errors, first-live fills, proposal expiry) still fire during quiet hours.
