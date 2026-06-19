@@ -286,6 +286,49 @@ async def approvals_index(
     )
 
 
+@router.get("/approvals/poll", response_class=HTMLResponse)
+async def approvals_poll(
+    request: Request,
+    user_id: str = Depends(require_session),
+) -> HTMLResponse:
+    """GET /approvals/poll — HTMX polling partial for the proposal list (Plan 03-13).
+
+    Returns the _proposals_list.html.j2 fragment (no full page wrapper) so
+    HTMX can replace the proposal-list container every 30 seconds without a
+    full page reload.
+
+    Auth: on the authenticated router — require_session fires automatically.
+    Unauthenticated poll returns 302 → /login (session expiry safe).
+
+    T-03-13-01: poll route inherits require_session from the authenticated
+    router; unauthenticated → 302 /login (STRIDE Spoofing mitigated).
+    """
+    from gekko.db.models import Proposal as ProposalRow
+
+    sf, engine = _get_session_factory(user_id)
+    proposal_ctxs: list[dict[str, Any]] = []
+    try:
+        async with sf() as session:
+            result = await session.execute(
+                select(ProposalRow).where(
+                    ProposalRow.user_id == user_id,
+                    ProposalRow.status.in_(
+                        ["PENDING", "AWAITING_2ND_CHANNEL", "EXPIRED"]
+                    ),
+                )
+            )
+            rows = result.scalars().all()
+            proposal_ctxs = [_build_proposal_ctx(r) for r in rows]
+    finally:
+        if engine is not None:
+            await engine.dispose()
+
+    return templates.TemplateResponse(
+        "_proposals_list.html.j2",
+        {"request": request, "proposals": proposal_ctxs, "user_id": user_id},
+    )
+
+
 @router.post("/approvals/{proposal_id}/approve", response_class=HTMLResponse)
 async def approve_proposal_endpoint(
     request: Request,
