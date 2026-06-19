@@ -3,19 +3,19 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Safety & Trust
 status: executing
-last_updated: "2026-06-19T17:18:07.870Z"
+last_updated: "2026-06-19T17:29:58.878Z"
 last_activity: 2026-06-19
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 29
-  completed_plans: 27
+  completed_plans: 28
   percent: 67
 ---
 
 # Project State: Project Gekko
 
-**Last updated:** 2026-06-18 (**Plan 03-10 complete — WR-08 gap closure (HITL-02).** Deleted _extract_retry_num and removed dead X-Slack-Retry-Num retry gate blocks from handle_approve and handle_reject (both read body['headers']['x-slack-retry-num'], absent in Socket Mode/WebSocket transport — always returned 0 in production). claim_action UNIQUE INSERT is now the documented sole exactly-once dedup primitive. 4 tests updated: test_slack_retry_gate.py (3 new Socket Mode dedup contract tests), test_slack_retry_header.py (2 obsolete gate tests removed, 1 backward-compat test retained). Phase 3 all 10 plans complete — HITL-02 gap fully closed.)
+**Last updated:** 2026-06-19 (**Plan 03-12 complete — Triage: broker-not-configured failure on paper approve.** Root cause confirmed as Scenario A (market closed): the 'broker not configured' log during UAT originated in alpaca_data.py Researcher tool fallback (ctx.broker=None), never the executor path. executor.py and routes.py are correctly wired. Paper approve path confirmed working with monkeypatched broker. Two new tests added: paper path reaches EXECUTING when is_market_open=True, and architectural grep gate prevents 'broker not configured' from entering executor/routes source. 13/13 executor unit tests pass.)
 
 ## Project Reference
 
@@ -26,7 +26,7 @@ progress:
 ## Current Position
 
 Phase: 03 (production-hitl-ux-slack-block-kit-dashboard-fallback) — EXECUTING
-Plan: 2 of 13
+Plan: 3 of 13
 Status: Ready to execute
 Last activity: 2026-06-19
 
@@ -51,6 +51,7 @@ Last activity: 2026-06-19
 | Phase 03 P09 | 25 | 2 tasks | 6 files |
 | Phase 03 P10 | 20 | 2 tasks | 3 files |
 | Phase 03 P11 | 35min | 2 tasks | 6 files |
+| Phase 03 P12 | 30min | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -69,6 +70,12 @@ Last activity: 2026-06-19
 | SQLCipher whole-DB encryption + passphrase-on-start | ARCH recommendation chosen over STACK's Fernet+keychain for cross-platform parity (avoids silent failures when service runs without logged-in user session) |
 | Decimal for money math, idempotency via `client_order_id` | Non-negotiable per PITFALLS Pitfall 1 (Knight Capital prevention) |
 | Robinhood Agentic Trading API status check in P1 | Re-validate the official API before committing to browser adapter in P9 (per BROK-R-01 and PITFALLS Pitfall 8) |
+
+### Decisions from Plan 03-12 (added 2026-06-19)
+
+- _Scenario A (market closed) is the confirmed root cause of 'broker not configured' UAT observation._ The string exists only in alpaca_data.py (Researcher get_quote fallback when ctx.broker is None) — never the executor path. executor.py grep == 0. During off-hours UAT, is_market_open() returns False; execute_proposal transitions APPROVED → FAILED and sends a Slack DM. This is correct behavior (EXEC-10 / Plan 01-08). No code fix needed in executor.py or routes.py.
+- _Architectural grep gate: 'broker not configured' must not appear in executor.py or routes.py._ Locked in test_broker_not_configured_string_absent_from_executor_source(). Prevents future misleading log messages from entering the executor or dashboard path.
+- _Paper approve path confirmed working with monkeypatched broker._ test_paper_approve_path_executes_without_broker_not_configured_error asserts APPROVED → EXECUTING when is_market_open=True and broker.place_order is monkeypatched. Closes the DASH-04 / SC-5 executor wiring concern.
 
 ### Decisions from Plan 03-10 (added 2026-06-18)
 

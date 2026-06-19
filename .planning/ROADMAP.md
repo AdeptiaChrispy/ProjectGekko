@@ -222,7 +222,7 @@ Plans:
 |-------|-----------|----------------|--------|-----------|
 | 1. Foundation & Vertical Slice | v1.0 | 9/9 | Complete ✅ | 2026-06-15 |
 | 2. OrderGuard & Real-Money Alpaca Live | v2.0 | 7/7 | Complete   | 2026-06-17 |
-| 3. Production HITL UX | v2.0 | 11/13 | In Progress|  |
+| 3. Production HITL UX | v2.0 | 12/13 | In Progress|  |
 | 4. Agent Architecture & Cost Bounds | v2.0 | 0/0 | Not started | - |
 | 5. Trust Ladder | v2.0 | 0/0 | Not started | - |
 | 6. Web Dashboard & Multi-User Auth | v3.0 | 0/0 | Not started | - |
