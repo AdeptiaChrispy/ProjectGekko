@@ -642,6 +642,9 @@ async def edit_size_submit(
     limit_price = payload.get("limit_price")
     stop_price = payload.get("stop_price")
     target_notional_usd_str = payload.get("target_notional_usd", "0")
+    # CR-01 fix: read account_mode from the proposal payload so the cap gate
+    # can be mode-aware. Default to "LIVE" (fail-closed = safest) if missing.
+    _account_mode: str = payload.get("account_mode", "LIVE") or "LIVE"
 
     try:
         target_notional = _Decimal(target_notional_usd_str)
@@ -721,7 +724,46 @@ async def edit_size_submit(
     except Exception:  # noqa: BLE001 — broker construction failed → fail-open
         equity = _Decimal("0")
 
-    if strategy_obj is not None:
+    # CR-01 fix: mode-aware fail-closed when strategy caps cannot be verified.
+    # LIVE proposals: reject the edit — real money, no backstop if OrderGuard
+    #   also fails at execute time. PAPER: keep fail-open (OrderGuard re-checks
+    #   at execute_proposal). Matches Plan 03-11 threat model T-03-11-04.
+    if strategy_obj is None:
+        if _account_mode == "LIVE":
+            from gekko.logging_config import get_logger as _get_logger
+            _log2 = _get_logger(__name__)
+            _log2.warning(
+                "dashboard.edit_size.strategy_load_failed_live_rejected",
+                proposal_id=proposal_id,
+                account_mode=_account_mode,
+            )
+            return templates.TemplateResponse(
+                request,
+                "edit_size_modal.html.j2",
+                {
+                    "proposal_id": proposal_id,
+                    "ticker": ticker,
+                    "qty": qty,
+                    "side": side,
+                    "ref_price": str(ref_price),
+                    "target_notional_usd": target_notional_usd_str,
+                    "original_notional": original_notional_str,
+                    "drift_error": (
+                        "Couldn't verify your strategy's risk caps right now"
+                        " — edit blocked for safety. Please try again."
+                    ),
+                },
+            )
+        else:
+            from gekko.logging_config import get_logger as _get_logger
+            _log2 = _get_logger(__name__)
+            _log2.warning(
+                "dashboard.edit_size.strategy_load_failed_paper_allow",
+                proposal_id=proposal_id,
+                account_mode=_account_mode,
+                note="cap check skipped; OrderGuard re-checks at execute_proposal",
+            )
+    else:
         _ok, _cap_msg = _check_edit_size_caps(new_qty, ref_price, strategy_obj, equity)
         if not _ok:
             return templates.TemplateResponse(
@@ -740,6 +782,10 @@ async def edit_size_submit(
             )
 
     # 4. Cap passed — dedup INSERT + audit event + qty update + transition
+    # WR-01 fix: initialise before the try/finally so references at the
+    # bottom of the function are never unbound if an exception propagates.
+    outcome: str = ""
+    updated_row = None
     sf3, engine3 = _get_session_factory(user_id)
     try:
         async with sf3() as session2, session2.begin():

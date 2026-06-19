@@ -119,6 +119,124 @@ def _make_strategy_row(max_position_pct: str = "0.20"):
 
 
 @pytest.mark.asyncio
+async def test_live_proposal_strategy_load_failure_rejected() -> None:
+    """CR-01 regression: when strategy cannot be loaded for a LIVE proposal,
+    the edit must be REJECTED (fail-closed), not silently allowed through.
+
+    Uses a LIVE proposal row whose payload_json has account_mode='LIVE'.
+    The mock session returns None for the strategy row (simulating a missing
+    or deleted strategy). The dashboard must return the modal with a safety
+    error message and must NOT call claim_action.
+    """
+    import gekko.vault.passphrase as _vault
+    from gekko.dashboard.app import create_app
+
+    proposal_id = "live-no-strategy-01"
+    _vault.set_passphrase("test-pass-live-fail")
+
+    from datetime import UTC, datetime
+    now_iso = datetime.now(UTC).isoformat()
+    evidence = [
+        {"source_type": "finnhub_news", "summary": "Strong earnings", "fetched_at": now_iso, "source_url": None, "quote_text": None, "relevance_score": None},
+        {"source_type": "web_fetch", "summary": "Analyst upgrades", "fetched_at": now_iso, "source_url": None, "quote_text": None, "relevance_score": None},
+        {"source_type": "edgar_filing", "summary": "Strong balance sheet", "fetched_at": now_iso, "source_url": None, "quote_text": None, "relevance_score": None},
+    ]
+    alternatives = [{"description": "RIVN position", "why_rejected": "lower margin"}]
+
+    # Build a LIVE proposal row (account_mode = "LIVE")
+    mock_row = MagicMock()
+    mock_row.proposal_id = proposal_id
+    mock_row.status = "PENDING"
+    mock_row.ticker = "TSLA"
+    mock_row.side = "buy"
+    mock_row.qty = "10"
+    mock_row.rationale = "EV thesis"
+    mock_row.account_mode = "LIVE"
+    mock_row.expires_at = None
+    mock_row.slack_message_ts = None
+    mock_row.slack_message_channel = None
+    mock_row.strategy_id = "strat-live"
+    mock_row.user_id = "testuser"
+    mock_row.payload_json = json.dumps({
+        "ticker": "TSLA",
+        "side": "buy",
+        "qty": "10",
+        "order_type": "market",
+        "rationale": "EV thesis",
+        "evidence": evidence,
+        "alternatives_considered": alternatives,
+        "confidence": "0.8",
+        "decision_id": proposal_id,
+        "strategy_name": "live-strat",
+        "user_id": "testuser",
+        "client_order_id": "a" * 32,
+        "account_mode": "LIVE",
+        "target_notional_usd": "1000",
+        "limit_price": None,
+        "stop_price": None,
+    })
+
+    mock_session = MagicMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_session.begin = MagicMock(return_value=mock_session)
+    mock_session.refresh = AsyncMock()
+    mock_session.flush = AsyncMock()
+    mock_session.add = MagicMock()
+
+    # call 1 = proposal load (returns mock_row), call 2 = strategy load (returns None)
+    call_count = {"n": 0}
+    proposal_result = MagicMock()
+    proposal_result.scalar_one_or_none.return_value = mock_row
+    no_strategy_result = MagicMock()
+    no_strategy_result.scalar_one_or_none.return_value = None  # strategy missing
+
+    async def mock_execute(stmt, *args, **kwargs):
+        call_count["n"] += 1
+        return proposal_result if call_count["n"] == 1 else no_strategy_result
+
+    mock_session.execute = mock_execute
+    mock_sf = MagicMock(return_value=mock_session)
+
+    try:
+        with patch("gekko.config.get_settings") as mock_settings_fn, \
+             patch("gekko.dashboard.routes._get_session_factory", return_value=(mock_sf, None)), \
+             patch("gekko.brokers.alpaca.AlpacaBroker", side_effect=Exception("no broker")), \
+             patch("gekko.approval.dedup.claim_action", new_callable=AsyncMock) as mock_claim:
+
+            settings = MagicMock()
+            settings.gekko_user_id = "testuser"
+            settings.dashboard_url = "http://localhost:8000"
+            mock_settings_fn.return_value = settings
+
+            app = create_app()
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://test",
+                follow_redirects=False,
+            ) as client:
+                login_resp = await client.post(
+                    "/login",
+                    data={"passphrase": "test-pass-live-fail", "next": "/approvals"},
+                )
+                assert login_resp.status_code == 303
+
+                resp = await client.post(
+                    f"/approvals/{proposal_id}/edit-submit",
+                    data={"qty": "10"},
+                )
+
+        assert resp.status_code == 200
+        body = resp.text
+        # Must contain the safety-rejection message (fail-closed on LIVE)
+        assert "risk caps" in body.lower() or "blocked" in body.lower() or "safety" in body.lower()
+        # claim_action must NOT be called — edit is rejected before dedup
+        mock_claim.assert_not_called()
+    finally:
+        _vault.clear()
+
+
+@pytest.mark.asyncio
 async def test_edit_above_hard_cap_rejected() -> None:
     """POST /approvals/{id}/edit-submit with qty whose notional exceeds the
     strategy's hard cap returns 200 with a plain-language error block; no DB

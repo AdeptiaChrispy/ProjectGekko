@@ -780,6 +780,10 @@ async def handle_edit_size_view_submission(
 
         # Load strategy from DB for hard caps
         strategy: _Strategy | None = None
+        # CR-01 fix: capture account_mode from the proposal row so we can
+        # make the cap-gate failure mode-aware (fail-closed on LIVE, fail-open
+        # on PAPER). Default to "LIVE" (safest) if row cannot be read.
+        _proposal_account_mode: str = "LIVE"
         sf, engine = _get_session_factory(gekko_user_id)
         try:
             async with sf() as session:
@@ -792,6 +796,7 @@ async def handle_edit_size_view_submission(
                     )
                 ).scalar_one_or_none()
                 if row is not None:
+                    _proposal_account_mode = getattr(row, "account_mode", "LIVE") or "LIVE"
                     from gekko.db.models import Strategy as StrategyRow
                     strategy_row = (
                         await session.execute(
@@ -821,7 +826,35 @@ async def handle_edit_size_view_submission(
         strategy = None
         equity = Decimal("0")
 
-    if strategy is not None:
+    # CR-01 fix: mode-aware fail-closed when strategy caps cannot be verified.
+    # LIVE proposals: reject the edit (real money; no backstop if OrderGuard
+    #   also fails at execute time). PAPER: keep prior fail-open behaviour
+    #   (OrderGuard still re-checks at execute_proposal).
+    if strategy is None:
+        if _proposal_account_mode == "LIVE":
+            log.warning(
+                "slack.edit_size.strategy_load_failed_live_rejected",
+                decision_id=decision_id,
+                account_mode=_proposal_account_mode,
+            )
+            await ack({
+                "response_action": "errors",
+                "errors": {
+                    "qty_block": (
+                        "Couldn't verify your strategy's risk caps right now"
+                        " — edit blocked for safety. Please try again."
+                    )
+                },
+            })
+            return
+        else:
+            log.warning(
+                "slack.edit_size.strategy_load_failed_paper_allow",
+                decision_id=decision_id,
+                account_mode=_proposal_account_mode,
+                note="cap check skipped; OrderGuard re-checks at execute_proposal",
+            )
+    else:
         ok, cap_msg = _check_edit_size_caps(new_qty, ref_price, strategy, equity)
         if not ok:
             await ack({
@@ -896,6 +929,15 @@ async def _edit_size_submit_workflow(
             old_notional = old_qty * ref_price
             new_notional = new_qty * ref_price
 
+            # CR-02 fix: guard against divide-by-zero when target_notional_usd
+            # is "0" (market orders have no explicit target notional).
+            # drift_pct is informational audit metadata only — zero is fine.
+            _target_notional = Decimal(meta["target_notional_usd"])
+            _drift_pct = (
+                abs(new_notional - _target_notional) / _target_notional
+                if _target_notional > Decimal("0")
+                else Decimal("0")
+            )
             await append_event(
                 session,
                 user_id=gekko_user_id,
@@ -906,8 +948,7 @@ async def _edit_size_submit_workflow(
                     "new_qty": new_qty,
                     "old_notional": old_notional,
                     "new_notional": new_notional,
-                    "drift_pct": abs(new_notional - Decimal(meta["target_notional_usd"]))
-                                  / Decimal(meta["target_notional_usd"]),
+                    "drift_pct": _drift_pct,
                     "actor": slack_user_id,
                 }),
             )
