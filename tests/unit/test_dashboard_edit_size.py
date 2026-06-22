@@ -237,6 +237,144 @@ async def test_live_proposal_strategy_load_failure_rejected() -> None:
 
 
 @pytest.mark.asyncio
+async def test_edit_size_get_context_keys() -> None:
+    """GET /approvals/{id}/edit-size response contains input[type="range"] with
+    correct HTML attributes: name="qty", min="1", step="1".
+
+    The route must pass max_shares (int), account_equity_display (str),
+    equity_fetch_failed (bool), and max_position_pct (str) to the template.
+    """
+    import gekko.vault.passphrase as _vault
+    from gekko.dashboard.app import create_app
+
+    proposal_id = "edit-get-ctx-01"
+
+    mock_sf, mock_row = _make_session_and_row(proposal_id)
+    # _make_session_and_row sets passphrase to "test-pass-edit"; override here
+    _vault.set_passphrase("test-pass-edit")
+    strategy_row = _make_strategy_row("0.20")
+
+    call_count = {"n": 0}
+    proposal_result = MagicMock()
+    proposal_result.scalar_one_or_none.return_value = mock_row
+    strategy_result = MagicMock()
+    strategy_result.scalar_one_or_none.return_value = strategy_row
+
+    async def mock_execute(stmt, *args, **kwargs):
+        call_count["n"] += 1
+        # GET handler opens 2 sessions: first = proposal, second = strategy
+        return proposal_result if call_count["n"] == 1 else strategy_result
+
+    mock_session = mock_sf.return_value
+    mock_session.execute = mock_execute
+
+    broker_instance = MagicMock()
+    broker_instance.get_account = AsyncMock(return_value={"equity": "10000"})
+
+    try:
+        with patch("gekko.config.get_settings") as mock_settings_fn, \
+             patch("gekko.dashboard.routes._get_session_factory", return_value=(mock_sf, None)), \
+             patch("gekko.brokers.alpaca.AlpacaBroker", return_value=broker_instance):
+
+            settings = MagicMock()
+            settings.gekko_user_id = "testuser"
+            settings.dashboard_url = "http://localhost:8000"
+            mock_settings_fn.return_value = settings
+
+            app = create_app()
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://test",
+                follow_redirects=False,
+            ) as client:
+                login_resp = await client.post(
+                    "/login",
+                    data={"passphrase": "test-pass-edit", "next": "/approvals"},
+                )
+                assert login_resp.status_code == 303
+
+                resp = await client.get(f"/approvals/{proposal_id}/edit-size")
+
+        assert resp.status_code == 200
+        body = resp.text
+        # Must render a range slider (not number input)
+        assert 'type="range"' in body
+        assert 'name="qty"' in body
+        assert 'min="1"' in body
+        assert 'step="1"' in body
+    finally:
+        _vault.clear()
+
+
+@pytest.mark.asyncio
+async def test_edit_size_get_equity_fail_open() -> None:
+    """GET /approvals/{id}/edit-size returns 200 with type="range" even when
+    the broker get_account raises (equity-fetch-failure path).
+
+    The caution note text "Cap couldn't be confirmed" must appear in the page.
+    """
+    import gekko.vault.passphrase as _vault
+    from gekko.dashboard.app import create_app
+
+    proposal_id = "edit-get-fail-01"
+
+    mock_sf, mock_row = _make_session_and_row(proposal_id)
+    # _make_session_and_row sets passphrase to "test-pass-edit"; use same value
+    _vault.set_passphrase("test-pass-edit")
+    strategy_row = _make_strategy_row("0.20")
+
+    call_count = {"n": 0}
+    proposal_result = MagicMock()
+    proposal_result.scalar_one_or_none.return_value = mock_row
+    strategy_result = MagicMock()
+    strategy_result.scalar_one_or_none.return_value = strategy_row
+
+    async def mock_execute(stmt, *args, **kwargs):
+        call_count["n"] += 1
+        return proposal_result if call_count["n"] == 1 else strategy_result
+
+    mock_session = mock_sf.return_value
+    mock_session.execute = mock_execute
+
+    # Broker raises — simulates equity-fetch failure
+    broker_instance = MagicMock()
+    broker_instance.get_account = AsyncMock(side_effect=Exception("broker unreachable"))
+
+    try:
+        with patch("gekko.config.get_settings") as mock_settings_fn, \
+             patch("gekko.dashboard.routes._get_session_factory", return_value=(mock_sf, None)), \
+             patch("gekko.brokers.alpaca.AlpacaBroker", return_value=broker_instance):
+
+            settings = MagicMock()
+            settings.gekko_user_id = "testuser"
+            settings.dashboard_url = "http://localhost:8000"
+            mock_settings_fn.return_value = settings
+
+            app = create_app()
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://test",
+                follow_redirects=False,
+            ) as client:
+                login_resp = await client.post(
+                    "/login",
+                    data={"passphrase": "test-pass-edit", "next": "/approvals"},
+                )
+                assert login_resp.status_code == 303
+
+                resp = await client.get(f"/approvals/{proposal_id}/edit-size")
+
+        assert resp.status_code == 200
+        body = resp.text
+        # Slider must still render (fail-open)
+        assert 'type="range"' in body
+        # Equity-failure caution note must be present
+        assert "Cap couldn't be confirmed" in body
+    finally:
+        _vault.clear()
+
+
+@pytest.mark.asyncio
 async def test_edit_above_hard_cap_rejected() -> None:
     """POST /approvals/{id}/edit-submit with qty whose notional exceeds the
     strategy's hard cap returns 200 with a plain-language error block; no DB
