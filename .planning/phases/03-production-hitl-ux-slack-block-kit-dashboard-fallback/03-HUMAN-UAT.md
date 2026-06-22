@@ -32,7 +32,21 @@ diagnosis_2026_06_22: |
   so a non-column access raises like production. Full edit-size suite green (6 passed).
   RETEST: Python isn't hot-reloaded — RESTART `uv run gekko serve` once more to load 09d8f48, then
   re-open Edit Size on a fresh proposal.
-awaiting: browser retest after restart (load fix 09d8f48)
+second_bug_2026_06_22: |
+  After the 09d8f48 fix the slider rendered and submitted, but resizing NVDA 2→5 shares was then
+  [REJECTED BY ORDERGUARD] qty_price_drift: "qty × ref_price (5 × 210.05 = 1050.25) drifts 150% from
+  target_notional_usd 420.1; max allowed 2%". Root cause: edit_size_submit updated qty but NOT
+  target_notional_usd, so OrderGuard's D-27 check_qty_price_sanity (qty×price vs declared notional)
+  rejected every deliberate resize. The edit-size hard-cap check passed; this is a SECOND, deeper layer.
+  FIX (commit ad57988): edit_size_submit now rewrites target_notional_usd = new_qty × ref_price
+  alongside qty. Safety unchanged — the absolute bound stays the hard cap (max_position_pct×equity via
+  the slider max + _check_edit_size_caps + OrderGuard check_hard_caps); only the qty↔declared-notional
+  consistency guard is kept in sync so the operator's deliberate size isn't treated as an agent typo.
+  Regression test added (test_edit_updates_target_notional_to_match_new_qty). Edit-size + OrderGuard
+  suites green (46 passed).
+  RETEST: RESTART `uv run gekko serve` again to load ad57988, then resize + Approve at this size →
+  order should pass OrderGuard and fill (paper), proposal → FILLED.
+awaiting: browser retest after restart (load fixes 09d8f48 + ad57988)
 
 ## Tests
 
