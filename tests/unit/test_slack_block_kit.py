@@ -250,11 +250,16 @@ def test_card_includes_approve_and_reject_buttons_with_decision_id() -> None:
 
 
 def test_card_includes_edit_size_and_dashboard_url_button() -> None:
-    """Edit Size action button + the D-60 'Open in dashboard' URL button exist.
+    """Edit size is a URL deep-link button (D-62, Plan 03-14); 'Open in dashboard'
+    URL button also exists (D-60).
 
-    D-60 replaced the old 'Escalate' stub action button with a URL button that
-    deep-links to the dashboard /approvals/{decision_id} page. URL buttons do
-    NOT round-trip to Slack handlers, so they carry a ``url`` and no ``action_id``.
+    D-62 converted the old Edit Size action button to a URL button pointing at
+    /approvals/{id}/edit-size. URL buttons do NOT round-trip to Slack handlers;
+    they carry a ``url`` and no ``action_id``.
+
+    Two URL buttons are now expected:
+    1. Edit size  → /approvals/{id}/edit-size
+    2. Open in dashboard → /approvals/{id}
     """
     p = _sample_trade_proposal()
     blocks = build_proposal_card(p)
@@ -263,15 +268,26 @@ def test_card_includes_edit_size_and_dashboard_url_button() -> None:
     actions = action_blocks[0]["elements"]
     by_action_id = {a["action_id"]: a for a in actions if "action_id" in a}
 
-    # Edit Size remains an action button keyed by decision_id.
-    assert "edit_size" in by_action_id
-    assert by_action_id["edit_size"]["value"] == p.decision_id
+    # D-62: Edit size must be a URL button — NO action_id key on the element.
+    assert "edit_size" not in by_action_id, (
+        "Edit size must be a URL button (D-62): no action_id expected"
+    )
 
-    # The Escalate stub is gone; a URL button deep-links to the dashboard.
+    # D-62: Find the Edit size URL button by text.
     url_buttons = [a for a in actions if "url" in a and "action_id" not in a]
-    assert len(url_buttons) == 1, "expected exactly one D-60 dashboard URL button"
-    assert p.decision_id in url_buttons[0]["url"]
-    assert "/approvals/" in url_buttons[0]["url"]
+    edit_size_buttons = [a for a in url_buttons if "edit-size" in a.get("url", "")]
+    assert len(edit_size_buttons) == 1, "expected exactly one Edit size URL button pointing at /edit-size"
+    assert p.decision_id in edit_size_buttons[0]["url"]
+    assert "/approvals/" in edit_size_buttons[0]["url"]
+    assert "edit-size" in edit_size_buttons[0]["url"]
+
+    # D-60: 'Open in dashboard' URL button still exists.
+    dashboard_buttons = [
+        a for a in url_buttons
+        if "edit-size" not in a.get("url", "") and "/approvals/" in a.get("url", "")
+    ]
+    assert len(dashboard_buttons) == 1, "expected exactly one D-60 dashboard URL button"
+    assert p.decision_id in dashboard_buttons[0]["url"]
 
 
 def test_card_includes_reg_01_compliance_footer() -> None:
