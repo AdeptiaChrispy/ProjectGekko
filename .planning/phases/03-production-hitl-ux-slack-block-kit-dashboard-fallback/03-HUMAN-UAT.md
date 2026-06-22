@@ -8,7 +8,34 @@ updated: 2026-06-22T12:00:00Z
 
 ## Current Test
 
-[testing complete — 2026-06-22 re-verification: Test 1 pass, Test 4 pass; Test 2 reopened (edit-size legibility); Tests 3 & 5 time-gated/skipped; 2 new dashboard-nav enhancements logged]
+number: 2
+name: Edit-size slider — live browser test (D-62 / Plan 03-14)
+expected: |
+  On /approvals, click "Edit size" on a pending proposal. A modal opens with a draggable
+  SLIDER. Slack "Edit size" deep-links to the same dashboard page.
+result: blocked   # live 2026-06-22 — stale server; retest after clean restart
+blocked_by: stale-server
+reported: "Dashboard Edit Size does nothing; Slack Edit Size → Internal Server Error."
+severity: blocker
+diagnosis_2026_06_22: |
+  Root cause: STALE SERVER (Python not hot-reloaded), NOT a code defect.
+  Evidence:
+  - User's server logs show process 3264 started 2026-06-19 13:05 and shut down 14:35 — 3 days
+    before Plan 03-14 shipped. The slider + Slack URL-button were committed 2026-06-22 (76b39ce 11:56,
+    9814d15 12:21). That server cannot contain any 03-14 code.
+  - On-disk wiring is correct: _proposal_card.html.j2 edit-size button is hx-get=/approvals/{id}/edit-size
+    → #modal-mount (present in approvals_index.html.j2); /static mounted; edit-size-slider.js present.
+  - GET /approvals/{id}/edit-size renders a type="range" slider successfully under test:
+    test_edit_size_get_context_keys + test_edit_size_get_equity_fail_open both PASS. The route does not 500.
+  - The pasted logs contain NO edit-size traceback — only the pre-existing channel_not_found (proposal
+    delivery) and broker-not-configured (researcher get_quote) noise.
+  Symptoms map to OLD code: a pre-03-14 server has no slider and (depending on cached Slack card) the
+  old edit-size button path → the observed "does nothing" / error.
+  ACTION: stop the running `uv run gekko serve`, restart it (loads 03-14), hard-refresh the browser
+  (Ctrl+F5 to drop cached templates/JS), then re-run Test 2.
+  IF it still fails after a clean restart: capture the ACTUAL traceback printed at the moment of the
+  edit-size click and attach it — only then treat as a code bug and route to gap-closure.
+awaiting: clean-restart retest
 
 ## Tests
 
@@ -111,11 +138,11 @@ reason: "Time-gated — fires at 16:30 ET on a trading day. Deferred; verify at 
 
 total: 5
 passed: 2
-issues: 1
+issues: 0
 pending: 0
 skipped: 2
-blocked: 0
-enhancements: 2   # dashboard state-tabs + site nav toolbar (new scope, minor)
+blocked: 1   # Test 2 edit-size slider — stale server; retest after clean restart (not a code gap)
+enhancements: 2   # dashboard state-tabs + site nav toolbar (new scope, minor → Phase 6)
 
 ## Gaps
 
