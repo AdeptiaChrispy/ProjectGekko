@@ -20,7 +20,7 @@ dependencies = [
     # the FastAPI adapter is used; pin it explicitly so slack.app imports
     # cleanly (Plan 01-09 mounts the route).
     "aiohttp>=3.9",
-    "fastapi>=0.115,<0.120",
+    "fastapi>=0.137.1,<0.138",
     "uvicorn[standard]",
     "jinja2",
     "python-multipart",
