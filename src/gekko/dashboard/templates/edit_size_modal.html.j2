@@ -1,6 +1,7 @@
-{# Edit-size HTMX modal partial — Plan 03-05 Task 3 (D-54), updated Plan 03-11.
-   UI-SPEC §Surface 2 (dashboard HTMX modal shape).
-   RESEARCH §Pattern 4 (HTMX modal + outerHTML/innerHTML swap).
+{# Edit-size HTMX modal partial — Plan 03-14 (D-62 slider redesign).
+   Replaces the number-input modal shipped in Plan 03-05/03-11 with a
+   native HTML range slider showing max shares, live dollar/percent readout,
+   at-cap variant, and equity-fetch-failure variant.
 
    Returned by:
      GET  /approvals/{proposal_id}/edit-size   → initial render
@@ -12,17 +13,24 @@
    Cancel clears #modal-mount via /modal/close.
 
    Context variables:
-     proposal_id        : str
-     ticker             : str
-     side               : str  (BUY / SELL)
-     qty                : str  (current / pre-fill value)
-     ref_price          : str  (server-derived, not operator input)
-     target_notional_usd : str
-     original_notional  : str  (precomputed: qty * ref_price)
-     drift_error        : str | None  (plain-language cap error or None)
+     proposal_id           : str
+     ticker                : str
+     side                  : str  (BUY / SELL)
+     qty                   : str  (proposed qty — slider initial value)
+     ref_price             : str  (server-derived, not operator input)
+     target_notional_usd   : str
+     original_notional     : str  (precomputed: qty * ref_price)
+     max_shares            : int  (floor(max_position_pct * equity / ref_price))
+     account_equity_display: str  ("$X,XXX.XX" or "" when equity fetch failed)
+     equity_fetch_failed   : bool (True when broker was unreachable)
+     max_position_pct      : str  (strategy hard cap, e.g. "0.05")
+     drift_error           : str | None  (plain-language cap error or None)
 
-   Validation: _check_edit_size_caps (Plan 03-11).
-   The 2% drift check (_drift_check) is NOT the gate for operator edits.
+   Server-side gate: _check_edit_size_caps in edit_size_submit (unchanged).
+   The slider max is a UI affordance; the server cap check is the authority.
+
+   CSP note: updateSizeReadout() is defined in /static/edit-size-slider.js
+   (script-src 'self') so the oninput attribute is CSP-safe.
 #}
 <div class="modal-backdrop" id="edit-modal">
   <div class="modal" role="dialog" aria-labelledby="edit-size-headline" aria-modal="true">
@@ -41,28 +49,35 @@
         Ref price: <strong>${{ ref_price }}</strong> &nbsp;&middot;&nbsp;
         Current order: <strong>{{ qty }} shares (~${{ original_notional }})</strong>
       </p>
-      <p class="form-help">
-        Adjust quantity below. Max order size is enforced at submit.
-      </p>
 
       <form hx-post="/approvals/{{ proposal_id }}/edit-submit"
             hx-target="#modal-mount"
             hx-swap="innerHTML">
         <div class="form-stack">
-          <label for="edit-qty">New quantity</label>
-          <input type="number"
+          <label for="edit-qty">Quantity (shares)</label>
+          <input type="range"
                  id="edit-qty"
                  name="qty"
-                 step="any"
-                 min="0"
+                 min="1"
+                 step="1"
+                 max="{{ max_shares }}"
                  value="{{ qty }}"
                  required
-                 autocomplete="off"
-                 class="login-input"
-                 aria-describedby="edit-qty-help">
-          <p id="edit-qty-help" class="form-help">
-            Enter the number of shares (fractional allowed).
-          </p>
+                 data-ref-price="{{ ref_price }}"
+                 data-equity="{{ account_equity_display }}"
+                 data-max-pct="{{ max_position_pct }}"
+                 class="edit-size-slider"
+                 aria-describedby="size-readout"
+                 oninput="updateSizeReadout(this)">
+          <div id="size-readout" class="edit-size-readout" aria-live="polite"></div>
+
+          {% if not equity_fetch_failed and max_shares == qty | int %}
+          <p class="form-help">This is your maximum for this strategy.</p>
+          {% endif %}
+
+          {% if equity_fetch_failed %}
+          <p class="form-help"><span style="color:#92400e">&#9888; Cap couldn't be confirmed (broker unreachable). Server will verify at submit.</span></p>
+          {% endif %}
         </div>
 
         <div class="modal-actions">
@@ -77,3 +92,4 @@
     </div>
   </div>
 </div>
+<script src="/static/edit-size-slider.js"></script>

@@ -495,14 +495,20 @@ async def edit_size_get(
     proposal_id: str,
     user_id: str = Depends(require_session),
 ) -> HTMLResponse:
-    """GET /approvals/{id}/edit-size — render HTMX edit-size modal partial.
+    """GET /approvals/{id}/edit-size — render HTMX edit-size slider partial.
 
-    Loads the Proposal row to pre-fill qty, ref_price, target_notional_usd.
-    Returns edit_size_modal.html.j2 which HTMX swaps into #modal-mount.
+    Plan 03-14 (D-62): loads Proposal + Strategy rows, fetches account equity,
+    and passes max_shares / account_equity_display / equity_fetch_failed /
+    max_position_pct to the slider template.
+
+    edit_size_submit is UNCHANGED — _check_edit_size_caps remains the sole
+    server-side gate; the slider max is a UI affordance only.
     """
+    import json as _json
     from decimal import Decimal as _Decimal
     from gekko.db.models import Proposal as ProposalRow
 
+    # ── 1. Load proposal row ──────────────────────────────────────────────────
     sf, engine = _get_session_factory(user_id)
     try:
         async with sf() as session:
@@ -521,32 +527,114 @@ async def edit_size_get(
     if row is None:
         raise HTTPException(status_code=404, detail="Proposal not found")
 
-    import json as _json
     payload = _json.loads(row.payload_json)
     ticker = payload.get("ticker", row.ticker or "")
     qty = payload.get("qty", "0")
     limit_price = payload.get("limit_price")
     stop_price = payload.get("stop_price")
     target_notional_usd = payload.get("target_notional_usd", "0")
+    strategy_id_snapshot = row.strategy_id
+    side = payload.get("side", "")
 
     # Derive ref_price: limit > stop > target/qty fallback
     if limit_price:
-        ref_price = str(limit_price)
+        ref_price_str = str(limit_price)
     elif stop_price:
-        ref_price = str(stop_price)
+        ref_price_str = str(stop_price)
     else:
         try:
-            ref_price = str(_Decimal(target_notional_usd) / _Decimal(qty))
+            ref_price_str = str(_Decimal(target_notional_usd) / _Decimal(qty))
         except Exception:
-            ref_price = "0"
+            ref_price_str = "0"
 
-    side = payload.get("side", "")
+    try:
+        ref_price_dec = _Decimal(ref_price_str)
+    except Exception:
+        ref_price_dec = _Decimal("0")
 
     # Compute original_notional for plain-language framing
     try:
-        original_notional = str(_Decimal(qty) * _Decimal(ref_price))
+        original_notional = str(_Decimal(qty) * ref_price_dec)
     except Exception:
         original_notional = "0"
+
+    # ── 2. Load strategy for max_position_pct ────────────────────────────────
+    from gekko.schemas.strategy import Strategy as _Strategy
+    strategy_obj: _Strategy | None = None
+    max_position_pct_dec = _Decimal("0")
+
+    sf2, engine2 = _get_session_factory(user_id)
+    try:
+        async with sf2() as session2:
+            from gekko.db.models import Strategy as _StrategyRow
+            strategy_row = (
+                await session2.execute(
+                    select(_StrategyRow).where(
+                        _StrategyRow.user_id == user_id,
+                        _StrategyRow.strategy_id == strategy_id_snapshot,
+                    )
+                )
+            ).scalar_one_or_none()
+            if strategy_row is not None and strategy_row.payload_json:
+                try:
+                    strategy_obj = _Strategy.model_validate_json(
+                        strategy_row.payload_json
+                    )
+                    max_position_pct_dec = strategy_obj.hard_caps.max_position_pct
+                except Exception:  # noqa: BLE001 — corrupt payload → use 0
+                    strategy_obj = None
+    finally:
+        if engine2 is not None:
+            await engine2.dispose()
+
+    # ── 3. Fetch account equity (2.5s timeout, fail-open to 0) ───────────────
+    equity = _Decimal("0")
+    equity_fetch_failed = False
+
+    try:
+        from gekko.brokers.alpaca import AlpacaBroker as _AlpacaBroker
+        import asyncio as _asyncio
+        _settings = get_settings()
+        _paper_key = _settings.alpaca_paper_api_key
+        _paper_secret = _settings.alpaca_paper_secret_key
+        _broker = _AlpacaBroker(
+            api_key=_paper_key.get_secret_value(),
+            secret_key=_paper_secret.get_secret_value(),
+            paper=True,
+        )
+        try:
+            _account = await _asyncio.wait_for(_broker.get_account(), timeout=2.5)
+            _eq_raw = _account.get("equity") or _account.get("portfolio_value") or "0"
+            equity = _Decimal(str(_eq_raw))
+        except Exception:  # noqa: BLE001 — timeout / broker error → fail-open
+            from gekko.logging_config import get_logger as _get_logger
+            _get_logger(__name__).warning(
+                "dashboard.edit_size_get.equity_fetch_failed",
+                proposal_id=proposal_id,
+                note="max_shares derived from qty (fail-open); server will verify at submit",
+            )
+            equity = _Decimal("0")
+            equity_fetch_failed = True
+    except Exception:  # noqa: BLE001 — broker construction failed → fail-open
+        equity = _Decimal("0")
+        equity_fetch_failed = True
+
+    # ── 4. Compute max_shares ─────────────────────────────────────────────────
+    # max_shares = floor(max_position_pct * equity / ref_price)
+    # Clamped so max_shares >= proposed qty (at-cap: handle sits at max).
+    proposed_qty_int = max(1, int(_Decimal(qty)))
+
+    if equity > _Decimal("0") and ref_price_dec > _Decimal("0") and max_position_pct_dec > _Decimal("0"):
+        max_shares = int(max_position_pct_dec * equity / ref_price_dec)
+    else:
+        # Equity unknown or strategy missing — slider still usable (only downward)
+        max_shares = proposed_qty_int
+
+    # Clamp: slider max must be at least the proposed qty
+    if max_shares < proposed_qty_int:
+        max_shares = proposed_qty_int
+
+    account_equity_display = f"${equity:,.2f}" if equity > _Decimal("0") else ""
 
     return templates.TemplateResponse(
         request,
@@ -556,9 +644,13 @@ async def edit_size_get(
             "ticker": ticker,
             "qty": qty,
             "side": side,
-            "ref_price": ref_price,
+            "ref_price": ref_price_str,
             "target_notional_usd": target_notional_usd,
             "original_notional": original_notional,
+            "max_shares": max_shares,
+            "account_equity_display": account_equity_display,
+            "equity_fetch_failed": equity_fetch_failed,
+            "max_position_pct": str(max_position_pct_dec),
             "drift_error": None,
         },
     )
@@ -609,6 +701,10 @@ async def edit_size_submit(
                 "ref_price": "0",
                 "target_notional_usd": "0",
                 "original_notional": "0",
+                "max_shares": max(1, int(_Decimal(qty)) if qty.strip().isdigit() else 1),
+                "account_equity_display": "",
+                "equity_fetch_failed": True,
+                "max_position_pct": "0",
                 "drift_error": "Please enter a valid positive quantity.",
             },
         )
@@ -748,6 +844,10 @@ async def edit_size_submit(
                     "ref_price": str(ref_price),
                     "target_notional_usd": target_notional_usd_str,
                     "original_notional": original_notional_str,
+                    "max_shares": max(1, int(new_qty)),
+                    "account_equity_display": f"${equity:,.2f}" if equity > _Decimal("0") else "",
+                    "equity_fetch_failed": equity == _Decimal("0"),
+                    "max_position_pct": "0",
                     "drift_error": (
                         "Couldn't verify your strategy's risk caps right now"
                         " — edit blocked for safety. Please try again."
@@ -766,6 +866,15 @@ async def edit_size_submit(
     else:
         _ok, _cap_msg = _check_edit_size_caps(new_qty, ref_price, strategy_obj, equity)
         if not _ok:
+            # Compute max_shares for the re-render slider context
+            _max_position_pct_dec = strategy_obj.hard_caps.max_position_pct if strategy_obj else _Decimal("0")
+            _proposed_qty_int = max(1, int(_Decimal(original_qty_str)))
+            if equity > _Decimal("0") and ref_price > _Decimal("0") and _max_position_pct_dec > _Decimal("0"):
+                _max_shares = int(_max_position_pct_dec * equity / ref_price)
+            else:
+                _max_shares = _proposed_qty_int
+            if _max_shares < _proposed_qty_int:
+                _max_shares = _proposed_qty_int
             return templates.TemplateResponse(
                 request,
                 "edit_size_modal.html.j2",
@@ -777,6 +886,10 @@ async def edit_size_submit(
                     "ref_price": str(ref_price),
                     "target_notional_usd": target_notional_usd_str,
                     "original_notional": original_notional_str,
+                    "max_shares": _max_shares,
+                    "account_equity_display": f"${equity:,.2f}" if equity > _Decimal("0") else "",
+                    "equity_fetch_failed": equity == _Decimal("0"),
+                    "max_position_pct": str(_max_position_pct_dec),
                     "drift_error": _cap_msg,
                 },
             )
