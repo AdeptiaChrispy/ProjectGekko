@@ -439,11 +439,13 @@ def build_proposal_card(
                     "value": decision_id_value,
                     "action_id": "reject_proposal",
                 },
+                # D-62 (Plan 03-14): URL button deep-links to the dashboard
+                # edit-size slider page. No action_id — URL buttons do not
+                # round-trip to Bolt action handlers.
                 {
                     "type": "button",
-                    "text": {"type": "plain_text", "text": "Edit Size"},
-                    "value": decision_id_value,
-                    "action_id": "edit_size",
+                    "text": {"type": "plain_text", "text": "Edit size"},
+                    "url": f"{_get_dashboard_url()}/approvals/{decision_id_value}/edit-size",
                 },
                 # D-60 — URL button opens the dashboard /approvals/{id} page.
                 # No action_id (URL buttons do NOT round-trip to Slack handlers).

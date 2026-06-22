@@ -5,8 +5,9 @@ Four ``@app.action(...)`` handlers register here (registration happens in
 
 * :func:`handle_approve` — PENDING -> APPROVED + fire Executor.
 * :func:`handle_reject` — PENDING -> REJECTED. No Executor.
-* :func:`handle_edit_size` — P3 (Plan 03-05): opens the Block Kit modal via views.open.
-* :func:`handle_edit_size_view_submission` — P3 view_submission: drift check + transition.
+* :func:`handle_edit_size` — RETIRED stub (D-62, Plan 03-14). Edit size is now
+  a URL button deep-linking to the dashboard slider page.
+* :func:`handle_edit_size_view_submission` — RETIRED stub (D-62, Plan 03-14).
 * :func:`handle_escalate_stub` — Deprecated (D-60). URL button replaces action button.
 
 The Pitfall 3 invariant per RESEARCH §"Slack Bolt + FastAPI adapter
@@ -605,274 +606,37 @@ async def _reject_workflow(
 async def handle_edit_size(
     *, ack: _AckFn, body: dict[str, Any], client: Any
 ) -> None:
-    """Edit-size button — opens Block Kit modal via views.open (D-54, Plan 03-05).
+    """RETIRED (D-62, Plan 03-14). Edit-size is a URL button — this Bolt action
+    handler should not be called in production. Stale client callback received.
 
-    Pitfall 3: ack() is the FIRST awaited call — before any DB work.
-    After ack the handler loads the Proposal row + TradeProposal, builds
-    the ref_price, and calls client.views_open with the edit_size_modal.
+    Acks immediately and logs a deprecation warning. No modal is opened.
+    The live path is: Slack URL button → browser → dashboard /approvals/{id}/edit-size.
     """
     await ack()
-
-    decision_id = body["actions"][0]["value"]
-    trigger_id = body["trigger_id"]
-
-    settings = get_settings()
-    gekko_user_id = settings.gekko_user_id
-    sf, engine = _get_session_factory(gekko_user_id)
-    try:
-        async with sf() as session:
-            row = (
-                await session.execute(
-                    select(ProposalRow).where(
-                        ProposalRow.proposal_id == decision_id,
-                        ProposalRow.user_id == gekko_user_id,
-                    )
-                )
-            ).scalar_one_or_none()
-            if row is None:
-                log.warning("slack.edit_size.proposal_not_found", decision_id=decision_id)
-                return
-            # Parse TradeProposal to get qty + pricing
-            from gekko.schemas.proposal import TradeProposal
-            tp = TradeProposal.model_validate_json(row.payload_json)
-    finally:
-        if engine is not None:
-            await engine.dispose()
-
-    # Determine ref_price: limit_price > stop_price > fallback (use target_notional / qty)
-    if tp.limit_price is not None:
-        ref_price = tp.limit_price
-    elif tp.stop_price is not None:
-        ref_price = tp.stop_price
-    elif tp.qty and tp.target_notional_usd:
-        ref_price = tp.target_notional_usd / tp.qty
-    else:
-        ref_price = Decimal("0")
-
-    target = tp.target_notional_usd or Decimal("0")
-    original_qty = tp.qty
-
-    side_str = str(tp.side).upper()
-    original_notional = original_qty * ref_price
-
-    await client.views_open(
-        trigger_id=trigger_id,
-        view={
-            "type": "modal",
-            "callback_id": "edit_size_modal",
-            "private_metadata": json.dumps({
-                "decision_id": decision_id,
-                "ref_price": str(ref_price),
-                "target_notional_usd": str(target),
-                "original_qty": str(original_qty),
-                "ticker": tp.ticker,
-                "side": side_str,
-                "response_url": body.get("response_url"),
-            }),
-            "title": {
-                "type": "plain_text",
-                "text": f"Edit order size — {side_str} {original_qty} {tp.ticker} (~${original_notional:,.2f})",
-            },
-            "submit": {"type": "plain_text", "text": "Approve at this size"},
-            "close": {"type": "plain_text", "text": "Cancel"},
-            "blocks": [
-                {
-                    "type": "input",
-                    "block_id": "qty_block",
-                    "label": {"type": "plain_text", "text": "New quantity"},
-                    "element": {
-                        "type": "number_input",
-                        "action_id": "qty_input",
-                        "initial_value": str(original_qty),
-                        "is_decimal_allowed": True,
-                        "min_value": "0",
-                    },
-                },
-                {
-                    "type": "context",
-                    "elements": [{
-                        "type": "mrkdwn",
-                        "text": (
-                            f"Current: {side_str} {original_qty} {tp.ticker}"
-                            f" (~${original_notional:,.2f})\n"
-                            f"Ref price: ${ref_price}\n"
-                            "Adjust shares below — cap enforced at submit"
-                        ),
-                    }],
-                },
-                {
-                    "type": "context",
-                    "elements": [{
-                        "type": "mrkdwn",
-                        "text": (
-                            "Your change is validated against your strategy's risk caps,"
-                            " not against the agent's original target."
-                        ),
-                    }],
-                },
-            ],
-        },
+    log.warning(
+        "slack.edit_size.button.retired",
+        note=(
+            "D-62: Edit-size is a URL button — this Bolt action handler should "
+            "not be called in production. Stale client callback received."
+        ),
+        decision_id=body["actions"][0]["value"] if body.get("actions") else None,
     )
 
 
 async def handle_edit_size_view_submission(
     *, ack: _AckFn, body: dict[str, Any], client: Any, view: dict[str, Any]
 ) -> None:
-    """view_submission handler for 'edit_size_modal' — D-54 cap check (Plan 03-11).
+    """RETIRED (D-62, Plan 03-14). No-op ack stub.
 
-    Validates the operator-submitted qty against the strategy's OrderGuard hard
-    caps via _check_edit_size_caps (NOT the 2% drift check — see Plan 03-11
-    objective for why _drift_check is wrong here).
-
-    On failure: ``response_action='errors'`` re-renders the modal (no state change).
-    On pass: ``ack()`` closes modal + spawns ``_edit_size_submit_workflow``.
-
-    Pitfall 3: ack() is the FIRST call — either with errors dict or empty body.
-    Pitfall 8: response_action='errors' requires BOTH keys: response_action + errors.
+    handle_edit_size_view_submission is retired — the dashboard slider is
+    the only edit surface. This function is kept in __all__ for backward
+    compatibility with any existing import.
     """
-    from gekko.approval.actions import _check_edit_size_caps
-
-    meta = json.loads(view["private_metadata"])
-    decision_id = meta["decision_id"]
-    ref_price = Decimal(meta["ref_price"])
-
-    raw_qty = view["state"]["values"]["qty_block"]["qty_input"]["value"]
-
-    try:
-        new_qty = Decimal(raw_qty)
-    except (InvalidOperation, TypeError):
-        await ack({
-            "response_action": "errors",
-            "errors": {"qty_block": "Please enter a numeric quantity."},
-        })
-        return
-
-    # Cap check — validate against strategy hard caps, not 2% drift.
-    # Fetch account equity from the paper broker (async); use equity=0
-    # (fail-open) if broker call fails or times out within the 3-second
-    # Slack ack window.
-    settings = get_settings()
-    gekko_user_id = settings.gekko_user_id
-    equity = Decimal("0")
-
-    try:
-        from gekko.brokers.alpaca import AlpacaBroker
-        from gekko.schemas.strategy import Strategy as _Strategy
-
-        paper_key = settings.alpaca_paper_api_key
-        paper_secret = settings.alpaca_paper_secret_key
-        broker_tmp = AlpacaBroker(
-            api_key=paper_key.get_secret_value(),
-            secret_key=paper_secret.get_secret_value(),
-            paper=True,
-        )
-        try:
-            account = await asyncio.wait_for(broker_tmp.get_account(), timeout=2.5)
-            equity_raw = account.get("equity") or account.get("portfolio_value") or "0"
-            equity = Decimal(str(equity_raw))
-        except Exception:  # noqa: BLE001 — timeout / broker error → fail-open
-            log.warning(
-                "slack.edit_size.equity_fetch_failed",
-                decision_id=decision_id,
-                note="cap check will skip (equity=0 fail-open); OrderGuard re-checks at execute",
-            )
-            equity = Decimal("0")
-
-        # Load strategy from DB for hard caps
-        strategy: _Strategy | None = None
-        # CR-01 fix: capture account_mode from the proposal row so we can
-        # make the cap-gate failure mode-aware (fail-closed on LIVE, fail-open
-        # on PAPER). Default to "LIVE" (safest) if row cannot be read.
-        _proposal_account_mode: str = "LIVE"
-        sf, engine = _get_session_factory(gekko_user_id)
-        try:
-            async with sf() as session:
-                row = (
-                    await session.execute(
-                        select(ProposalRow).where(
-                            ProposalRow.proposal_id == decision_id,
-                            ProposalRow.user_id == gekko_user_id,
-                        )
-                    )
-                ).scalar_one_or_none()
-                if row is not None:
-                    _proposal_account_mode = getattr(row, "account_mode", "LIVE") or "LIVE"
-                    from gekko.db.models import Strategy as StrategyRow
-                    strategy_row = (
-                        await session.execute(
-                            select(StrategyRow).where(
-                                StrategyRow.user_id == gekko_user_id,
-                                StrategyRow.strategy_id == row.strategy_id,
-                            )
-                        )
-                    ).scalar_one_or_none()
-                    if strategy_row is not None and strategy_row.payload_json:
-                        try:
-                            strategy = _Strategy.model_validate_json(
-                                strategy_row.payload_json
-                            )
-                        except Exception:  # noqa: BLE001 — corrupt payload → skip
-                            strategy = None
-        finally:
-            if engine is not None:
-                await engine.dispose()
-
-    except Exception:  # noqa: BLE001 — broker construction failed
-        log.warning(
-            "slack.edit_size.broker_construction_failed",
-            decision_id=decision_id,
-            note="cap check will skip (equity=0 fail-open)",
-        )
-        strategy = None
-        equity = Decimal("0")
-
-    # CR-01 fix: mode-aware fail-closed when strategy caps cannot be verified.
-    # LIVE proposals: reject the edit (real money; no backstop if OrderGuard
-    #   also fails at execute time). PAPER: keep prior fail-open behaviour
-    #   (OrderGuard still re-checks at execute_proposal).
-    if strategy is None:
-        if _proposal_account_mode == "LIVE":
-            log.warning(
-                "slack.edit_size.strategy_load_failed_live_rejected",
-                decision_id=decision_id,
-                account_mode=_proposal_account_mode,
-            )
-            await ack({
-                "response_action": "errors",
-                "errors": {
-                    "qty_block": (
-                        "Couldn't verify your strategy's risk caps right now"
-                        " — edit blocked for safety. Please try again."
-                    )
-                },
-            })
-            return
-        else:
-            log.warning(
-                "slack.edit_size.strategy_load_failed_paper_allow",
-                decision_id=decision_id,
-                account_mode=_proposal_account_mode,
-                note="cap check skipped; OrderGuard re-checks at execute_proposal",
-            )
-    else:
-        ok, cap_msg = _check_edit_size_caps(new_qty, ref_price, strategy, equity)
-        if not ok:
-            await ack({
-                "response_action": "errors",
-                "errors": {"qty_block": cap_msg},
-            })
-            return
-
-    # Pass: close the modal; do state-machine work in background.
-    await ack()
-    asyncio.create_task(
-        _edit_size_submit_workflow(
-            decision_id=decision_id,
-            new_qty=new_qty,
-            slack_user_id=body["user"]["id"],
-            meta=meta,
-        )
+    log.warning(
+        "slack.edit_size_modal.submission.retired",
+        note="D-62: handle_edit_size_view_submission retired by Plan 03-14; acking no-op.",
     )
+    await ack()
 
 
 async def _edit_size_submit_workflow(
