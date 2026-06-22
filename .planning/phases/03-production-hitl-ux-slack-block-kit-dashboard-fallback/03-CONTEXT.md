@@ -110,6 +110,13 @@ The phase researcher surfaced 4 follow-up decisions whose answers materially sha
 
 - **D-61: Pre-migration PENDING proposals get NULL `expires_at`; sweep ignores NULL.** Alembic 0003 adds `Proposal.expires_at: datetime | null` with DEFAULT NULL for existing rows. The sweep's WHERE clause is `status IN ('PENDING', 'AWAITING_2ND_CHANNEL') AND expires_at IS NOT NULL AND expires_at <= now()`. Grandfathered proposals stay PENDING until manually resolved or migrated; new proposals (post-P3) always get a real `expires_at` at insertion time so the NULL set monotonically drains. Safest, no surprise mass-expire on migration day.
 
+- **D-62: Edit-size = dashboard SLIDER with tangible money framing; Slack "Edit size" deep-links to it.** (Gap-closure 2026-06-22, reopened by live UAT Test 2. Supersedes the Slack-modal portions of D-54 and the dashboard-modal portion of D-55. The cap-based validation from the D-54/03-11 update — `_check_edit_size_caps` against `max_position_pct * account_equity`, OrderGuard re-check at `place_order` — is UNCHANGED and still the safety gate.)
+  - **Why:** the 03-11 fix corrected the validation math but the surface stayed illegible for a non-technical operator. Root cause = unit-model mismatch: operators think in whole shares (1→2) but the proposal is often already near the hard cap, so a bare number field with a reject-on-over-cap message felt arbitrary ("can only go 1→~1.02"). A slider makes the allowed band, the current position within it, and the dollar amount visually obvious without the operator reasoning about percentages.
+  - **Dashboard (primary surface):** replace the `edit_size_modal.html.j2` number input with an HTML range slider. Range = **1 share → max shares the hard cap allows** (`floor(max_position_pct * account_equity / ref_price)`). Handle starts at the agent's proposed `tp.qty`. Whole-share snaps. Live readout updates as the handle moves: **"{N} shares ≈ ${notional} — {pct}% of your ${equity}"**. Primary CTA: **"Approve at this size"**. Submit posts to the existing `edit_size_submit` route, which keeps `_check_edit_size_caps` as the server-side guard (defense in depth; the slider max is a UI affordance, not the authority).
+  - **Slack (secondary):** the "Edit size" button becomes a **URL button deep-linking to the dashboard edit page** for that proposal (same pattern as D-60 escalate). The in-Slack edit modal (`handle_edit_size` + `handle_edit_size_view_submission`) is **retired** in favor of the deep-link — Slack keeps Approve/Reject inline; resizing happens on the dashboard where the slider lives. (Slack Block Kit has no slider element; a number-input modal is exactly the illegible surface we're replacing.)
+  - **Cap calibration:** NO change this round. `max_position_pct` stays at its current value (demo default 0.05). The slider's visual indicator IS the legibility fix; bumping the cap would change risk posture arbitrarily. **Worst case (agent already at cap):** render the handle at max with a plain readout — *"This is your maximum for this strategy — {N} shares ≈ ${notional}."* — so down-only resize stays honest and legible. User-editable cap is deferred to Phase 6 (see Deferred Ideas).
+  - **Parity note:** D-55's "dashboard mirrors Slack 1:1" still holds for Approve/Reject/Escalate; edit-size is now deliberately dashboard-only by design (Slack defers to it), which is the intended asymmetry, not drift.
+
 ### Claude's Discretion
 
 Items left to research / planning that don't need user input now:
@@ -123,6 +130,10 @@ Items left to research / planning that don't need user input now:
 - Quiet-hours validation UX on the per-strategy override form (the narrower-than-user warning) — planner / UI-phase if `/gsd-ui-phase 3` is invoked.
 - Where the `expire_stale_proposals` sweep job is registered (`dashboard.app.lifespan` already wires APScheduler for P1; add another job alongside) — planner.
 - Ephemeral message timing and `respond_url` lifetime constraints (Slack docs say ~30 min) — researcher.
+- **(D-62 slider)** Exact slider widget approach — native HTML `<input type=range>` + minimal vanilla JS for the live readout vs an HTMX round-trip per step (no-build constraint favors a tiny inline `oninput` handler computing notional/% client-side from data-attributes; the authoritative cap check still runs server-side on submit) — planner.
+- **(D-62 slider)** How the slider behaves when the equity fetch fails (fail-open, `equity=0`): show shares-only without the $/% readout and a note that the cap couldn't be confirmed; the server still applies `_check_edit_size_caps` (which fail-opens on PAPER, fail-closed on LIVE per CR-01) — planner.
+- **(D-62 slider)** Whole-share snapping + min/max bounds rendering, and the at-cap "this is your maximum" readout variant — planner / UI-phase if `/gsd-ui-phase 3` is invoked.
+- **(D-62 Slack)** Mechanics of retiring `handle_edit_size` / `handle_edit_size_view_submission` and replacing the Slack "Edit size" button with a URL button to `{DASHBOARD_BASE_URL}/approvals/{proposal_id}/edit-size` (mirror D-60) — planner; confirm no other caller depends on the retired view-submission handler.
 
 </decisions>
 
@@ -241,6 +252,8 @@ Captured during Phase 3 discussion for later phases — do not lose them, do not
 - **Cost-ceiling soft-warning DMs (REPT-01 adjacent)** — Phase 4 territory; P3 does not introduce cost-aware DMs. Mentioned only to note exclusion.
 - **Anomaly-demote DMs (REPT-01 adjacent)** — Phase 5 territory (Trust Ladder); P3 does not introduce trust-state-change DMs.
 - **Drainable DM queue cleanup TTL** — D-48 implies a small queue holds quiet-hours-deferred informational DMs; a sensible TTL (e.g., drop DMs older than 24h on the next drain to avoid resurrecting yesterday's stale fills) is planner discretion but should be flagged for review.
+- **User-editable `max_position_pct` in the dashboard strategy editor** — surfaced during the D-62 edit-size discussion (2026-06-22). Letting the operator tune per-strategy cap headroom (which sets the slider's range) belongs with the Phase 6 strategy editor, not P3 gap closure. Routed to **Phase 6 (Web Dashboard & Multi-User Auth)**.
+- **Dashboard nav enhancements (from Phase 3 live UAT)** — (1) segment `/approvals` proposals by state (expired in their own section / tabs: Pending / Completed / Expired); (2) persistent site-wide nav toolbar across dashboard pages. Both routed to **Phase 6** per operator (2026-06-22); recorded in ROADMAP.md Phase 6 "Carried-in enhancements".
 
 </deferred>
 

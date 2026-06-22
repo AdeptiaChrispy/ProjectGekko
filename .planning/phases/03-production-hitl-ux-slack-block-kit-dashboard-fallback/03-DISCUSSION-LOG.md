@@ -241,3 +241,53 @@ Captured for future phases (not lost, not acted on now):
 - Cost-ceiling soft-warning DMs (P4 territory)
 - Anomaly-demote DMs (P5 Trust Ladder territory)
 - Drainable DM queue cleanup TTL (planner discretion; flag for review)
+
+---
+
+# Gap-Closure Discussion — Edit-Size Legibility Redesign
+
+**Date:** 2026-06-22
+**Trigger:** Live UAT Test 2 reopened (edit-size still not digestible for a non-technical operator)
+**Areas discussed:** Slider vs surfaces, slider range & readout, cap calibration
+
+## Surface split (slider only renders on web)
+
+| Option | Description | Selected |
+|--------|-------------|----------|
+| Slider on dashboard; Slack "Edit on dashboard" button | Slack keeps Approve/Reject; "Edit size" deep-links to dashboard slider | ✓ |
+| Slider on dashboard; Slack preset buttons | Dashboard slider; Slack swaps number field for $ preset radio options | |
+| Dashboard-first, Slack edit later | Build dashboard slider now; leave Slack modal as-is | |
+
+**User's choice:** Slider on dashboard; Slack "Edit size" deep-links to it.
+**Notes:** Operator opened with the vision — "make it digestible for a non-technical user, maybe a slider bar... make the information tangible so they understand how much money they're investing." Aligns with existing D-60 escalate-to-dashboard URL-button pattern.
+
+## Slider range & live readout
+
+| Option | Description | Selected |
+|--------|-------------|----------|
+| 1 share → cap; readout = shares + $ + % equity | Range 1..cap-max-shares, handle at agent qty, "N sh ≈ $X — Y% of $Z" | ✓ |
+| 1 share → cap; readout = shares + $ only | Same range, drop the % | |
+| $0 → cap in dollars; shares derived | Dollar-denominated slider, shares secondary | |
+
+**User's choice:** 1 share → cap; readout shows shares + $ + % of equity. Whole-share snaps. CTA "Approve at this size."
+
+## Cap calibration ("is the safety net too low?")
+
+| Option | Description | Selected |
+|--------|-------------|----------|
+| Bump the demo strategy's cap | Raise max_position_pct 0.05 → ~0.10–0.15 for headroom | |
+| Keep cap; accept down-mostly resize | No calibration change; slider's visual indicator carries legibility | ✓ (Claude's call, user deferred) |
+| Make the cap editable in the dashboard | Surface max_position_pct in strategy editor | deferred → Phase 6 |
+
+**User's choice:** Deferred to Claude — "we may be okay if we have the slider now since it will give a clear visual indicator, whatever you think makes the most sense."
+**Claude's decision:** Keep the cap unchanged this round. The slider's handle position relative to the right edge is the visual legibility fix; the at-cap worst case renders "This is your maximum for this strategy — N shares ≈ $X." User-editable cap → Phase 6.
+
+## Claude's Discretion
+- Slider widget mechanics (native range input + inline JS readout vs HTMX round-trip; no-build constraint favors client-side compute, server-side cap check authoritative).
+- Equity-fetch-failure rendering (shares-only + cap-unconfirmed note; server still runs _check_edit_size_caps).
+- Retiring the Slack view_submission edit handlers and wiring the URL button (mirror D-60).
+
+## Deferred Ideas (routed to Phase 6)
+- User-editable max_position_pct in the dashboard strategy editor (sets the slider range).
+- /approvals state segmentation (expired in own section / tabs).
+- Persistent site-wide dashboard nav toolbar.
