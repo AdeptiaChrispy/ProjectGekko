@@ -375,6 +375,104 @@ async def test_edit_size_get_equity_fail_open() -> None:
 
 
 @pytest.mark.asyncio
+async def test_edit_size_get_uses_payload_not_orm_ticker() -> None:
+    """Regression: edit_size_get must read ticker/side/qty from payload_json,
+    NOT from non-existent Proposal ORM columns.
+
+    Live UAT 2026-06-22 hit `AttributeError: 'Proposal' object has no attribute
+    'ticker'` at routes.py because the handler referenced `row.ticker`. The other
+    GET-route tests used a plain MagicMock row (which auto-creates `.ticker`) and
+    masked it. Here the proposal row is spec'd to the real Proposal model, so any
+    access to a non-column attribute raises AttributeError exactly like prod.
+    """
+    import json as _json
+    from datetime import UTC, datetime
+
+    import gekko.vault.passphrase as _vault
+    from gekko.dashboard.app import create_app
+    from gekko.db.models import Proposal as ProposalRow
+
+    proposal_id = "edit-get-noticker-01"
+    _vault.set_passphrase("test-pass-edit")
+
+    now_iso = datetime.now(UTC).isoformat()
+    evidence = [
+        {"source_type": "finnhub_news", "summary": "x", "fetched_at": now_iso, "source_url": None, "quote_text": None, "relevance_score": None},
+        {"source_type": "web_fetch", "summary": "y", "fetched_at": now_iso, "source_url": None, "quote_text": None, "relevance_score": None},
+        {"source_type": "edgar_filing", "summary": "z", "fetched_at": now_iso, "source_url": None, "quote_text": None, "relevance_score": None},
+    ]
+    payload = {
+        "ticker": "TSLA", "side": "buy", "qty": "10", "order_type": "market",
+        "rationale": "EV thesis", "evidence": evidence,
+        "alternatives_considered": [{"description": "RIVN", "why_rejected": "lower margin"}],
+        "confidence": "0.8", "decision_id": proposal_id, "strategy_name": "ev-bull",
+        "user_id": "testuser", "client_order_id": "a" * 32, "account_mode": "PAPER",
+        "target_notional_usd": "1000", "limit_price": None, "stop_price": None,
+    }
+
+    # spec=ProposalRow → only real columns exist; row.ticker raises AttributeError.
+    mock_row = MagicMock(spec=ProposalRow)
+    mock_row.proposal_id = proposal_id
+    mock_row.user_id = "testuser"
+    mock_row.strategy_id = "strat-1"
+    mock_row.status = "PENDING"
+    mock_row.account_mode = "PAPER"
+    mock_row.payload_json = _json.dumps(payload)
+
+    mock_session = MagicMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+
+    strategy_row = _make_strategy_row("0.20")
+    call_count = {"n": 0}
+    proposal_result = MagicMock()
+    proposal_result.scalar_one_or_none.return_value = mock_row
+    strategy_result = MagicMock()
+    strategy_result.scalar_one_or_none.return_value = strategy_row
+
+    async def mock_execute(stmt, *args, **kwargs):
+        call_count["n"] += 1
+        return proposal_result if call_count["n"] == 1 else strategy_result
+
+    mock_session.execute = mock_execute
+    mock_sf = MagicMock(return_value=mock_session)
+
+    broker_instance = MagicMock()
+    broker_instance.get_account = AsyncMock(return_value={"equity": "10000"})
+
+    try:
+        with patch("gekko.config.get_settings") as mock_settings_fn, \
+             patch("gekko.dashboard.routes._get_session_factory", return_value=(mock_sf, None)), \
+             patch("gekko.brokers.alpaca.AlpacaBroker", return_value=broker_instance):
+
+            settings = MagicMock()
+            settings.gekko_user_id = "testuser"
+            settings.dashboard_url = "http://localhost:8000"
+            mock_settings_fn.return_value = settings
+
+            app = create_app()
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://test",
+                follow_redirects=False,
+            ) as client:
+                login_resp = await client.post(
+                    "/login",
+                    data={"passphrase": "test-pass-edit", "next": "/approvals"},
+                )
+                assert login_resp.status_code == 303
+
+                resp = await client.get(f"/approvals/{proposal_id}/edit-size")
+
+        assert resp.status_code == 200
+        body = resp.text
+        assert 'type="range"' in body
+        assert "TSLA" in body  # ticker came from payload_json, not row.ticker
+    finally:
+        _vault.clear()
+
+
+@pytest.mark.asyncio
 async def test_edit_above_hard_cap_rejected() -> None:
     """POST /approvals/{id}/edit-submit with qty whose notional exceeds the
     strategy's hard cap returns 200 with a plain-language error block; no DB

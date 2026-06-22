@@ -528,7 +528,9 @@ async def edit_size_get(
         raise HTTPException(status_code=404, detail="Proposal not found")
 
     payload = _json.loads(row.payload_json)
-    ticker = payload.get("ticker", row.ticker or "")
+    # ticker/side/qty live in payload_json — the Proposal ORM row has no such
+    # columns (row.ticker would AttributeError). Mirror edit_size_submit.
+    ticker = payload.get("ticker", "")
     qty = payload.get("qty", "0")
     limit_price = payload.get("limit_price")
     stop_price = payload.get("stop_price")
