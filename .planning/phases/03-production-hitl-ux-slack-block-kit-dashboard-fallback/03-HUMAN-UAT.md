@@ -138,11 +138,12 @@ enhancements: 2   # dashboard state-tabs + site nav toolbar (new scope, minor)
   test: 1
 
 - truth: "Operator can edit the order size from an understandable UI and approve the resized order"
-  status: failed   # REOPENED by live UAT 2026-06-22 — cap math correct (03-11) but UI still not digestible
+  status: resolved_in_code   # closed by Plan 03-14 (D-62 slider); live drag = human-verify item
   severity: major
   test: 2
+  reason_resolved: "Plan 03-14 (D-62): dashboard edit-size is now a native range SLIDER (1 → cap-derived max shares, handle at proposed qty) with a live readout 'N shares ≈ $X — Y% of your $Z equity' and at-cap/equity-fail variants. The bound is shown UP FRONT (slider max + readout). Slack 'Edit size' deep-links to the dashboard slider; the in-Slack edit modal is retired. Server gate _check_edit_size_caps unchanged (slider max is display-only). Code-review CSP fix applied: readout bound via delegated listener + htmx:afterSettle in edit-size-slider.js (inline oninput would be blocked by script-src 'self'). Cap calibration intentionally NOT changed (slider provides the visual legibility; user-editable cap deferred to Phase 6). Verified 7/7 static (03-VERIFICATION.md). NOTE: live browser drag→readout and approve→fill remain human-verify items."
   reason: "User reported: 'still not very clear to the end user, but maybe that means the safety net is too low.' Cap-based validation (03-11) works, but the modal is not legible for a non-technical operator. Root: UNIT-MODEL MISMATCH — users think in whole shares (1→2) but a low max_position_pct only permits a tiny fractional band (e.g. 1→~1.02 on the ai-infra-bull test strategy) that is never shown up front, so valid resizing feels impossible and rejections feel arbitrary."
-  history: "03-11 closed the threshold-math gap (drift → hard caps); this is the remaining legibility/calibration layer on top of that."
+  history: "03-11 closed the threshold-math gap (drift → hard caps); 03-14 (D-62 slider) closed the legibility layer on top of that."
   artifacts:
     - "src/gekko/approval/slack_handler.py — handle_edit_size (modal blocks) + handle_edit_size_view_submission"
     - "src/gekko/dashboard/routes.py + edit_size_modal.html.j2 — D-55 dashboard mirror (keep parity)"
