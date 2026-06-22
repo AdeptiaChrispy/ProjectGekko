@@ -31,7 +31,7 @@ dependencies = [
     "pydantic>=2.7,<3",
     "structlog>=24.5",
     "httpx>=0.27",
-    "pandas_market_calendars>=4.4",
+    "pandas_market_calendars>=5.4.0",
     "finnhub-python",
     "yahooquery",
     "python-dateutil",
