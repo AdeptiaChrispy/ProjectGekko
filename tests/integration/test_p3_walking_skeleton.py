@@ -400,7 +400,16 @@ async def test_p3_happy_path_with_edit_size(
     temp_sqlcipher_db: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Edit-size: operator opens modal, submits qty within 2% drift -> FILLED."""
+    """Edit-size (D-62, Plan 03-14): Slack Edit size button is a URL button that
+    deep-links to the dashboard slider. The old views_open modal path is retired.
+
+    This test verifies:
+    1. handle_edit_size acks immediately and logs a warning (no views_open call).
+    2. handle_edit_size_view_submission is a no-op ack stub.
+    3. The dashboard POST /approvals/{id}/edit-submit path (tested in
+       test_dashboard_edit_size_happy.py) remains the only active edit surface.
+    4. Audit chain stays intact after the retired-stub calls.
+    """
     from gekko.approval import dedup as _dedup_mod
     from gekko.approval import slack_handler
     from gekko.audit import log as _audit_log
@@ -446,7 +455,9 @@ async def test_p3_happy_path_with_edit_size(
     tasks, tracked_create_task = _make_task_tracker()
     monkeypatch.setattr(asyncio, "create_task", tracked_create_task)
 
-    # ---- handle_edit_size -> views_open. -------------------------------------
+    # ---- D-62: handle_edit_size is a retired no-op ack stub. -----------------
+    # URL buttons do NOT fire Bolt action callbacks. This tests that the stub
+    # acks and does NOT call views_open (the old behavior is retired).
     views_open_calls: list[dict[str, Any]] = []
     mock_client = MagicMock()
     mock_client.views_open = AsyncMock(
@@ -464,90 +475,43 @@ async def test_p3_happy_path_with_edit_size(
     await slack_handler.handle_edit_size(ack=ack_edit, body=edit_body, client=mock_client)
     ack_edit.assert_awaited()
 
-    assert len(views_open_calls) == 1, "Expected exactly one views_open call"
-    view_arg = views_open_calls[0]["view"]
-    assert view_arg["callback_id"] == "edit_size_modal", (
-        f"callback_id should be 'edit_size_modal'; got {view_arg.get('callback_id')}"
+    # D-62: No views_open call — edit is now a URL deep-link to the dashboard.
+    assert len(views_open_calls) == 0, (
+        "handle_edit_size must NOT call views_open (D-62 retired); got "
+        f"{len(views_open_calls)} call(s)"
     )
-    meta = json.loads(view_arg["private_metadata"])
-    for field_name in ("decision_id", "ref_price", "target_notional_usd", "original_qty", "ticker"):
-        assert field_name in meta, f"private_metadata missing field: {field_name}"
-    assert meta["decision_id"] == proposal_id
 
-    # ---- handle_edit_size_view_submission with qty within 2% drift. ----------
-    # Original qty=5, limit_price=1234.56 -> submit same qty -> 0% drift -> pass.
-    view_submission = {
-        "private_metadata": view_arg["private_metadata"],
-        "state": {
-            "values": {
-                "qty_block": {
-                    "qty_input": {"value": "5"}
-                }
-            }
-        },
+    # ---- D-62: handle_edit_size_view_submission is also a retired no-op stub. -
+    dummy_view = {
+        "private_metadata": json.dumps({"decision_id": proposal_id}),
+        "state": {"values": {}},
     }
-    sub_body = {
-        "user": {"id": user_id},
-        "headers": {},
-        "trigger_id": "trigger-editsize-submit-001",
-    }
+    sub_body = {"user": {"id": user_id}, "headers": {}}
     ack_submit = AsyncMock()
     await slack_handler.handle_edit_size_view_submission(
-        ack=ack_submit, body=sub_body, client=mock_client, view=view_submission
+        ack=ack_submit, body=sub_body, client=mock_client, view=dummy_view
     )
     ack_submit.assert_awaited()
-    await _drain_tasks(tasks)
-
-    assert broker.place_order.await_count == 1, (
-        f"place_order called {broker.place_order.await_count} times — double execution!"
+    # No place_order should have been triggered by the retired stub.
+    assert broker.place_order.await_count == 0, (
+        "Retired handle_edit_size_view_submission must not trigger place_order"
     )
 
-    # ---- TradingStream fill. --------------------------------------------------
-    fill_payload = {
-        "client_order_id": tp.client_order_id,
-        "broker_order_id": "broker-p3-editsize-001",
-        "filled_qty": "5",
-        "filled_avg_price": "1234.56",
-        "ticker": "NVDA",
-        "user_id": user_id,
-        "event": "fill",
-    }
-    await executor.on_fill_event(fill_payload, user_id=user_id)
-
-    # ---- Audit chain integrity. -----------------------------------------------
+    # ---- Audit chain integrity after retired-stub calls. ----------------------
     async with sf() as session:
         broken = await walk_chain(session, user_id)
     assert broken == [], f"Audit chain broken: {broken}"
 
-    # ---- Proposal ended FILLED + edit_size event exists. ----------------------
+    # ---- Proposal stays PENDING — no state mutation from retired stubs. -------
     async with sf() as session:
         row = (
             await session.execute(
                 select(ProposalRow).where(ProposalRow.proposal_id == proposal_id)
             )
         ).scalar_one()
-    assert row.status == "FILLED", f"Expected FILLED after edit-size; got {row.status}"
-
-    async with sf() as session:
-        events = (
-            await session.execute(select(Event).order_by(Event.id.asc()))
-        ).scalars().all()
-    event_types = [e.event_type for e in events]
-    assert "edit_size" in event_types, (
-        f"Expected 'edit_size' event; got {event_types}"
+    assert row.status == "PENDING", (
+        f"Retired stubs must not mutate proposal state; expected PENDING, got {row.status}"
     )
-
-    # ---- Dedup table has edit_size row. ----------------------------------------
-    async with sf() as session:
-        dedup_rows = (
-            await session.execute(
-                select(SlackActionDedup).where(
-                    SlackActionDedup.proposal_id == proposal_id,
-                    SlackActionDedup.action_id == "edit_size",
-                )
-            )
-        ).scalars().all()
-    assert len(dedup_rows) >= 1, "Expected at least one dedup row for edit_size"
 
 
 # ---------------------------------------------------------------------------

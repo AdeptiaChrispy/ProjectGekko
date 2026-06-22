@@ -280,106 +280,130 @@ Phase 3 inherits **every** P2 semantic token verbatim. The full color matrix (li
 
 Seven surfaces in scope. Each is declared with placement, copy, state transitions, idempotency posture, ARIA semantics, and (where applicable) Slack parallel.
 
-### Surface 1: Slack Edit-Size Modal (D-54) — updated Plan 03-11
+### Surface 1: Edit-Size — Dashboard Slider (primary) + Slack URL Deep-Link (D-62)
 
-**Trigger:** operator clicks the `Edit size` button on a PENDING proposal card in Slack. The button's `action_id="edit_size"` callback fires `views_open` with `private_metadata = proposal_id`.
+> **Updated Plan 03-14.** Supersedes the Slack `views_open` modal contract from D-54 / Plan 03-11.
+> `handle_edit_size` and `handle_edit_size_view_submission` are retired stubs (D-62, Plan 03-14).
+> `_check_edit_size_caps` remains unchanged as the server-side gate.
 
-**Plan 03-11 change:** `_drift_check` is NOT called for operator edits. `_check_edit_size_caps` is the sole gate. See `src/gekko/approval/actions.py`.
+---
 
-**Modal payload shape (slack-bolt `views_open`):**
+#### Dashboard (primary surface)
 
-```python
-{
-    "type": "modal",
-    "callback_id": "edit_size_modal",
-    "private_metadata": json.dumps({
-        "decision_id": proposal_id,
-        "ref_price": str(ref_price),
-        "target_notional_usd": str(target_notional),
-        "original_qty": str(original_qty),
-        "ticker": tp.ticker,
-        "side": side_str,   # e.g. "BUY"
-    }),
-    "title":  {"type": "plain_text", "text": f"Edit order size — {side_str} {original_qty} {tp.ticker} (~${original_notional:,.2f})"},
-    "submit": {"type": "plain_text", "text": "Approve at this size"},
-    "close":  {"type": "plain_text", "text": "Cancel"},
-    "blocks": [
-        # Block 1 — qty input
-        {
-            "type": "input",
-            "block_id": "qty_block",
-            "label": {"type": "plain_text", "text": "New quantity"},
-            "element": {
-                "type": "number_input",
-                "action_id": "qty_input",
-                "is_decimal_allowed": True,
-                "initial_value": str(original_qty),
-                "min_value": "0",
-            },
-        },
-        # Block 2 — plain-language framing (read-only context block)
-        {
-            "type": "context",
-            "elements": [{
-                "type": "mrkdwn",
-                "text": (
-                    f"Current: {side_str} {original_qty} {tp.ticker} (~${original_notional:,.2f})\n"
-                    f"Ref price: ${ref_price}\n"
-                    "Adjust shares below — cap enforced at submit"
-                ),
-            }],
-        },
-        # Block 3 — validation context
-        {
-            "type": "context",
-            "elements": [{
-                "type": "mrkdwn",
-                "text": (
-                    "Your change is validated against your strategy's risk caps,"
-                    " not against the agent's original target."
-                ),
-            }],
-        },
-    ],
-}
+**Route:** `GET /approvals/{id}/edit-size` — authenticated session required; 302 → `/login` otherwise.
+
+Returns `edit_size_modal.html.j2` partial, loaded into `#modal-mount` via HTMX `hx-get` (innerHTML swap).
+
+**Slider element:**
+
+```html
+<input type="range" name="qty" min="1" step="1"
+       max="{max_shares}" value="{proposed_qty}"
+       data-ref-price="{ref_price}"
+       data-equity="{account_equity_display}"
+       data-max-pct="{max_position_pct}"
+       class="edit-size-slider"
+       aria-describedby="size-readout"
+       oninput="updateSizeReadout(this)">
 ```
 
-**Cap-exceeded error (server-side validation in `handle_edit_size_view_submission`):**
+Whole-share snaps (`step="1"`). No fractional shares on this surface.
 
-When `_check_edit_size_caps(new_qty, ref_price, strategy, account_equity)` returns `(False, msg)`, respond with:
+**`max_shares` formula:**
 
-```python
-{
-    "response_action": "errors",
-    "errors": {"qty_block": "That's above your max of $12,000.00 (~60 shares) — pick a smaller number."}
-}
+```
+max_shares = floor(strategy.hard_caps.max_position_pct * account_equity / ref_price)
 ```
 
-The qty input retains the operator's last-typed value. NO state change, NO audit event on a cap failure. The modal stays open; the operator either fixes the qty or cancels.
+Clamped so `max_shares >= proposed_qty` (at-cap variant: handle sits at rightmost position).
 
-`_drift_check` is NOT called for operator edits. `_check_edit_size_caps` is the sole gate.
+**Live readout element:**
 
-**State transitions (success path):**
+```html
+<div id="size-readout" class="edit-size-readout" aria-live="polite"></div>
+```
 
-1. Operator submits qty within the strategy's hard cap (`max_position_pct * account_equity`).
-2. Server INSERTs dedup row with `(proposal_id, action_id='edit_size', actor_slack_user_id, source='slack')` per D-41.
-3. Validates via `_check_edit_size_caps(qty, ref_price, strategy, account_equity)` — OrderGuard hard caps, NOT 2% drift.
-4. Writes `edit_size` audit event with payload `{old_qty, new_qty, old_notional, new_notional}` per D-45.
-5. Updates `proposal.qty`, transitions `PENDING → APPROVED`, dispatches to executor.
-6. Closes modal (Slack closes on 200 OK response).
-7. The original proposal card in the channel updates via `chat.update` to show `[APPROVED]` chip + final qty.
+Updated by `updateSizeReadout(el)` in `/static/edit-size-slider.js` (CSP-safe `script-src 'self'`). Displays:
 
-**Idempotency posture:**
+```
+{N} shares ≈ ${notional} — {pct}% of your ${equity}
+```
 
-- Submitting the modal twice (double-click within Slack's at-least-once window) hits the dedup table's UNIQUE constraint on `(proposal_id, action_id, actor_slack_user_id)`. `IntegrityError` branches to the D-43 ephemeral path.
-- Submitting a modal whose proposal was already approved-via-channel-edit in another transport (dashboard `/approvals/{id}/edit-size`) sees `transition_status(PENDING → APPROVED)` raise `InvalidStateTransition`. The handler catches, returns the D-43 ephemeral via `respond_url`.
+The JS computes notional and percent client-side from `data-*` attributes. The readout is display-only; it is NOT the authority for submission validation.
+
+**At-cap variant:** when `max_shares == proposed_qty`, the route renders:
+
+```html
+<p class="form-help">This is your maximum for this strategy.</p>
+```
+
+The slider handle sits at max; the operator can only go down (or confirm as-is).
+
+**Equity-fetch-failure variant:** when `equity = 0` (broker unreachable, 2.5s timeout, fail-open):
+
+- Readout shows shares only (`{N} shares`) — no dollar/percent line.
+- Caution note rendered:
+
+  ```html
+  <p class="form-help"><span style="color:#92400e">
+    ⚠ Cap couldn't be confirmed (broker unreachable). Server will verify at submit.
+  </span></p>
+  ```
+
+- Server still runs `_check_edit_size_caps(qty, ref_price, strategy, equity=0)` on submit:
+  - PAPER: fail-open (pass; OrderGuard re-checks at `execute_proposal`).
+  - LIVE: fail-closed (reject per CR-01).
+
+**Submit:** `POST /approvals/{id}/edit-submit` — `_check_edit_size_caps` is the sole server-side authority. The slider max is a UI affordance; the browser can submit any qty value (forged, negative, oversized); the server gate rejects invalid values regardless.
+
+**Primary CTA:** `Approve at this size`.
 
 **ARIA / accessibility:**
 
-- Slack handles modal a11y semantics natively — Slack client renders an accessible dialog. We do NOT inject custom ARIA inside Block Kit payloads.
-- The plain-language cap error ("That's above your max of $X (~N shares)") is explicit text; screen readers do not depend on glyph semantics.
+- Slider: `aria-describedby="size-readout"` links the input to the live readout.
+- Readout: `aria-live="polite"` — screen readers announce changes on each drag step.
+- Error block (cap exceeded re-render): `role="alert" aria-live="assertive"`.
 
-**Slack parallel:** this IS the Slack parallel — there's a dashboard parallel below (Surface 2c, the HTMX modal swap inside `/approvals`).
+---
+
+#### Slack (secondary surface, per D-62)
+
+The `Edit size` button on every PENDING proposal card is a **Block Kit URL button**:
+
+```python
+{
+    "type": "button",
+    "text": {"type": "plain_text", "text": "Edit size"},
+    "url": f"{DASHBOARD_BASE_URL}/approvals/{proposal_id}/edit-size",
+}
+```
+
+- No `action_id` (URL buttons do NOT fire Bolt callbacks).
+- No in-Slack modal (`handle_edit_size` and `handle_edit_size_view_submission` are retired no-op ack stubs).
+- Slack opens the dashboard slider page in the operator's default browser.
+- Approve and Reject remain inline in Slack (unchanged).
+- `_check_edit_size_caps` remains the server-side gate — the URL click itself is not recorded in the dedup table (no round-trip callback); only the subsequent dashboard POST `/approvals/{id}/edit-submit` generates a dedup row with `source='dashboard'`.
+
+---
+
+#### Idempotency posture
+
+- Slack URL click: no Bolt callback; no dedup row.
+- Dashboard POST `/approvals/{id}/edit-submit`: INSERTs dedup row with `(proposal_id, action_id='edit_size', actor_gekko_user_id, source='dashboard')`. Double-submit (two POSTs) hits the UNIQUE constraint — second POST sees D-43 "already handled" response.
+- Cross-surface race (Slack Approve + dashboard Edit-submit simultaneously): first-write-wins at the state-machine layer; `transition_status(PENDING → APPROVED)` no-ops on the second.
+
+---
+
+**Copywriting Contract update (Plan 03-14):**
+
+| Context | Copy | Notes |
+|---------|------|-------|
+| Edit size submit (dashboard slider) | `Approve at this size` | Same CTA; moved from Slack modal to dashboard slider by D-62 |
+| Edit size button (Slack card) | `Edit size` | All-lowercase except first letter, verb+noun pattern |
+
+---
+
+**Slack parallel:** Edit size button is a URL deep-link to the dashboard slider page. The dashboard is the primary and only edit surface. Slack keeps Approve/Reject inline. (D-62, Plan 03-14)
 
 ---
 
