@@ -46,7 +46,36 @@ second_bug_2026_06_22: |
   suites green (46 passed).
   RETEST: RESTART `uv run gekko serve` again to load ad57988, then resize + Approve at this size →
   order should pass OrderGuard and fill (paper), proposal → FILLED.
-awaiting: browser retest after restart (load fixes 09d8f48 + ad57988)
+third_round_2026_06_22: |
+  After restart the slider RENDERS and a resize passed OrderGuard (target_notional fix works) — a
+  proposal reached FILLED. But three more real bugs surfaced (cluster in the dashboard HITL action
+  flow; all confirmed live, all diagnosed to specific lines):
+
+  BUG B (headline crash) — edit_size_submit re-reads on a rolled-back session.
+    claim_action() calls session.rollback() on the DUPLICATE path (repeat Edit-Size clicks on the same
+    proposal across restarts). approve/reject endpoints handle this by re-reading with a FRESH session
+    OUTSIDE the begin() block (their comment: "session was rolled back by claim_action"). edit_size_submit's
+    duplicate branch instead re-reads on the same rolled-back session2 INSIDE `async with session2.begin()`
+    → sqlalchemy InvalidRequestError "Can't operate on closed transaction" → 500. routes.py edit_size_submit.
+
+  BUG A — Slack "Edit size" deep-link page is unstyled.
+    The URL button opens /approvals/{id}/edit-size which returns the bare edit_size_modal.html.j2 FRAGMENT
+    (no base.html.j2, no CSS/HTMX). Only styled when HTMX-swapped into /approvals. Direct browser nav
+    (from Slack) gets the naked partial. Fix: when the request is NOT an HX request (no HX-Request header),
+    render the modal wrapped in the base layout (or redirect to /approvals with an auto-open hint).
+
+  BUG C — terminal-state proposals 500 on action.
+    Approving/editing an already-FILLED (or EXPIRED/REJECTED) proposal raises ValueError "Invalid proposal
+    status transition: 'FILLED' -> 'APPROVED'" → 500, instead of cleanly re-rendering the current card as
+    "already handled". Affects approve_proposal_endpoint AND edit_size_submit. The card likely also still
+    shows action buttons on terminal proposals, inviting the click.
+
+  ROOT THEME: these dashboard action endpoints have NO real-session integration test — unit tests mock
+  claim_action/append_event/transition_status, masking exactly these seams. Fix set MUST include a real
+  (non-mocked, real SQLite) integration test covering: first_write happy path, duplicate re-click, and
+  terminal-state action — for both approve and edit. Recommend a tested gap-closure plan (03-15) rather
+  than another inline hand-patch.
+awaiting: decision — tested gap-closure plan (03-15) vs inline-fix-crash-first
 
 ## Tests
 
