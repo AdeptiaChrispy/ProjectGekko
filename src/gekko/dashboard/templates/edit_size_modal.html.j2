@@ -29,8 +29,10 @@
    Server-side gate: _check_edit_size_caps in edit_size_submit (unchanged).
    The slider max is a UI affordance; the server cap check is the authority.
 
-   CSP note: updateSizeReadout() is defined in /static/edit-size-slider.js
-   (script-src 'self') so the oninput attribute is CSP-safe.
+   CSP note: the app sets `script-src 'self'` (no 'unsafe-inline'), so inline
+   oninput=/onclick= handlers are BLOCKED. The live readout is bound in
+   /static/edit-size-slider.js via a delegated 'input' listener + htmx:afterSettle
+   (no inline handler attribute here).
 #}
 <div class="modal-backdrop" id="edit-modal">
   <div class="modal" role="dialog" aria-labelledby="edit-size-headline" aria-modal="true">
@@ -67,8 +69,7 @@
                  data-equity="{{ account_equity_display }}"
                  data-max-pct="{{ max_position_pct }}"
                  class="edit-size-slider"
-                 aria-describedby="size-readout"
-                 oninput="updateSizeReadout(this)">
+                 aria-describedby="size-readout">
           <div id="size-readout" class="edit-size-readout" aria-live="polite"></div>
 
           {% if not equity_fetch_failed and max_shares == qty | int %}
