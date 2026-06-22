@@ -944,8 +944,17 @@ async def edit_size_submit(
                     }),
                 )
 
-                # Update payload_json with new qty (PATTERNS §3 re-serialize)
-                tp_updated = tp.model_copy(update={"qty": new_qty})
+                # Update payload_json with new qty AND target_notional_usd.
+                # The operator's deliberate resize sets a new declared notional;
+                # without updating target_notional_usd, OrderGuard's D-27
+                # check_qty_price_sanity (2% drift of qty×ref_price vs declared)
+                # rejects every real resize. The absolute risk bound stays the
+                # hard cap (max_position_pct×equity, enforced by check_hard_caps
+                # + the slider max + _check_edit_size_caps above) — updating the
+                # declared notional only keeps qty↔notional internally consistent.
+                tp_updated = tp.model_copy(
+                    update={"qty": new_qty, "target_notional_usd": new_notional}
+                )
                 row2.payload_json = tp_updated.model_dump_json()
 
                 await transition_status(

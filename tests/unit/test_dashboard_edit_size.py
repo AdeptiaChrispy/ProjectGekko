@@ -615,3 +615,64 @@ async def test_happy_path_closes_modal() -> None:
         assert call_kwargs.get("action_id") == "edit_size"
     finally:
         _vault.clear()
+
+
+@pytest.mark.asyncio
+async def test_edit_updates_target_notional_to_match_new_qty() -> None:
+    """Regression: a deliberate resize must rewrite target_notional_usd to
+    new_qty * ref_price, else OrderGuard's check_qty_price_sanity (D-27, 2%
+    drift of qty*ref_price vs declared target) rejects every real resize.
+
+    Live UAT 2026-06-22: resizing NVDA 2→5 shares passed the edit-size cap check
+    but was then [REJECTED BY ORDERGUARD] qty_price_drift because target_notional_usd
+    stayed at the agent's original value. The hard cap (max_position_pct*equity)
+    remains the real bound; this only keeps qty<->declared-notional consistent.
+    """
+    import json as _json
+    import gekko.vault.passphrase as _vault
+    from gekko.dashboard.app import create_app
+
+    # _make_session_and_row: qty="10", target_notional_usd="1000" → ref_price=100.
+    proposal_id = "edit-target-notional-01"
+    mock_sf, mock_row = _make_session_and_row(proposal_id)
+
+    try:
+        with patch("gekko.config.get_settings") as mock_settings_fn, \
+             patch("gekko.dashboard.routes._get_session_factory", return_value=(mock_sf, None)), \
+             patch("gekko.approval.dedup.claim_action", new_callable=AsyncMock, return_value="first_write"), \
+             patch("gekko.audit.log.append_event", new_callable=AsyncMock), \
+             patch("gekko.approval.proposals.transition_status", new_callable=AsyncMock), \
+             patch("gekko.execution.executor.execute_proposal", new_callable=AsyncMock), \
+             patch("asyncio.create_task"):
+
+            settings = MagicMock()
+            settings.gekko_user_id = "testuser"
+            settings.dashboard_url = "http://localhost:8000"
+            mock_settings_fn.return_value = settings
+
+            app = create_app()
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://test",
+                follow_redirects=False,
+            ) as client:
+                login_resp = await client.post(
+                    "/login",
+                    data={"passphrase": "test-pass-edit", "next": "/approvals"},
+                )
+                assert login_resp.status_code == 303
+
+                # Resize 10 → 25 shares: new_notional = 25 * 100 = 2500.
+                # Old code left target_notional_usd at "1000" → OrderGuard reject.
+                submit_resp = await client.post(
+                    f"/approvals/{proposal_id}/edit-submit",
+                    data={"qty": "25"},
+                )
+
+        assert submit_resp.status_code == 200
+        # The re-serialized payload must carry the updated declared notional.
+        written = _json.loads(mock_row.payload_json)
+        assert Decimal(str(written["qty"])) == Decimal("25")
+        assert Decimal(str(written["target_notional_usd"])) == Decimal("2500")
+    finally:
+        _vault.clear()
