@@ -163,6 +163,9 @@ Plans:
 
 **Plans**: TBD
 **UI hint**: yes
+**Carried-in enhancements** (from Phase 3 live UAT, 2026-06-22 — dashboard nav polish deferred here per operator):
+  - Segment /approvals proposals by state — expired trades in their own section, separate from pending/complete; consider tabs (Pending / Completed / Expired).
+  - Add/improve a persistent site-wide nav toolbar so moving between dashboard pages (approvals, strategies, kill-switch, portfolio, audit) is easy.
 
 ### Phase 7: Operations & Observability
 

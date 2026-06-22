@@ -192,6 +192,7 @@ enhancements: 2   # dashboard state-tabs + site nav toolbar (new scope, minor)
 
 - truth: "Dashboard /approvals separates expired trades from pending/complete (state segmentation / tabs)"
   status: enhancement   # NEW SCOPE from live UAT 2026-06-22 (Test 4) — not a Phase-3 acceptance criterion
+  routed_to: Phase 6 (Web Dashboard & Multi-User Auth) — per operator 2026-06-22; recorded in ROADMAP.md
   severity: minor
   test: 4
   reason: "Operator: expired trades should live in their own section vs pending/complete — maybe tabs (Pending / Completed / Expired). Core Test-4 criteria all passed; this is additive ergonomics."
@@ -200,6 +201,7 @@ enhancements: 2   # dashboard state-tabs + site nav toolbar (new scope, minor)
 
 - truth: "Dashboard has an easy site-wide toolbar/nav for moving between pages"
   status: enhancement   # NEW SCOPE from live UAT 2026-06-22 — cross-cutting dashboard nav, not a Phase-3 criterion
+  routed_to: Phase 6 (Web Dashboard & Multi-User Auth) — per operator 2026-06-22; recorded in ROADMAP.md
   severity: minor
   test: 4
   reason: "Operator: enhance the toolbar on the website to make it easier to navigate between pages."
