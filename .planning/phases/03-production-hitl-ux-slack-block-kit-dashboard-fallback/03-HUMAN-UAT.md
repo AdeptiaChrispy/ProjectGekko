@@ -13,29 +13,26 @@ name: Edit-size slider — live browser test (D-62 / Plan 03-14)
 expected: |
   On /approvals, click "Edit size" on a pending proposal. A modal opens with a draggable
   SLIDER. Slack "Edit size" deep-links to the same dashboard page.
-result: blocked   # live 2026-06-22 — stale server; retest after clean restart
-blocked_by: stale-server
+result: resolved_in_code   # live 2026-06-22 — real bug found+fixed after clean restart; awaiting browser retest
 reported: "Dashboard Edit Size does nothing; Slack Edit Size → Internal Server Error."
 severity: blocker
 diagnosis_2026_06_22: |
-  Root cause: STALE SERVER (Python not hot-reloaded), NOT a code defect.
-  Evidence:
-  - User's server logs show process 3264 started 2026-06-19 13:05 and shut down 14:35 — 3 days
-    before Plan 03-14 shipped. The slider + Slack URL-button were committed 2026-06-22 (76b39ce 11:56,
-    9814d15 12:21). That server cannot contain any 03-14 code.
-  - On-disk wiring is correct: _proposal_card.html.j2 edit-size button is hx-get=/approvals/{id}/edit-size
-    → #modal-mount (present in approvals_index.html.j2); /static mounted; edit-size-slider.js present.
-  - GET /approvals/{id}/edit-size renders a type="range" slider successfully under test:
-    test_edit_size_get_context_keys + test_edit_size_get_equity_fail_open both PASS. The route does not 500.
-  - The pasted logs contain NO edit-size traceback — only the pre-existing channel_not_found (proposal
-    delivery) and broker-not-configured (researcher get_quote) noise.
-  Symptoms map to OLD code: a pre-03-14 server has no slider and (depending on cached Slack card) the
-  old edit-size button path → the observed "does nothing" / error.
-  ACTION: stop the running `uv run gekko serve`, restart it (loads 03-14), hard-refresh the browser
-  (Ctrl+F5 to drop cached templates/JS), then re-run Test 2.
-  IF it still fails after a clean restart: capture the ACTUAL traceback printed at the moment of the
-  edit-size click and attach it — only then treat as a code bug and route to gap-closure.
-awaiting: clean-restart retest
+  CORRECTION: my first-pass "stale server" hypothesis was WRONG. The clean restart loaded 03-14
+  and produced the real traceback:
+    routes.py:531 edit_size_get → AttributeError: 'Proposal' object has no attribute 'ticker'
+  Root cause: `ticker = payload.get("ticker", row.ticker or "")`. The Proposal ORM model has NO
+  ticker/side/qty columns (they live in payload_json). Python evaluates the default `row.ticker or ""`
+  BEFORE .get() runs, so every GET /approvals/{id}/edit-size raised → 500. That 500 is exactly what
+  the Slack URL button surfaced ("Internal Server Error") and what made the dashboard hx-get silently
+  no-op. Both symptoms = one bug.
+  Why tests missed it: the GET-route tests mocked the proposal row with a plain MagicMock, which
+  auto-creates `.ticker` and masked the AttributeError.
+  FIX (commit 09d8f48): edit_size_get now reads `payload.get("ticker", "")` (mirrors edit_size_submit).
+  Added regression test test_edit_size_get_uses_payload_not_orm_ticker using MagicMock(spec=Proposal)
+  so a non-column access raises like production. Full edit-size suite green (6 passed).
+  RETEST: Python isn't hot-reloaded — RESTART `uv run gekko serve` once more to load 09d8f48, then
+  re-open Edit Size on a fresh proposal.
+awaiting: browser retest after restart (load fix 09d8f48)
 
 ## Tests
 
