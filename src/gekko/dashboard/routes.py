@@ -50,6 +50,25 @@ templates = Jinja2Templates(
     directory=str(Path(__file__).parent / "templates")
 )
 
+# ---------------------------------------------------------------------------
+# Terminal-status set — Bug C guard (Plan 03-15)
+#
+# Proposals in any of these states have already been handled; a second
+# approve/reject/edit-submit must return the current card at HTTP 200
+# rather than attempting a state transition (which raises ValueError).
+# ---------------------------------------------------------------------------
+
+_TERMINAL_STATUSES: frozenset[str] = frozenset({
+    "FILLED",
+    "EXPIRED",
+    "REJECTED",
+    "FAILED",
+    "APPROVED",
+    "APPROVED_LIVE",
+    "EXECUTING",
+    "AWAITING_2ND_CHANNEL",
+})
+
 
 # ---------------------------------------------------------------------------
 # Session factory accessor — test seam (mirrors slack_handler.py pattern)
@@ -350,6 +369,7 @@ async def approve_proposal_endpoint(
     sf, engine = _get_session_factory(user_id)
     row = None
     should_dispatch = False
+    already_terminal = False
     try:
         async with sf() as session, session.begin():
             outcome = await claim_action(
@@ -376,12 +396,21 @@ async def approve_proposal_endpoint(
                 if row is None:
                     raise HTTPException(status_code=404, detail="Proposal not found")
 
-                await approve_proposal(session, proposal_id, actor=user_id)
-                # Reload row to get updated status
-                await session.refresh(row)
-                should_dispatch = True
+                # Bug C guard: skip transition if proposal is already terminal.
+                if row.status in _TERMINAL_STATUSES:
+                    already_terminal = True
+                else:
+                    try:
+                        await approve_proposal(session, proposal_id, actor=user_id)
+                        # Reload row to get updated status
+                        await session.refresh(row)
+                        should_dispatch = True
+                    except ValueError:
+                        # Defensive belt: transition rejected — treat as terminal.
+                        already_terminal = True
+                        await session.rollback()
 
-        if outcome == "duplicate" or row is None:
+        if outcome == "duplicate" or row is None or already_terminal:
             # Re-read current state for re-render (D-56 visual state IS the feedback)
             sf2, engine2 = _get_session_factory(user_id)
             try:
@@ -430,6 +459,7 @@ async def reject_proposal_endpoint(
 
     sf, engine = _get_session_factory(user_id)
     row = None
+    already_terminal = False
     try:
         async with sf() as session, session.begin():
             outcome = await claim_action(
@@ -452,10 +482,19 @@ async def reject_proposal_endpoint(
                 if row is None:
                     raise HTTPException(status_code=404, detail="Proposal not found")
 
-                await reject_proposal(session, proposal_id, actor=user_id)
-                await session.refresh(row)
+                # Bug C guard: skip transition if proposal is already terminal.
+                if row.status in _TERMINAL_STATUSES:
+                    already_terminal = True
+                else:
+                    try:
+                        await reject_proposal(session, proposal_id, actor=user_id)
+                        await session.refresh(row)
+                    except ValueError:
+                        # Defensive belt: transition rejected — treat as terminal.
+                        already_terminal = True
+                        await session.rollback()
 
-        if outcome == "duplicate" or row is None:
+        if outcome == "duplicate" or row is None or already_terminal:
             # Re-read current state
             sf2, engine2 = _get_session_factory(user_id)
             try:
@@ -901,6 +940,7 @@ async def edit_size_submit(
     # bottom of the function are never unbound if an exception propagates.
     outcome: str = ""
     updated_row = None
+    already_terminal = False
     sf3, engine3 = _get_session_factory(user_id)
     try:
         async with sf3() as session2, session2.begin():
@@ -924,62 +964,86 @@ async def edit_size_submit(
                 if row2 is None:
                     raise HTTPException(status_code=404, detail="Proposal not found")
 
-                tp = TradeProposal.model_validate_json(row2.payload_json)
-                old_qty = tp.qty
-                old_notional = old_qty * ref_price
-                new_notional = new_qty * ref_price
+                # Bug C guard: skip transition if proposal is already terminal.
+                if row2.status in _TERMINAL_STATUSES:
+                    already_terminal = True
+                else:
+                    tp = TradeProposal.model_validate_json(row2.payload_json)
+                    old_qty = tp.qty
+                    old_notional = old_qty * ref_price
+                    new_notional = new_qty * ref_price
 
-                from gekko.audit.log import append_event as _ae
-                await _ae(
-                    session2,
-                    user_id=user_id,
-                    strategy_id=row2.strategy_id,
-                    event_type="edit_size",
-                    payload=normalize_decimals({
-                        "old_qty": old_qty,
-                        "new_qty": new_qty,
-                        "old_notional": old_notional,
-                        "new_notional": new_notional,
-                        "actor": user_id,
-                    }),
-                )
+                    from gekko.audit.log import append_event as _ae
+                    await _ae(
+                        session2,
+                        user_id=user_id,
+                        strategy_id=row2.strategy_id,
+                        event_type="edit_size",
+                        payload=normalize_decimals({
+                            "old_qty": old_qty,
+                            "new_qty": new_qty,
+                            "old_notional": old_notional,
+                            "new_notional": new_notional,
+                            "actor": user_id,
+                        }),
+                    )
 
-                # Update payload_json with new qty AND target_notional_usd.
-                # The operator's deliberate resize sets a new declared notional;
-                # without updating target_notional_usd, OrderGuard's D-27
-                # check_qty_price_sanity (2% drift of qty×ref_price vs declared)
-                # rejects every real resize. The absolute risk bound stays the
-                # hard cap (max_position_pct×equity, enforced by check_hard_caps
-                # + the slider max + _check_edit_size_caps above) — updating the
-                # declared notional only keeps qty↔notional internally consistent.
-                tp_updated = tp.model_copy(
-                    update={"qty": new_qty, "target_notional_usd": new_notional}
-                )
-                row2.payload_json = tp_updated.model_dump_json()
+                    # Update payload_json with new qty AND target_notional_usd.
+                    # The operator's deliberate resize sets a new declared notional;
+                    # without updating target_notional_usd, OrderGuard's D-27
+                    # check_qty_price_sanity (2% drift of qty×ref_price vs declared)
+                    # rejects every real resize. The absolute risk bound stays the
+                    # hard cap (max_position_pct×equity, enforced by check_hard_caps
+                    # + the slider max + _check_edit_size_caps above) — updating the
+                    # declared notional only keeps qty↔notional internally consistent.
+                    tp_updated = tp.model_copy(
+                        update={"qty": new_qty, "target_notional_usd": new_notional}
+                    )
+                    row2.payload_json = tp_updated.model_dump_json()
 
-                await transition_status(
-                    session2,
-                    proposal_id,
-                    from_status="PENDING",
-                    to_status="APPROVED",
-                )
-                await session2.refresh(row2)
-                updated_row = row2
+                    try:
+                        await transition_status(
+                            session2,
+                            proposal_id,
+                            from_status="PENDING",
+                            to_status="APPROVED",
+                        )
+                    except ValueError:
+                        # Defensive belt: transition rejected — treat as terminal.
+                        already_terminal = True
+                        await session2.rollback()
+                    else:
+                        await session2.refresh(row2)
+                        updated_row = row2
             else:
-                # Duplicate — re-read
+                # Duplicate — Bug B fix: do NOT re-read on session2 here.
+                # claim_action called session.rollback() on the duplicate path;
+                # any .execute() on this session would raise InvalidRequestError.
+                # The re-read is deferred to the fresh-session block below.
+                pass
+    finally:
+        if engine3 is not None:
+            await engine3.dispose()
+
+    # Bug B fix: re-read for duplicate path (and terminal path) via a FRESH
+    # session that is guaranteed to be clean (not rolled-back by claim_action).
+    if outcome == "duplicate" or already_terminal:
+        sf4, engine4 = _get_session_factory(user_id)
+        try:
+            async with sf4() as session3:
                 updated_row = (
-                    await session2.execute(
+                    await session3.execute(
                         select(ProposalRow).where(
                             ProposalRow.proposal_id == proposal_id,
                             ProposalRow.user_id == user_id,
                         )
                     )
                 ).scalar_one_or_none()
-    finally:
-        if engine3 is not None:
-            await engine3.dispose()
+        finally:
+            if engine4 is not None:
+                await engine4.dispose()
 
-    if outcome == "first_write":
+    if outcome == "first_write" and not already_terminal:
         asyncio.create_task(_execute_proposal(proposal_id, user_id))
 
     if updated_row is None:
