@@ -63,7 +63,11 @@
   </details>
   {% endif %}
 
-  {# Conditional actions block per status #}
+  {# Conditional actions block per status.
+     Action buttons (Approve/Reject/Edit-size) are ONLY rendered for PENDING.
+     All terminal statuses render a read-only status line — never interactive buttons.
+     Bug C (Plan 03-15): Buttons inside {% if status == "PENDING" %} only.
+  #}
   {% if status == "PENDING" %}
   <div class="proposal-card-actions">
     <button class="btn-primary"
@@ -93,6 +97,22 @@
   {% elif status == "AWAITING_2ND_CHANNEL" %}
   <div class="proposal-card-actions">
     <a class="btn-primary" href="/live-confirm/{{ proposal_id }}">Open dual-channel confirm</a>
+  </div>
+  {% elif status == "APPROVED" or status == "APPROVED_LIVE" or status == "EXECUTING" %}
+  <div class="proposal-card-terminal-status" role="status">
+    ✅ {{ status | replace("_", " ") | title }} — awaiting execution.
+  </div>
+  {% elif status == "FILLED" %}
+  <div class="proposal-card-terminal-status" role="status">
+    ✅ Filled — order executed.
+  </div>
+  {% elif status == "REJECTED" %}
+  <div class="proposal-card-terminal-status" role="status">
+    ✗ Rejected.
+  </div>
+  {% elif status == "FAILED" %}
+  <div class="proposal-card-terminal-status" role="status">
+    ✗ Failed — execution error.
   </div>
   {% endif %}
 

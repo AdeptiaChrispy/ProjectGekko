@@ -128,9 +128,13 @@ async def test_dashboard_edit_size_happy() -> None:
                 )
                 assert login_resp.status_code == 303
 
-                # Step 2: GET edit-size modal
+                # Step 2: GET edit-size modal — send HX-Request: true so the
+                # route returns the bare fragment (not a redirect).
+                # Bug A fix (Plan 03-15): non-HX direct-nav returns 302 to /approvals;
+                # HTMX swap must include the HX-Request header to get the fragment.
                 edit_get_resp = await client.get(
                     f"/approvals/{proposal_id}/edit-size",
+                    headers={"HX-Request": "true"},
                 )
                 assert edit_get_resp.status_code == 200
                 # Modal should have a qty input and form action

@@ -677,6 +677,17 @@ async def edit_size_get(
 
     account_equity_display = f"${equity:,.2f}" if equity > _Decimal("0") else ""
 
+    # Bug A fix (Plan 03-15): non-HX direct browser navigation (e.g. Slack URL
+    # button deeplink) must return a full styled page, not a bare fragment.
+    # Redirect to /approvals so the user lands on the proper dashboard layout;
+    # HTMX will then load the modal on the approvals page via the normal path.
+    # With HX-Request: true (HTMX swap) return the bare fragment unchanged.
+    is_htmx = request.headers.get("HX-Request") == "true"
+    if not is_htmx:
+        return RedirectResponse(
+            url=f"/approvals?open_edit={proposal_id}", status_code=302
+        )
+
     return templates.TemplateResponse(
         request,
         "edit_size_modal.html.j2",
