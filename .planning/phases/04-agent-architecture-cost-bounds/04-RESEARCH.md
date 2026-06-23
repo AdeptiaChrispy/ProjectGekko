@@ -704,9 +704,14 @@ The `daily_cost_ceiling_usd` stores the Decimal as a TEXT string (consistent wit
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Should `injected_content_flags` be added to `ResearchBrief` in Phase 4?**
+> All three resolved during planning (2026-06-23) and implemented in the plans:
+> (1) **RESOLVED — add it** → Plan 04-03 adds `injected_content_flags` to `ResearchBrief` (forward-compat one-liner).
+> (2) **RESOLVED — real-time DB read** → Plan 04-03 reads the ceiling from the DB on every guard invocation, so raising the Settings ceiling un-halts the next check (no restart).
+> (3) **RESOLVED — yes, bypass** → Plan 04-03 adds `"cost_alert"` to `_BYPASS_CATEGORIES` so the halt DM fires immediately regardless of quiet hours.
+
+1. **Should `injected_content_flags` be added to `ResearchBrief` in Phase 4?** — RESOLVED: yes (Plan 04-03).
    - What we know: `ResearchBrief` uses `ConfigDict(extra='allow')` for forward-compat; the field was deferred from Phase 2
    - What's unclear: Whether the planner wants to close this now (simple additive change) or keep deferring
    - Recommendation: Add it — it's a one-liner and the SC-2 log event references the same pattern-match data
