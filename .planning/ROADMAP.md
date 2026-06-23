@@ -49,7 +49,7 @@ See `milestones/v1.0-ROADMAP.md` for the full archived snapshot (with detailed p
 - [x] **Phase 2: OrderGuard & Real-Money Alpaca Live (Safety Floor)** — Non-LLM cap-enforcement layer; first real money flows (still HITL). CONTEXT.md captured 2026-06-11 (commit `3ca0b06`); ready for `/gsd-plan-phase 2`. (completed 2026-06-17)
 - [x] **Phase 3: Production HITL UX (Slack Block Kit + Dashboard Fallback)** — Idempotent approval flow, quiet hours, timeout=REJECT, first-live gate. Carry-forward item from v1.0: executor-error → Slack notification. 10/10 plans executed (7 + 3 gap-closure). Automated verification 5/5 must-haves; all 4 BLOCKERs closed. Awaiting 5 human UAT items (03-HUMAN-UAT.md); run `/gsd-verify-work 3` to close. (completed 2026-06-19)
  (completed 2026-06-18)
-- [ ] **Phase 4: Agent Architecture & Cost Bounds** — Research/decision separation, prompt-injection defense, two-tier cost ceiling.
+- [x] **Phase 4: Agent Architecture & Cost Bounds** — Research/decision separation, prompt-injection defense, two-tier cost ceiling. (completed 2026-06-23)
 - [ ] **Phase 5: Trust Ladder (Per-Strategy Promotion & Portfolio Caps)** — Propose-only → auto-within-caps; portfolio-level caps; capital scaling rung; anomaly demotion.
 
 ### 📋 v3.0 Multi-User + Multi-Broker + Deployment (Planned)
@@ -126,7 +126,7 @@ Plans:
   4. At 80% of the configured per-user daily cost ceiling, agent enters graceful-degradation mode (longer cadence, Haiku for triage, shorter context) and Slack-DMs the user; at 100% it hard-halts further LLM calls and Slack-DMs again, resetting at user-configured timezone midnight
   5. Every LLM call is logged to the cost ledger (input tokens, output tokens, USD) and the dashboard shows spend per strategy and per user with the daily ceiling visible
 
-**Plans:** 4/5 plans executed
+**Plans:** 5/5 plans complete
 Plans:
 **Wave 1** *(Nyquist — test scaffolding)*
 
@@ -146,7 +146,7 @@ Plans:
 
 **Wave 5** *(blocked on Wave 4)*
 
-- [ ] 04-05-PLAN.md — GET /spend route + spend.html.j2 (today total vs ceiling + per-strategy + 7-day history) + settings.html.j2 ceiling fieldset + base.html.j2 Spend nav link (COST-02/COST-03)
+- [x] 04-05-PLAN.md — GET /spend route + spend.html.j2 (today total vs ceiling + per-strategy + 7-day history) + settings.html.j2 ceiling fieldset + base.html.j2 Spend nav link (COST-02/COST-03)
 
 **UI hint**: yes
 
@@ -250,7 +250,7 @@ Plans:
 | 1. Foundation & Vertical Slice | v1.0 | 9/9 | Complete ✅ | 2026-06-15 |
 | 2. OrderGuard & Real-Money Alpaca Live | v2.0 | 7/7 | Complete   | 2026-06-17 |
 | 3. Production HITL UX | v2.0 | 15/15 | Complete   | 2026-06-23 |
-| 4. Agent Architecture & Cost Bounds | v2.0 | 4/5 | In Progress|  |
+| 4. Agent Architecture & Cost Bounds | v2.0 | 5/5 | Complete   | 2026-06-23 |
 | 5. Trust Ladder | v2.0 | 0/0 | Not started | - |
 | 6. Web Dashboard & Multi-User Auth | v3.0 | 0/0 | Not started | - |
 | 7. Operations & Observability | v3.0 | 0/0 | Not started | - |

@@ -2,20 +2,20 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Safety & Trust
-status: executing
-last_updated: "2026-06-23T22:37:42.174Z"
+status: verifying
+last_updated: "2026-06-23T22:59:53.976Z"
 last_activity: 2026-06-23
 progress:
   total_phases: 4
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 36
-  completed_plans: 35
-  percent: 75
+  completed_plans: 36
+  percent: 100
 ---
 
 # Project State: Project Gekko
 
-**Last updated:** 2026-06-23 (**Plan 04-03 complete — cost_ceiling.py (CeilingCheck dataclass + check_cost_ceiling() deterministic gate), runtime.py (ceiling gate wired after quiet-hours gate + SC-2 _INJECTION_PATTERNS scan), executor.py (cost_alert bypass), ResearchBrief.injected_content_flags.** halt returns skipped_cost_halt without calling query(); degrade sets _degradation_mode flag for Wave 4; SC-2 scan logs suspicious_content audit events at Researcher→Decision trust boundary. test_cost_ceiling.py 8/8 GREEN; test_suspicious_content.py 4/4 GREEN; test_decision_prompt_isolation.py 7/7 GREEN (D-05 AST gate clean).)
+**Last updated:** 2026-06-23 (**Plan 04-05 complete (FINAL WAVE) — GET /spend route + spend.html.j2 template (COST-02); settings_post extended with daily_cost_ceiling_usd Form field + Decimal validation (COST-03); Daily LLM Cost Ceiling fieldset added to settings.html.j2; Spend nav link in base.html.j2. test_spend_route.py 6/6 GREEN; test_settings_route.py 2/2 GREEN; test_dashboard_templates_sri.py 3/3 GREEN. Phase 04 ALL 5 PLANS COMPLETE.**)
 
 ## Project Reference
 
@@ -25,10 +25,9 @@ progress:
 
 ## Current Position
 
-Phase: 04 (agent-architecture-cost-bounds) — EXECUTING
-Plan: 5 of 5
-Status: Ready to execute
-  awaiting decision — tested gap-closure plan 03-15 vs inline-fix-crash-first (see 03-HUMAN-UAT.md "Current Test")
+Phase: 04 (agent-architecture-cost-bounds) — COMPLETE
+Plan: 5 of 5 (ALL COMPLETE)
+Status: Phase complete — ready for verification
 Last activity: 2026-06-23
 
 ## Performance Metrics
@@ -60,6 +59,7 @@ Last activity: 2026-06-23
 | Phase 04 P02 | 14min | 2 tasks | 4 files |
 | Phase 04 P03 | 35min | 2 tasks | 6 files |
 | Phase 04 P04 | 45m | 2 tasks | 5 files |
+| Phase 04 P05 | 17min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
