@@ -126,7 +126,29 @@ Plans:
   4. At 80% of the configured per-user daily cost ceiling, agent enters graceful-degradation mode (longer cadence, Haiku for triage, shorter context) and Slack-DMs the user; at 100% it hard-halts further LLM calls and Slack-DMs again, resetting at user-configured timezone midnight
   5. Every LLM call is logged to the cost ledger (input tokens, output tokens, USD) and the dashboard shows spend per strategy and per user with the daily ceiling visible
 
-**Plans**: TBD
+**Plans:** 5 plans
+Plans:
+**Wave 1** *(Nyquist — test scaffolding)*
+
+- [ ] 04-01-PLAN.md — Wave 0 test stubs: test_cost_ceiling.py (COST-01/COST-04), test_cost_ledger.py (COST-05), test_pricing.py, test_spend_route.py (COST-02), test_settings_route.py ceiling extension (COST-03), test_suspicious_content.py (SC-2); extend test_decision_prompt_isolation.py with D-05 AST gate
+
+**Wave 2** *(blocked on Wave 1)*
+
+- [ ] 04-02-PLAN.md — Alembic 0005 migration (users: daily_cost_ceiling_usd + cost_alert_*_sent_date columns; events: llm_cost + suspicious_content CHECK extension) + ORM User model extension + pricing.py constants module (COST-01/COST-03/COST-05)
+
+**Wave 3** *(blocked on Wave 2)*
+
+- [ ] 04-03-PLAN.md — cost_ceiling.py deterministic guard (CeilingCheck + check_cost_ceiling()) + runtime.py ceiling gate insertion (after quiet-hours, before query()) + SC-2 _INJECTION_PATTERNS + suspicious_content event write + executor.py cost_alert bypass category (COST-01/COST-04 + SC-2)
+
+**Wave 4** *(blocked on Wave 3)*
+
+- [ ] 04-04-PLAN.md — runtime.py ResultMessage capture + llm_cost ledger writes per query() call + Haiku triage gate (degradation only) + context-trim + jobs.py reschedule_strategy_degraded() + restore_strategy_normal_cadence() (COST-01/COST-04/COST-05)
+
+**Wave 5** *(blocked on Wave 4)*
+
+- [ ] 04-05-PLAN.md — GET /spend route + spend.html.j2 (today total vs ceiling + per-strategy + 7-day history) + settings.html.j2 ceiling fieldset + base.html.j2 Spend nav link (COST-02/COST-03)
+
+**UI hint**: yes
 
 ### Phase 5: Trust Ladder (Per-Strategy Promotion & Portfolio Caps)
 
@@ -228,7 +250,7 @@ Plans:
 | 1. Foundation & Vertical Slice | v1.0 | 9/9 | Complete ✅ | 2026-06-15 |
 | 2. OrderGuard & Real-Money Alpaca Live | v2.0 | 7/7 | Complete   | 2026-06-17 |
 | 3. Production HITL UX | v2.0 | 15/15 | Complete   | 2026-06-23 |
-| 4. Agent Architecture & Cost Bounds | v2.0 | 0/0 | Not started | - |
+| 4. Agent Architecture & Cost Bounds | v2.0 | 0/5 | Planned | - |
 | 5. Trust Ladder | v2.0 | 0/0 | Not started | - |
 | 6. Web Dashboard & Multi-User Auth | v3.0 | 0/0 | Not started | - |
 | 7. Operations & Observability | v3.0 | 0/0 | Not started | - |
