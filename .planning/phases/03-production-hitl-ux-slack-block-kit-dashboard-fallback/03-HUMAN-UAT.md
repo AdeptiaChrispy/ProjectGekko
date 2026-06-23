@@ -3,17 +3,19 @@ status: partial
 phase: 03-production-hitl-ux-slack-block-kit-dashboard-fallback
 source: [03-VERIFICATION.md]
 started: 2026-06-18T14:00:00Z
-updated: 2026-06-23T13:30:00Z
+updated: 2026-06-23T14:10:00Z
 ---
 
 ## Current Test
+
+[testing complete]
 
 number: 2
 name: Edit-size slider — live browser test (D-62 / Plan 03-14)
 expected: |
   On /approvals, click "Edit size" on a pending proposal. A modal opens with a draggable
   SLIDER. Slack "Edit size" deep-links to the same dashboard page.
-result: resolved_in_code   # live 2026-06-22 — real bug found+fixed after clean restart; awaiting browser retest
+result: pass   # 2026-06-23 — 03-15 fixes validated live in browser (Bug A/B/C all confirmed)
 reported: "Dashboard Edit Size does nothing; Slack Edit Size → Internal Server Error."
 severity: blocker
 diagnosis_2026_06_22: |
@@ -91,11 +93,15 @@ resolved_2026_06_23: |
   claim_action/transition_status/append_event. 8/8 pass (commit 64ee8f7). No regressions:
   the kill-modal SessionMiddleware failure + walking-skeleton cross-test pollution were confirmed
   IDENTICAL at the pre-03-15 baseline (41f9821).
-awaiting: browser retest — RESTART `uv run gekko serve` (Python not hot-reloaded), then on /approvals:
-  (1) click Edit Size twice on the same proposal → second click returns the card at 200, no 500;
-  (2) open the Slack "Edit size" deep-link in a browser → lands on the styled /approvals page;
-  (3) act on an already-FILLED/EXPIRED proposal → card re-renders "already handled", no 500.
-  Then run `/gsd-verify-work 3` to record results and close Phase 3.
+validated_2026_06_23: |
+  Browser retest PASSED — operator confirmed all three 03-15 fixes live (server restarted, seeded a
+  PENDING + a FILLED proposal via seed_test_proposal.py since the live agent run produced no_action):
+  (1) Bug B — repeat Edit-Size click on the same proposal returns the card at 200, no 500.
+  (2) Bug A — Slack "Edit size" deep-link / direct nav to /approvals/{id}/edit-size lands on the
+      styled /approvals page (302 redirect), not a bare fragment.
+  (3) Bug C — acting on an already-FILLED proposal re-renders the current card ("already handled"),
+      no 500, no action buttons on the terminal card.
+  Test 2 (edit-size) now PASS. The 3-bug cluster is fully closed and confirmed in production.
 
 ## Tests
 
@@ -109,7 +115,8 @@ expected: |
   resize within the strategy's hard caps (e.g. 47 → 50) is ACCEPTED — modal closes, card → APPROVED,
   executor fires. A size above the hard cap shows a plain-language bound ("That's above your max of
   $Z (~W shares) — pick a smaller number"), NOT the old 2%-drift "outside the range" error.
-result: issue   # re-verify after 03-11 — cap math correct but still not legible
+result: pass   # 2026-06-23 — closed by 03-14 (slider) + 03-15 (3-bug cluster); validated live in browser
+prior_result: issue   # re-verify after 03-11 — cap math correct but still not legible
 reported: "still not very clear to the end user, but maybe that means the safety net is too low"
 severity: major
 finding_2026_06_22: |
@@ -197,11 +204,11 @@ reason: "Time-gated — fires at 16:30 ET on a trading day. Deferred; verify at 
 ## Summary
 
 total: 5
-passed: 2
+passed: 3   # Tests 1, 2 (edit-size, validated live 2026-06-23), 4
 issues: 0
 pending: 0
-skipped: 2
-blocked: 1   # Test 2 edit-size slider — stale server; retest after clean restart (not a code gap)
+skipped: 2   # Tests 3 (quiet-hours) + 5 (daily P&L) — time-gated, verify naturally
+blocked: 0   # Test 2 edit-size slider UNBLOCKED — 03-15 fixes validated live in browser 2026-06-23
 enhancements: 2   # dashboard state-tabs + site nav toolbar (new scope, minor → Phase 6)
 
 ## Gaps
@@ -225,7 +232,7 @@ enhancements: 2   # dashboard state-tabs + site nav toolbar (new scope, minor �
   test: 1
 
 - truth: "Operator can edit the order size from an understandable UI and approve the resized order"
-  status: resolved_in_code   # closed by Plan 03-14 (D-62 slider); live drag = human-verify item
+  status: resolved   # closed by 03-14 (slider) + 03-15 (3-bug cluster); VALIDATED LIVE 2026-06-23
   severity: major
   test: 2
   reason_resolved: "Plan 03-14 (D-62): dashboard edit-size is now a native range SLIDER (1 → cap-derived max shares, handle at proposed qty) with a live readout 'N shares ≈ $X — Y% of your $Z equity' and at-cap/equity-fail variants. The bound is shown UP FRONT (slider max + readout). Slack 'Edit size' deep-links to the dashboard slider; the in-Slack edit modal is retired. Server gate _check_edit_size_caps unchanged (slider max is display-only). Code-review CSP fix applied: readout bound via delegated listener + htmx:afterSettle in edit-size-slider.js (inline oninput would be blocked by script-src 'self'). Cap calibration intentionally NOT changed (slider provides the visual legibility; user-editable cap deferred to Phase 6). Verified 7/7 static (03-VERIFICATION.md). NOTE: live browser drag→readout and approve→fill remain human-verify items."
