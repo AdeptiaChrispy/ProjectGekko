@@ -133,6 +133,7 @@ def build_researcher_prompt(
     *,
     user_id: str,
     run_id: str,
+    max_evidence_items: int | None = None,
 ) -> str:
     """Build the per-run Researcher system prompt.
 
@@ -145,6 +146,10 @@ def build_researcher_prompt(
     it must emit. ``ResearchBrief.model_json_schema()`` is regenerated on
     every call — cheap enough at P1 scale; can be cached if it shows up
     in profiles.
+
+    :param max_evidence_items: When set (degradation mode D-04 tactic 3),
+        a note is appended to the guidance block instructing the Researcher
+        to limit evidence to this many items. ``None`` = normal default.
     """
     if guidance:
         guidance_block = "\n".join(
@@ -153,6 +158,13 @@ def build_researcher_prompt(
         )
     else:
         guidance_block = "  (none)"
+
+    # D-04 tactic 3 — trimmed research context in degradation mode.
+    if max_evidence_items is not None:
+        guidance_block += (
+            f"\n  - [DEGRADED MODE] Limit evidence items to {max_evidence_items} "
+            "maximum. Focus only on the highest-conviction signals."
+        )
 
     brief_schema = json.dumps(ResearchBrief.model_json_schema(), indent=2)
 

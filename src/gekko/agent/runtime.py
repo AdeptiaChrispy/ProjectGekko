@@ -55,8 +55,11 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from decimal import Decimal
+
 from claude_agent_sdk import ClaudeAgentOptions, create_sdk_mcp_server, query
 from claude_agent_sdk.types import AssistantMessage, TextBlock, ToolUseBlock
+from claude_agent_sdk.types import ResultMessage as SDKResultMessage
 from sqlalchemy import select
 
 from gekko.agent.budget import BudgetTracker
@@ -297,6 +300,10 @@ async def _run_researcher(
     user_id: str,
     run_id: str,
     mcp_server: Any,
+    session_factory: AsyncSessionLocal,
+    strategy_db_id: str,
+    max_turns: int = _RESEARCHER_MAX_TURNS,
+    max_evidence_items: int | None = None,
 ) -> ResearchBrief:
     """Phase A: drive the Researcher subagent and return its ResearchBrief.
 
@@ -304,16 +311,28 @@ async def _run_researcher(
     read-only Researcher tools and a system_prompt that instructs the
     model to emit the brief inside ``<RESEARCH_BRIEF>...</RESEARCH_BRIEF>``
     delimiters per docs/sdk-shape.md delta #5.
+
+    :param session_factory: Used to write the ``llm_cost`` audit event
+        (COST-05 / D-10) after the query() stream completes.
+    :param strategy_db_id: Strategy FK for the llm_cost event.
+    :param max_turns: Override for ``_RESEARCHER_MAX_TURNS`` (Wave 4
+        degradation mode passes 6).
+    :param max_evidence_items: When set, passed to ``build_researcher_prompt``
+        to request a trimmed brief (D-04 tactic 3 — context trim).
     """
     system_prompt = build_researcher_prompt(
-        strategy, guidance, user_id=user_id, run_id=run_id
+        strategy,
+        guidance,
+        user_id=user_id,
+        run_id=run_id,
+        max_evidence_items=max_evidence_items,
     )
     options = ClaudeAgentOptions(
         mcp_servers={"gekko": mcp_server},
         allowed_tools=RESEARCHER_TOOLS,
         system_prompt=system_prompt,
         model=_MODEL_ALIAS,
-        max_turns=_RESEARCHER_MAX_TURNS,
+        max_turns=max_turns,
     )
 
     user_prompt = (
@@ -322,12 +341,50 @@ async def _run_researcher(
         "for the watchlist. Then emit your final <RESEARCH_BRIEF> block."
     )
 
+    # COST-05 / D-10: capture ResultMessage + token counts for cost ledger.
+    result_msg: SDKResultMessage | None = None
+    input_tokens: int = 0
+    output_tokens: int = 0
+
     accumulated_text = ""
     async for msg in query(prompt=user_prompt, options=options):
-        if isinstance(msg, AssistantMessage):
+        if isinstance(msg, SDKResultMessage):
+            result_msg = msg
+        elif isinstance(msg, AssistantMessage):
+            if msg.usage:
+                input_tokens += msg.usage.get("input_tokens", 0)
+                output_tokens += msg.usage.get("output_tokens", 0)
             for block in msg.content:
                 if isinstance(block, TextBlock):
                     accumulated_text += block.text
+
+    # Write llm_cost ledger entry (COST-05).
+    cost_usd = Decimal(str(result_msg.total_cost_usd or 0.0)) if result_msg else Decimal("0")
+    try:
+        async with session_factory() as _cost_session, _cost_session.begin():
+            await append_event(
+                _cost_session,
+                user_id=user_id,
+                strategy_id=strategy_db_id,
+                event_type="llm_cost",
+                payload=normalize_decimals({
+                    "run_id": run_id,
+                    "strategy_name": strategy.name,
+                    "model": _MODEL_ALIAS,
+                    "call_type": "researcher",
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "cost_usd": cost_usd,
+                }),
+            )
+    except Exception:
+        # Never let cost-ledger persistence shadow the researcher result.
+        log.exception(
+            "agent.run.cost_ledger_persist_failed",
+            user_id=user_id,
+            run_id=run_id,
+            call_type="researcher",
+        )
 
     brief_json = _extract_research_brief_json(accumulated_text)
     brief = ResearchBrief.model_validate_json(brief_json)
@@ -344,6 +401,11 @@ async def _run_decision(
     strategy: Strategy,
     brief: ResearchBrief,
     mcp_server: Any,
+    user_id: str,
+    run_id: str,
+    strategy_db_id: str,
+    strategy_name: str,
+    session_factory: AsyncSessionLocal,
 ) -> tuple[str, dict[str, Any]]:
     """Phase B: drive the Decision subagent and return its tool call.
 
@@ -351,6 +413,13 @@ async def _run_decision(
         the short tool name (``"propose_trade"`` or ``"propose_no_action"``)
         and ``tool_payload`` is the LLM-supplied input dict ready to hand
         to :func:`write_proposal`.
+
+    :param session_factory: Used to write the ``llm_cost`` audit event
+        (COST-05 / D-10) after the query() stream completes.
+    :param user_id: Owner; used in the llm_cost audit event.
+    :param run_id: Run identifier; included in the llm_cost payload.
+    :param strategy_db_id: Strategy FK for the llm_cost event.
+    :param strategy_name: Strategy slug for the llm_cost payload.
 
     :raises ValueError: When the Decision agent failed to emit either of
         the two valid tool calls (D-11 protocol violation).
@@ -369,21 +438,58 @@ async def _run_decision(
     tool_outcome: str | None = None
     tool_payload: dict[str, Any] | None = None
 
+    # COST-05 / D-10: capture ResultMessage + token counts for cost ledger.
+    result_msg: SDKResultMessage | None = None
+    input_tokens: int = 0
+    output_tokens: int = 0
+
     async for msg in query(prompt=user_prompt, options=options):
-        if not isinstance(msg, AssistantMessage):
-            continue
-        for block in msg.content:
-            if not isinstance(block, ToolUseBlock):
-                continue
-            if block.name in (
-                "mcp__gekko__propose_trade",
-                "mcp__gekko__propose_no_action",
-            ):
-                tool_outcome = block.name.replace("mcp__gekko__", "")
-                tool_payload = dict(block.input)
+        if isinstance(msg, SDKResultMessage):
+            result_msg = msg
+        elif isinstance(msg, AssistantMessage):
+            if msg.usage:
+                input_tokens += msg.usage.get("input_tokens", 0)
+                output_tokens += msg.usage.get("output_tokens", 0)
+            for block in msg.content:
+                if not isinstance(block, ToolUseBlock):
+                    continue
+                if block.name in (
+                    "mcp__gekko__propose_trade",
+                    "mcp__gekko__propose_no_action",
+                ):
+                    tool_outcome = block.name.replace("mcp__gekko__", "")
+                    tool_payload = dict(block.input)
+                    break
+            if tool_outcome is not None:
                 break
-        if tool_outcome is not None:
-            break
+
+    # Write llm_cost ledger entry (COST-05).
+    cost_usd = Decimal(str(result_msg.total_cost_usd or 0.0)) if result_msg else Decimal("0")
+    try:
+        async with session_factory() as _cost_session, _cost_session.begin():
+            await append_event(
+                _cost_session,
+                user_id=user_id,
+                strategy_id=strategy_db_id,
+                event_type="llm_cost",
+                payload=normalize_decimals({
+                    "run_id": run_id,
+                    "strategy_name": strategy_name,
+                    "model": _MODEL_ALIAS,
+                    "call_type": "decision",
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "cost_usd": cost_usd,
+                }),
+            )
+    except Exception:
+        # Never let cost-ledger persistence shadow the decision result.
+        log.exception(
+            "agent.run.cost_ledger_persist_failed",
+            user_id=user_id,
+            run_id=run_id,
+            call_type="decision",
+        )
 
     if tool_outcome is None or tool_payload is None:
         msg = (
@@ -608,12 +714,18 @@ async def trigger_strategy_run(
         mcp_server = _build_gekko_mcp_server()
 
         # 3. Researcher phase.
+        _researcher_max_turns = 6 if _degradation_mode else _RESEARCHER_MAX_TURNS
+        _researcher_max_evidence = 3 if _degradation_mode else None
         brief = await _run_researcher(
             strategy=strategy,
             guidance=guidance,
             user_id=user_id,
             run_id=run_id,
             mcp_server=mcp_server,
+            session_factory=session_factory,
+            strategy_db_id=strategy_db_id,
+            max_turns=_researcher_max_turns,
+            max_evidence_items=_researcher_max_evidence,
         )
 
         # SC-2 gap closure (Phase-4 Plan 04-03): scan evidence quote_text for
@@ -650,7 +762,14 @@ async def trigger_strategy_run(
 
         # 4. Decision phase.
         tool_outcome, tool_payload = await _run_decision(
-            strategy=strategy, brief=brief, mcp_server=mcp_server
+            strategy=strategy,
+            brief=brief,
+            mcp_server=mcp_server,
+            user_id=user_id,
+            run_id=run_id,
+            strategy_db_id=strategy_db_id,
+            strategy_name=strategy_name,
+            session_factory=session_factory,
         )
 
         # 5. ProposalWriter — deterministic persistence + audit events.
