@@ -3,19 +3,19 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Safety & Trust
 status: executing
-last_updated: "2026-06-23T21:26:41.771Z"
+last_updated: "2026-06-23T21:44:53.549Z"
 last_activity: 2026-06-23
 progress:
   total_phases: 4
   completed_phases: 3
   total_plans: 36
-  completed_plans: 32
+  completed_plans: 33
   percent: 75
 ---
 
 # Project State: Project Gekko
 
-**Last updated:** 2026-06-19 (**Plan 03-13 complete — HTMX polling on /approvals + compact card formalization.** GET /approvals/poll added to authenticated router; _proposals_list.html.j2 fragment partial extracted; approvals_index.html.j2 polls every 30s with modal-mount outside polling container. Compact card (SIDE/QTY/TICKER/$cost/1-line summary/collapsed details) verified correct in code; 03-UI-SPEC.md Surface 2 updated with Compact Card Contract. Slack compact-card parity deferred.)
+**Last updated:** 2026-06-23 (**Plan 04-02 complete — Alembic 0005 migration (User cost-ceiling columns + 2 new event_types) + pricing.py.** migration 0005 adds daily_cost_ceiling_usd TEXT server_default '5.00', cost_alert_80_sent_date, cost_alert_100_sent_date to users; extends ck_event_type CHECK with llm_cost + suspicious_content. User ORM updated to match. pricing.py exports SONNET/HAIKU $/MTok constants, DEFAULT_DAILY_CEILING_USD = Decimal("5.00"), tokens_to_usd(). test_pricing.py GREEN (7/7). Alembic subprocess round-trip skipped on Windows per Plan 02-01 SQLCipher caveat; in-process logic verified.)
 
 ## Project Reference
 
@@ -26,7 +26,7 @@ progress:
 ## Current Position
 
 Phase: 04 (agent-architecture-cost-bounds) — EXECUTING
-Plan: 2 of 5
+Plan: 3 of 5
 Status: Ready to execute
   awaiting decision — tested gap-closure plan 03-15 vs inline-fix-crash-first (see 03-HUMAN-UAT.md "Current Test")
 Last activity: 2026-06-23
@@ -57,6 +57,7 @@ Last activity: 2026-06-23
 | Phase 03 P14 | 35min | 3 tasks | 9 files |
 | Phase 03 P15 | 28min | 3 tasks | 4 files |
 | Phase 04 P01 | 10min | 2 tasks | 7 files |
+| Phase 04 P02 | 14min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -75,6 +76,12 @@ Last activity: 2026-06-23
 | SQLCipher whole-DB encryption + passphrase-on-start | ARCH recommendation chosen over STACK's Fernet+keychain for cross-platform parity (avoids silent failures when service runs without logged-in user session) |
 | Decimal for money math, idempotency via `client_order_id` | Non-negotiable per PITFALLS Pitfall 1 (Knight Capital prevention) |
 | Robinhood Agentic Trading API status check in P1 | Re-validate the official API before committing to browser adapter in P9 (per BROK-R-01 and PITFALLS Pitfall 8) |
+
+### Decisions from Plan 04-02 (added 2026-06-23)
+
+- _pricing.py is the single authoritative source for DEFAULT_DAILY_CEILING_USD = Decimal("5.00")._ The migration 0005 server_default='5.00' and the Settings form placeholder='5.00' are derived copies. Code that needs to reference the D-02 default programmatically imports from gekko.agent.pricing, never from settings or hardcoded literals.
+- _tokens_to_usd() raises ValueError for unknown model aliases (not silent $0)._ Fail loud so unsupported future models are caught at call time, not silently underreported in cost accounting.
+- _Migration 0005 frozen vocabulary: _FROZEN_EVENT_TYPES_PRE is a literal copy of 0004's _FROZEN_EVENT_TYPES_POST._ This is the Plan 01-03 convention — migrations are frozen artifacts that cannot import from models.py. Equality is verified by test_0005_frozen_vocab_pre_matches_0004_post.
 
 ### Decisions from Plan 03-13 (added 2026-06-19)
 
