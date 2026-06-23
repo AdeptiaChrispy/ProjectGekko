@@ -126,11 +126,11 @@ Plans:
   4. At 80% of the configured per-user daily cost ceiling, agent enters graceful-degradation mode (longer cadence, Haiku for triage, shorter context) and Slack-DMs the user; at 100% it hard-halts further LLM calls and Slack-DMs again, resetting at user-configured timezone midnight
   5. Every LLM call is logged to the cost ledger (input tokens, output tokens, USD) and the dashboard shows spend per strategy and per user with the daily ceiling visible
 
-**Plans:** 5 plans
+**Plans:** 1/5 plans executed
 Plans:
 **Wave 1** *(Nyquist — test scaffolding)*
 
-- [ ] 04-01-PLAN.md — Wave 0 test stubs: test_cost_ceiling.py (COST-01/COST-04), test_cost_ledger.py (COST-05), test_pricing.py, test_spend_route.py (COST-02), test_settings_route.py ceiling extension (COST-03), test_suspicious_content.py (SC-2); extend test_decision_prompt_isolation.py with D-05 AST gate
+- [x] 04-01-PLAN.md — Wave 0 test stubs: test_cost_ceiling.py (COST-01/COST-04), test_cost_ledger.py (COST-05), test_pricing.py, test_spend_route.py (COST-02), test_settings_route.py ceiling extension (COST-03), test_suspicious_content.py (SC-2); extend test_decision_prompt_isolation.py with D-05 AST gate
 
 **Wave 2** *(blocked on Wave 1)*
 
@@ -250,7 +250,7 @@ Plans:
 | 1. Foundation & Vertical Slice | v1.0 | 9/9 | Complete ✅ | 2026-06-15 |
 | 2. OrderGuard & Real-Money Alpaca Live | v2.0 | 7/7 | Complete   | 2026-06-17 |
 | 3. Production HITL UX | v2.0 | 15/15 | Complete   | 2026-06-23 |
-| 4. Agent Architecture & Cost Bounds | v2.0 | 0/5 | Planned | - |
+| 4. Agent Architecture & Cost Bounds | v2.0 | 1/5 | In Progress|  |
 | 5. Trust Ladder | v2.0 | 0/0 | Not started | - |
 | 6. Web Dashboard & Multi-User Auth | v3.0 | 0/0 | Not started | - |
 | 7. Operations & Observability | v3.0 | 0/0 | Not started | - |
