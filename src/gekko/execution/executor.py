@@ -246,7 +246,13 @@ async def _send_slack_dm_respecting_quiet_hours(
     :param category: One of the five literals above.  Unrecognised literals
         are treated as bypass-category (fail-open keeps the operator informed).
     """
-    _BYPASS_CATEGORIES = frozenset({"kill_active", "executor_error", "first_live_fill"})
+    _BYPASS_CATEGORIES = frozenset({
+        "kill_active",
+        "executor_error",
+        "first_live_fill",
+        "cost_alert",   # Phase-4 / Plan 04-03: cost-halt DMs bypass quiet hours
+        # (operator safety information — D-07/D-08; RESEARCH open question 3)
+    })
 
     if category in _BYPASS_CATEGORIES:
         # bypass-category: bypass-dispatch — caller already classified this

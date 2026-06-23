@@ -60,6 +60,7 @@ from claude_agent_sdk.types import AssistantMessage, TextBlock, ToolUseBlock
 from sqlalchemy import select
 
 from gekko.agent.budget import BudgetTracker
+from gekko.agent.cost_ceiling import CeilingCheck, check_cost_ceiling
 from gekko.agent.decision import DECISION_TOOLS, build_decision_prompt
 from gekko.agent.proposal_writer import write_proposal
 from gekko.agent.researcher import RESEARCHER_TOOLS, build_researcher_prompt
@@ -131,6 +132,27 @@ def _get_passphrase() -> str:
     from gekko.vault.passphrase import get_passphrase as _vault_get
 
     return _vault_get()
+
+
+# ---------------------------------------------------------------------------
+# SC-2 suspicious-content injection detector (COST-01 / Phase-4 Plan 04-03)
+# ---------------------------------------------------------------------------
+
+#: Module-level compiled regex for detecting prompt-injection patterns in
+#: EvidenceSnippet.quote_text.  Scanned AFTER the Researcher brief is parsed
+#: and BEFORE the Decision agent is called — at the trust boundary.
+#:
+#: Patterns (RESEARCH §RQ-6, re.IGNORECASE):
+#:   1. "SYSTEM:"    — system-prompt impersonation
+#:   2. "OVERRIDE:"  — override instruction pattern
+#:   3. "ignore previous instructions" — classic injection phrase
+#:   4. "disregard your instructions" — variant
+#:   5. "forget your instructions"    — variant
+_INJECTION_PATTERNS: re.Pattern[str] = re.compile(
+    r"SYSTEM\s*:|OVERRIDE\s*:|ignore\s+previous\s+instructions|"
+    r"disregard\s+your\s+instructions|forget\s+your\s+instructions",
+    re.IGNORECASE,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -492,6 +514,73 @@ async def trigger_strategy_run(
                 "source": source,
             }
 
+    # ---- Cost-ceiling gate (COST-01 / D-07) ----------------------------------
+    # ALL trigger sources (not just "schedule") respect the ceiling — a
+    # manual run also deducts from the daily pool. The halt is absolute.
+    # Gate is deterministic Python (no LLM call) and fires BEFORE any
+    # query() dispatch so the model cannot reason past it (T-04-05).
+    _ceiling = await check_cost_ceiling(session_factory=session_factory, user_id=user_id)
+    if _ceiling.action == "halt":
+        log.info(
+            "agent.cycle.skipped_cost_halt",
+            user_id=user_id,
+            strategy_name=strategy_name,
+            source=source,
+            spend_usd=str(_ceiling.current_spend),
+            ceiling_usd=str(_ceiling.ceiling),
+        )
+        # D-08: one Slack DM at 100% (just_crossed_100 = False on repeats)
+        if _ceiling.just_crossed_100:
+            try:
+                from gekko.execution.executor import _send_slack_dm_respecting_quiet_hours
+                await _send_slack_dm_respecting_quiet_hours(
+                    user_id,
+                    f"Daily LLM cost ceiling reached: "
+                    f"${_ceiling.current_spend:.4f} / ${_ceiling.ceiling:.2f}. "
+                    f"All agent cycles halted until midnight in your timezone. "
+                    f"Raise the ceiling in Settings to resume.",
+                    category="cost_alert",
+                )
+            except Exception:
+                log.exception(
+                    "agent.cycle.cost_halt_dm_failed",
+                    user_id=user_id,
+                )
+        return {
+            "run_id": run_id,
+            "outcome": "skipped_cost_halt",
+            "source": source,
+        }
+    elif _ceiling.action == "degrade":
+        # D-04/D-06: degradation mode — cadence, triage, context trim (Wave 4)
+        log.info(
+            "agent.cycle.degraded_cost_ceiling",
+            user_id=user_id,
+            strategy_name=strategy_name,
+            source=source,
+            spend_usd=str(_ceiling.current_spend),
+            ceiling_usd=str(_ceiling.ceiling),
+            pct=str(_ceiling.pct),
+        )
+        if _ceiling.just_crossed_80:
+            try:
+                from gekko.execution.executor import _send_slack_dm_respecting_quiet_hours
+                await _send_slack_dm_respecting_quiet_hours(
+                    user_id,
+                    f"Daily LLM cost at 80%+ of ceiling: "
+                    f"${_ceiling.current_spend:.4f} / ${_ceiling.ceiling:.2f} "
+                    f"({_ceiling.pct:.1f}%). Agent entering degraded mode "
+                    f"(slower cadence, triage gate active).",
+                    category="cost_alert",
+                )
+            except Exception:
+                log.exception(
+                    "agent.cycle.cost_degrade_dm_failed",
+                    user_id=user_id,
+                )
+    # degradation_mode flag — consumed by Wave 4 Haiku triage gate.
+    _degradation_mode: bool = _ceiling.action == "degrade"
+
     # Determine session factory + engine ownership.
     own_engine = False
     engine = None
@@ -526,6 +615,38 @@ async def trigger_strategy_run(
             run_id=run_id,
             mcp_server=mcp_server,
         )
+
+        # SC-2 gap closure (Phase-4 Plan 04-03): scan evidence quote_text for
+        # injection patterns AFTER brief is parsed, BEFORE Decision agent is called.
+        # This is the trust boundary — external content (quote_text from web/news)
+        # is scanned here before entering the Decision phase.
+        # Neutralization is already in place (D-40 prompt boundary); this logs
+        # the detection event for the audit chain (T-04-07).
+        for _evidence in brief.evidence:
+            if _evidence.quote_text and _INJECTION_PATTERNS.search(_evidence.quote_text):
+                try:
+                    async with session_factory() as _sc_session, _sc_session.begin():
+                        await append_event(
+                            _sc_session,
+                            user_id=user_id,
+                            strategy_id=strategy_db_id,
+                            event_type="suspicious_content",
+                            payload=normalize_decimals(
+                                {
+                                    "run_id": run_id,
+                                    "source_type": _evidence.source_type,
+                                    "source_url": str(_evidence.source_url),
+                                    "pattern_matched": True,
+                                }
+                            ),
+                        )
+                except Exception:
+                    # Never let SC-2 logging shadow the main run — log and continue.
+                    log.exception(
+                        "agent.run.suspicious_content_log_failed",
+                        user_id=user_id,
+                        run_id=run_id,
+                    )
 
         # 4. Decision phase.
         tool_outcome, tool_payload = await _run_decision(

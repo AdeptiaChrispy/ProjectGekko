@@ -132,6 +132,12 @@ class ResearchBrief(BaseModel):
     evidence: list[EvidenceSnippet] = Field(default_factory=list, max_length=10)
     research_budget_used: dict[str, Any] = Field(default_factory=dict)
     notes: str | None = None
+    #: Forward-compat slot (Phase-4 Plan 04-03 / RESEARCH §RQ-6).
+    #: The Researcher can self-report suspicious patterns it encountered.
+    #: The runtime's SC-2 scanner also populates this at brief-parse time
+    #: (currently via the audit chain; this field is available for the
+    #: Decision prompt to reference in future waves).
+    injected_content_flags: list[str] = Field(default_factory=list)
 
 
 __all__: tuple[str, ...] = (
