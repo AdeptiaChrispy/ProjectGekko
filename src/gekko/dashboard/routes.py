@@ -1094,12 +1094,14 @@ async def settings_get(
 
     # user may be None for early-bootstrap state; provide safe defaults
     iana_timezones = sorted(zoneinfo.available_timezones())
+    ceiling_value = (user.daily_cost_ceiling_usd if user is not None and user.daily_cost_ceiling_usd else "5.00")
     return templates.TemplateResponse(
         request,
         "settings.html.j2",
         {
             "user": user,
             "iana_timezones": iana_timezones,
+            "ceiling_value": ceiling_value,
             "success": False,
             "error": None,
         },
@@ -1112,25 +1114,40 @@ async def settings_post(
     timezone: str = Form(""),
     quiet_hours_start: str = Form(""),
     quiet_hours_end: str = Form(""),
+    daily_cost_ceiling_usd: str = Form("5.00"),
     user_id: str = Depends(require_session),
 ) -> HTMLResponse:
-    """POST /settings — validate + save quiet hours (UI-SPEC §Surface 5).
+    """POST /settings — validate + save quiet hours + cost ceiling (UI-SPEC §Surface 5, COST-03).
 
     Validation:
     - timezone must be in zoneinfo.available_timezones()
     - quiet_hours_start and quiet_hours_end must both be blank OR both set
+    - daily_cost_ceiling_usd must be a valid Decimal > 0 (T-04-15)
     """
     import zoneinfo
     from gekko.db.models import User as UserRow
 
     iana_timezones = sorted(zoneinfo.available_timezones())
 
-    # Validation
+    # Validate daily_cost_ceiling_usd (T-04-15: Decimal validation before storage)
+    ceiling_str = daily_cost_ceiling_usd.strip()
     error: str | None = None
-    if timezone and timezone not in zoneinfo.available_timezones():
-        error = f'Timezone "{timezone}" is not a valid IANA timezone.'
-    elif bool(quiet_hours_start) != bool(quiet_hours_end):
-        error = "Quiet hours start and end must both be set, or both be blank."
+    try:
+        ceiling_decimal = Decimal(ceiling_str)
+    except InvalidOperation:
+        error = "Invalid ceiling value — enter a number like 5.00"
+        ceiling_decimal = None
+    else:
+        if ceiling_decimal <= 0:
+            error = "Ceiling must be greater than $0"
+            ceiling_decimal = None
+
+    # Validate timezone and quiet hours only if ceiling is valid
+    if error is None:
+        if timezone and timezone not in zoneinfo.available_timezones():
+            error = f'Timezone "{timezone}" is not a valid IANA timezone.'
+        elif bool(quiet_hours_start) != bool(quiet_hours_end):
+            error = "Quiet hours start and end must both be set, or both be blank."
 
     if error:
         sf, engine = _get_session_factory(user_id)
@@ -1144,16 +1161,22 @@ async def settings_post(
         finally:
             if engine is not None:
                 await engine.dispose()
+        ceiling_value = (user.daily_cost_ceiling_usd if user is not None and user.daily_cost_ceiling_usd else "5.00")
         return templates.TemplateResponse(
             request,
             "settings.html.j2",
             {
                 "user": user,
                 "iana_timezones": iana_timezones,
+                "ceiling_value": ceiling_value,
                 "success": False,
                 "error": error,
             },
         )
+
+    # Normalize the ceiling string (e.g. "05.00" → "5.0", "10.00" → "10.00")
+    # Use str(Decimal) to avoid "05.00" style storage (T-04-15)
+    normalized_ceiling = str(ceiling_decimal)  # type: ignore[union-attr]
 
     # Save settings
     sf, engine = _get_session_factory(user_id)
@@ -1169,6 +1192,7 @@ async def settings_post(
                     user.timezone = timezone
                 user.quiet_hours_start = quiet_hours_start or None
                 user.quiet_hours_end = quiet_hours_end or None
+                user.daily_cost_ceiling_usd = normalized_ceiling
             await session.flush()
     finally:
         if engine is not None:
@@ -1187,12 +1211,14 @@ async def settings_post(
         if engine2 is not None:
             await engine2.dispose()
 
+    ceiling_value = (user.daily_cost_ceiling_usd if user is not None and user.daily_cost_ceiling_usd else "5.00")
     return templates.TemplateResponse(
         request,
         "settings.html.j2",
         {
             "user": user,
             "iana_timezones": iana_timezones,
+            "ceiling_value": ceiling_value,
             "success": True,
             "error": None,
         },

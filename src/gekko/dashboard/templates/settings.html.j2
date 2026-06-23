@@ -1,13 +1,15 @@
-{# Settings page — Quiet Hours configuration form.
-   Plan 03-05 Task 3, UI-SPEC §Surface 5 (D-46, D-47, D-49).
+{# Settings page — Quiet Hours + Cost Ceiling configuration form.
+   Plan 03-05 Task 3 (quiet hours), Plan 04-05 Task 2 (cost ceiling).
+   UI-SPEC §Surface 5 (D-46, D-47, D-49) + COST-03 (D-02).
 
    Route: GET /settings + POST /settings
 
    Context variables:
-     user          : User ORM row (or None for early-bootstrap)
+     user           : User ORM row (or None for early-bootstrap)
      iana_timezones : list[str]  sorted list of IANA timezone names
-     success       : bool
-     error         : str | None
+     ceiling_value  : str  current ceiling value (or "5.00" default)
+     success        : bool
+     error          : str | None
 #}
 {% extends "base.html.j2" %}
 
@@ -59,6 +61,25 @@
       <p class="form-help">
         Leave start and end blank to disable quiet hours (agent runs 24/7).
       </p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Daily LLM Cost Ceiling</legend>
+      <p class="form-help">
+        The agent halts all LLM calls once this daily limit is reached.
+        At 80% of this ceiling the agent enters degraded mode (slower cadence,
+        cheaper triage gate). Resets at midnight in your configured timezone.
+      </p>
+
+      <label for="daily_cost_ceiling_usd">Daily ceiling (USD)</label>
+      <input type="number"
+             id="daily_cost_ceiling_usd"
+             name="daily_cost_ceiling_usd"
+             step="0.01"
+             min="0.50"
+             value="{{ ceiling_value if ceiling_value else '5.00' }}">
+
+      <p class="form-help">Default: $5.00/day.</p>
     </fieldset>
 
     <button type="submit" class="btn-primary">Save settings</button>
