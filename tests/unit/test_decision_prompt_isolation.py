@@ -307,3 +307,52 @@ def test_wrapped_quote_text_round_trips_through_canonical_json() -> None:
     assert decoded["quote_text"] == wrapped
     # The literal `<untrusted_content` marker survives JSON encoding.
     assert "<untrusted_content" in canonical
+
+
+# ---------------------------------------------------------------------------
+# D-05 — "Decision never Haiku" AST gate (Phase 4 hardening)
+# ---------------------------------------------------------------------------
+
+
+def test_decision_never_haiku_model() -> None:
+    """D-05 AST gate: model='haiku' MUST NOT appear in _run_decision or
+    build_decision_prompt. Real-money trade decisions may not use the
+    cheaper model. Haiku is triage-only.
+
+    This is a regression-prevention gate: the codebase currently satisfies
+    D-05 (no Haiku in Decision path), so this test passes GREEN immediately.
+    Any future change that accidentally passes model='haiku' to a Decision
+    function will trip this test.
+    """
+    violations: list[str] = []
+
+    for py_file in _agent_py_files():
+        src = py_file.read_text(encoding="utf-8")
+        try:
+            tree = ast.parse(src, filename=str(py_file))
+        except SyntaxError as exc:
+            pytest.fail(f"Failed to parse {py_file}: {exc}")
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            if not _is_decision_fn_name(node.name):
+                continue
+            # Walk the body looking for model="haiku" keyword argument
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.keyword):
+                    if (
+                        sub.arg == "model"
+                        and isinstance(sub.value, ast.Constant)
+                        and sub.value.value == "haiku"
+                    ):
+                        violations.append(
+                            f"{py_file.name}:{sub.value.lineno}: "
+                            f"function {node.name!r} passes model='haiku' "
+                            f"(D-05 violation — Decision must never use Haiku)"
+                        )
+
+    assert not violations, (
+        "D-05 invariant broken — Decision-path function uses Haiku model:\n  "
+        + "\n  ".join(violations)
+    )
