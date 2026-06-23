@@ -3,19 +3,19 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Safety & Trust
 status: executing
-last_updated: "2026-06-23T21:44:53.549Z"
+last_updated: "2026-06-23T22:12:46.645Z"
 last_activity: 2026-06-23
 progress:
   total_phases: 4
   completed_phases: 3
   total_plans: 36
-  completed_plans: 33
+  completed_plans: 34
   percent: 75
 ---
 
 # Project State: Project Gekko
 
-**Last updated:** 2026-06-23 (**Plan 04-02 complete — Alembic 0005 migration (User cost-ceiling columns + 2 new event_types) + pricing.py.** migration 0005 adds daily_cost_ceiling_usd TEXT server_default '5.00', cost_alert_80_sent_date, cost_alert_100_sent_date to users; extends ck_event_type CHECK with llm_cost + suspicious_content. User ORM updated to match. pricing.py exports SONNET/HAIKU $/MTok constants, DEFAULT_DAILY_CEILING_USD = Decimal("5.00"), tokens_to_usd(). test_pricing.py GREEN (7/7). Alembic subprocess round-trip skipped on Windows per Plan 02-01 SQLCipher caveat; in-process logic verified.)
+**Last updated:** 2026-06-23 (**Plan 04-03 complete — cost_ceiling.py (CeilingCheck dataclass + check_cost_ceiling() deterministic gate), runtime.py (ceiling gate wired after quiet-hours gate + SC-2 _INJECTION_PATTERNS scan), executor.py (cost_alert bypass), ResearchBrief.injected_content_flags.** halt returns skipped_cost_halt without calling query(); degrade sets _degradation_mode flag for Wave 4; SC-2 scan logs suspicious_content audit events at Researcher→Decision trust boundary. test_cost_ceiling.py 8/8 GREEN; test_suspicious_content.py 4/4 GREEN; test_decision_prompt_isolation.py 7/7 GREEN (D-05 AST gate clean).)
 
 ## Project Reference
 
@@ -26,7 +26,7 @@ progress:
 ## Current Position
 
 Phase: 04 (agent-architecture-cost-bounds) — EXECUTING
-Plan: 3 of 5
+Plan: 4 of 5
 Status: Ready to execute
   awaiting decision — tested gap-closure plan 03-15 vs inline-fix-crash-first (see 03-HUMAN-UAT.md "Current Test")
 Last activity: 2026-06-23
@@ -58,6 +58,7 @@ Last activity: 2026-06-23
 | Phase 03 P15 | 28min | 3 tasks | 4 files |
 | Phase 04 P01 | 10min | 2 tasks | 7 files |
 | Phase 04 P02 | 14min | 2 tasks | 4 files |
+| Phase 04 P03 | 35min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
