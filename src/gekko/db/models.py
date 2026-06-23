@@ -91,6 +91,13 @@ _BROKER_CREDENTIAL_KINDS: tuple[str, ...] = ("alpaca_paper", "alpaca_live")
 #:   - ``dedup_click``  — duplicate Slack/dashboard action detected + logged
 #:   - ``edit_size``    — operator edited the proposed quantity before approval
 #:   - ``daily_pnl``    — daily P&L digest sent to the operator
+#:
+#: Phase-4 additions (plan 04-02 Task 1): two new event types for cost
+#: ceiling (COST-05) and prompt-injection audit (SC-2 gap closure):
+#:   - ``llm_cost``           — per-query() cost ledger entry; payload carries
+#:                              input_tokens, output_tokens, cost_usd (Decimal)
+#:   - ``suspicious_content`` — SC-2 gap: prompt-injection pattern detected in
+#:                              EvidenceSnippet.quote_text at brief-parse time
 _EVENT_TYPES: tuple[str, ...] = (
     "decision",
     "proposal",
@@ -109,6 +116,9 @@ _EVENT_TYPES: tuple[str, ...] = (
     "dedup_click",
     "edit_size",
     "daily_pnl",
+    # Phase-4 additions:
+    "llm_cost",
+    "suspicious_content",
 )
 
 
@@ -190,6 +200,18 @@ class User(Base):
     quiet_hours_start: Mapped[str | None] = mapped_column(String, nullable=True)
     quiet_hours_end: Mapped[str | None] = mapped_column(String, nullable=True)
     timezone: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Phase-4 / D-02 + D-12 daily cost ceiling + alert-sent-date columns.
+    #
+    # ``daily_cost_ceiling_usd`` stores the configurable per-day USD ceiling as
+    # a TEXT string (consistent with money-as-TEXT pattern). NULL defaults to
+    # the DEFAULT_DAILY_CEILING_USD constant at read time.
+    # ``cost_alert_80_sent_date`` and ``cost_alert_100_sent_date`` store the
+    # ISO date (YYYY-MM-DD, in the user's timezone) when the 80%/100% DM was
+    # last sent. Guard compares this against today's local date to enforce
+    # the "one DM per day" rule (D-06/D-08). NULL = never sent.
+    daily_cost_ceiling_usd: Mapped[str | None] = mapped_column(String, nullable=True)
+    cost_alert_80_sent_date: Mapped[str | None] = mapped_column(String, nullable=True)
+    cost_alert_100_sent_date: Mapped[str | None] = mapped_column(String, nullable=True)
 
     def __repr__(self) -> str:
         return (
