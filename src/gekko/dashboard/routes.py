@@ -1199,6 +1199,161 @@ async def settings_post(
     )
 
 
+@router.get("/spend", response_class=HTMLResponse)
+async def spend_get(
+    request: Request,
+    user_id: str = Depends(require_session),
+) -> HTMLResponse:
+    """GET /spend — today's LLM spend vs ceiling + per-strategy + 7-day history (COST-02 / D-11).
+
+    Queries ``llm_cost`` events for the authenticated user:
+    - today_total: sum of cost_usd for events since today's midnight in user's tz
+    - ceiling: user.daily_cost_ceiling_usd (or DEFAULT_DAILY_CEILING_USD fallback)
+    - pct: 0-100 percentage of ceiling consumed today
+    - by_strategy: list of {name, spend} dicts sorted by spend descending
+    - history: list of {date, spend} dicts for the last 7 calendar days (oldest first)
+
+    T-04-14: route on auth-gated router; all DB queries filter by user_id (D-21).
+    """
+    import json
+    from datetime import timedelta
+    from zoneinfo import ZoneInfo
+
+    from gekko.agent.pricing import DEFAULT_DAILY_CEILING_USD
+    from gekko.db.models import Event as EventRow
+    from gekko.db.models import User as UserRow
+
+    sf, engine = _get_session_factory(user_id)
+    try:
+        async with sf() as session:
+            user = (
+                await session.execute(
+                    select(UserRow).where(UserRow.user_id == user_id)
+                )
+            ).scalar_one_or_none()
+
+            # Resolve ceiling
+            if user is not None and user.daily_cost_ceiling_usd:
+                ceiling = Decimal(user.daily_cost_ceiling_usd)
+            else:
+                ceiling = DEFAULT_DAILY_CEILING_USD
+
+            # Resolve timezone
+            tz_name = (user.timezone if user is not None and user.timezone else "America/New_York")
+            tz = ZoneInfo(tz_name)
+
+            # Compute today's start (user-local timezone-aware boundary)
+            now_utc = datetime.now(UTC)
+            now_local = now_utc.astimezone(tz)
+            today_start_local = datetime(
+                now_local.year, now_local.month, now_local.day, tzinfo=tz
+            )
+            today_start_utc_str = today_start_local.astimezone(UTC).isoformat()
+
+            # Compute 7-day window start
+            seven_days_ago_local = today_start_local - timedelta(days=7)
+            seven_days_ago_utc_str = seven_days_ago_local.astimezone(UTC).isoformat()
+
+            # Fetch today's llm_cost events
+            today_result = await session.execute(
+                select(EventRow.payload_json, EventRow.strategy_id, EventRow.ts)
+                .where(
+                    EventRow.user_id == user_id,
+                    EventRow.event_type == "llm_cost",
+                    EventRow.ts >= today_start_utc_str,
+                )
+            )
+            today_rows = today_result.all()
+
+            # Sum today's total spend (Python-side Decimal; no SQL SUM on JSON text — RESEARCH §Pitfall 7)
+            today_total = Decimal("0")
+            strategy_spend: dict[str, Decimal] = {}
+            strategy_names: dict[str, str] = {}
+
+            for row in today_rows:
+                try:
+                    payload = json.loads(row.payload_json)
+                    cost = Decimal(str(payload.get("cost_usd", "0")))
+                    today_total += cost
+                    # Per-strategy accumulation using strategy_name from payload
+                    strat_name = str(payload.get("strategy_name", "Unknown"))
+                    if strat_name not in strategy_spend:
+                        strategy_spend[strat_name] = Decimal("0")
+                    strategy_spend[strat_name] += cost
+                except Exception:
+                    continue
+
+            # Build by_strategy list sorted by spend descending
+            by_strategy = [
+                {"name": name, "spend": spend}
+                for name, spend in sorted(
+                    strategy_spend.items(), key=lambda kv: kv[1], reverse=True
+                )
+            ]
+
+            # Fetch 7-day window events (includes today)
+            history_result = await session.execute(
+                select(EventRow.payload_json, EventRow.ts)
+                .where(
+                    EventRow.user_id == user_id,
+                    EventRow.event_type == "llm_cost",
+                    EventRow.ts >= seven_days_ago_utc_str,
+                )
+            )
+            history_rows = history_result.all()
+
+            # Bucket 7-day events by local date
+            daily_buckets: dict[str, Decimal] = {}
+            for row in history_rows:
+                try:
+                    payload = json.loads(row.payload_json)
+                    cost = Decimal(str(payload.get("cost_usd", "0")))
+                    # Parse ts (ISO-8601 UTC) → local date string
+                    event_ts = row.ts
+                    try:
+                        event_dt = datetime.fromisoformat(event_ts)
+                    except ValueError:
+                        continue
+                    local_date = event_dt.astimezone(tz).date().isoformat()
+                    if local_date not in daily_buckets:
+                        daily_buckets[local_date] = Decimal("0")
+                    daily_buckets[local_date] += cost
+                except Exception:
+                    continue
+
+            # Build 7-day history list: fill in all 7 days (incl. days with $0)
+            history = []
+            for day_offset in range(7):
+                day_local = (seven_days_ago_local + timedelta(days=day_offset)).date().isoformat()
+                history.append({
+                    "date": day_local,
+                    "spend": daily_buckets.get(day_local, Decimal("0")),
+                })
+            # history is already sorted oldest→newest
+
+            # Compute percentage
+            if ceiling > 0:
+                pct = (today_total / ceiling * Decimal("100")).quantize(Decimal("0.01"))
+            else:
+                pct = Decimal("0")
+
+    finally:
+        if engine is not None:
+            await engine.dispose()
+
+    return templates.TemplateResponse(
+        request,
+        "spend.html.j2",
+        {
+            "today_total": today_total,
+            "ceiling": ceiling,
+            "pct": pct,
+            "by_strategy": by_strategy,
+            "history": history,
+        },
+    )
+
+
 @public_router.get("/healthz")
 async def healthz() -> dict[str, str]:
     """Liveness probe — uvicorn / supervisor / dashboard self-checks."""

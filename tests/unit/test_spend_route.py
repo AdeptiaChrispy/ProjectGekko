@@ -1,4 +1,4 @@
-"""COST-02 dashboard spend route stubs — Phase 4 Wave 0.
+"""COST-02 dashboard spend route tests — Phase 4 Wave 5.
 
 Covers:
   - GET /spend returns HTTP 200 for authenticated session
@@ -10,12 +10,12 @@ Covers:
 
 All tests import the FastAPI ``app`` via ``httpx.AsyncClient`` +
 ``httpx.ASGITransport`` — same pattern as existing dashboard route tests.
-The ``GET /spend`` route does NOT exist yet, so most tests will fail at
-collection or runtime with a 404/ImportError. This is the expected RED state.
 """
 
 from __future__ import annotations
 
+import json
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -27,49 +27,34 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
-def _build_app_with_mock_db(spend_data: dict | None = None):
-    """Build a create_app() instance with mocked settings + DB session.
+def _make_llm_cost_row(cost_usd: str, strategy_name: str, ts: str | None = None) -> MagicMock:
+    """Build a mock Event row with the llm_cost payload shape."""
+    if ts is None:
+        ts = datetime.now(UTC).isoformat()
+    row = MagicMock()
+    row.payload_json = json.dumps({
+        "cost_usd": cost_usd,
+        "strategy_name": strategy_name,
+        "model": "sonnet",
+        "call_type": "researcher",
+        "input_tokens": 100,
+        "output_tokens": 50,
+    })
+    row.strategy_id = "test-strat-id"
+    row.ts = ts
+    return row
 
-    ``spend_data`` controls what the mocked DB returns for the spend route.
-    If None, defaults to: today_total=Decimal('0'), ceiling=Decimal('5.00'),
-    by_strategy=[], history=[].
-    """
-    from gekko.dashboard.app import create_app
-    import gekko.vault.passphrase as _vault
 
-    _vault.set_passphrase("test-passphrase-04-spend")
-
-    mock_session = MagicMock()
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
-    mock_session.begin = MagicMock(return_value=mock_session)
-
-    # Default spend data
-    if spend_data is None:
-        spend_data = {
-            "today_total": Decimal("0"),
-            "ceiling": Decimal("5.00"),
-            "by_strategy": [],
-            "history": [{"date": f"2026-06-{17 + i:02d}", "spend": Decimal("0")} for i in range(7)],
-        }
-
-    mock_result = MagicMock()
-    mock_result.all.return_value = []
-    mock_session.execute = AsyncMock(return_value=mock_result)
-
-    mock_sf = MagicMock(return_value=mock_session)
-
-    with patch("gekko.config.get_settings") as mock_settings_fn, \
-         patch("gekko.dashboard.routes._get_session_factory") as mock_sf_fn:
-        settings = MagicMock()
-        settings.gekko_user_id = "testuser"
-        settings.dashboard_url = "http://localhost:8000"
-        mock_settings_fn.return_value = settings
-        mock_sf_fn.return_value = (mock_sf, None)
-
-        app = create_app()
-
-    return app, spend_data
+def _make_user_row(
+    daily_cost_ceiling_usd: str | None = "5.00",
+    timezone: str | None = "America/New_York",
+) -> MagicMock:
+    """Build a mock User ORM row."""
+    user = MagicMock()
+    user.daily_cost_ceiling_usd = daily_cost_ceiling_usd
+    user.timezone = timezone
+    user.user_id = "testuser"
+    return user
 
 
 def _clear_vault() -> None:
@@ -129,43 +114,218 @@ async def test_spend_get_returns_200() -> None:
 @pytest.mark.asyncio
 async def test_spend_get_shows_today_total() -> None:
     """GET /spend response context contains today_total as Decimal."""
-    # The template must receive today_total as a Decimal (not float).
-    # Implementation: the route fetches llm_cost events for today and sums
-    # payload['cost_usd'] values using Decimal arithmetic.
-    raise NotImplementedError(
-        "stub — implement after GET /spend route ships in Wave 3"
-    )
+    from gekko.dashboard.app import create_app
+    import gekko.vault.passphrase as _vault
+
+    correct = "test-passphrase-04-spend-total"
+    _vault.set_passphrase(correct)
+    try:
+        # Build a mock session returning 2 llm_cost rows for today
+        today_ts = datetime.now(UTC).isoformat()
+        row1 = _make_llm_cost_row("0.05", "strat-a", today_ts)
+        row2 = _make_llm_cost_row("0.03", "strat-b", today_ts)
+        user = _make_user_row("5.00", "America/New_York")
+
+        call_count = 0
+
+        def _make_result(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            mock_result = MagicMock()
+            if call_count == 1:
+                # First execute call: user row
+                mock_result.scalar_one_or_none = MagicMock(return_value=user)
+                mock_result.all.return_value = []
+            elif call_count == 2:
+                # Second execute call: today's llm_cost rows
+                mock_result.all.return_value = [row1, row2]
+                mock_result.scalar_one_or_none = MagicMock(return_value=None)
+            else:
+                # 7-day history rows
+                mock_result.all.return_value = [row1, row2]
+                mock_result.scalar_one_or_none = MagicMock(return_value=None)
+            return mock_result
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_session.execute = AsyncMock(side_effect=lambda *a, **kw: _make_result())
+        mock_sf = MagicMock(return_value=mock_session)
+
+        with patch("gekko.config.get_settings") as mock_settings_fn, \
+             patch("gekko.dashboard.routes._get_session_factory") as mock_sf_fn:
+            settings = MagicMock()
+            settings.gekko_user_id = "testuser"
+            settings.dashboard_url = "http://localhost:8000"
+            mock_settings_fn.return_value = settings
+            mock_sf_fn.return_value = (mock_sf, None)
+
+            app = create_app()
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://test",
+                follow_redirects=False,
+            ) as client:
+                await client.post("/login", data={"passphrase": correct, "next": "/spend"})
+                resp = await client.get("/spend")
+
+        assert resp.status_code == 200
+        # The page should show the total spend ($0.08)
+        assert "0.08" in resp.text or "0.0800" in resp.text
+    finally:
+        _vault.clear()
 
 
 @pytest.mark.asyncio
 async def test_spend_get_shows_ceiling() -> None:
     """GET /spend response context contains ceiling as Decimal."""
-    # The template must receive ceiling = user.daily_cost_ceiling_usd parsed
-    # as Decimal (or DEFAULT_DAILY_CEILING_USD if the column is NULL).
-    raise NotImplementedError(
-        "stub — implement after GET /spend route ships in Wave 3"
-    )
+    from gekko.dashboard.app import create_app
+    import gekko.vault.passphrase as _vault
+
+    correct = "test-passphrase-04-spend-ceiling"
+    _vault.set_passphrase(correct)
+    try:
+        user = _make_user_row("10.00", "America/New_York")
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none = MagicMock(return_value=user)
+        mock_result.all.return_value = []
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_session.execute = AsyncMock(return_value=mock_result)
+        mock_sf = MagicMock(return_value=mock_session)
+
+        with patch("gekko.config.get_settings") as mock_settings_fn, \
+             patch("gekko.dashboard.routes._get_session_factory") as mock_sf_fn:
+            settings = MagicMock()
+            settings.gekko_user_id = "testuser"
+            settings.dashboard_url = "http://localhost:8000"
+            mock_settings_fn.return_value = settings
+            mock_sf_fn.return_value = (mock_sf, None)
+
+            app = create_app()
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://test",
+                follow_redirects=False,
+            ) as client:
+                await client.post("/login", data={"passphrase": correct, "next": "/spend"})
+                resp = await client.get("/spend")
+
+        assert resp.status_code == 200
+        # Should show the ceiling value
+        assert "10.00" in resp.text
+    finally:
+        _vault.clear()
 
 
 @pytest.mark.asyncio
 async def test_spend_get_per_strategy_breakdown() -> None:
     """GET /spend response context contains by_strategy list with strategy_name + spend."""
-    # The by_strategy list groups today's llm_cost events by strategy_name,
-    # summing cost_usd per strategy (Decimal). Empty list is acceptable when no
-    # costs have been logged today.
-    raise NotImplementedError(
-        "stub — implement after GET /spend route ships in Wave 3"
-    )
+    from gekko.dashboard.app import create_app
+    import gekko.vault.passphrase as _vault
+
+    correct = "test-passphrase-04-spend-strategy"
+    _vault.set_passphrase(correct)
+    try:
+        today_ts = datetime.now(UTC).isoformat()
+        row1 = _make_llm_cost_row("0.05", "Tech Momentum", today_ts)
+        row2 = _make_llm_cost_row("0.02", "Tech Momentum", today_ts)
+        row3 = _make_llm_cost_row("0.03", "Dividend Yield", today_ts)
+        user = _make_user_row("5.00", "America/New_York")
+
+        call_count = 0
+
+        def _make_result(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            mock_result = MagicMock()
+            if call_count == 1:
+                mock_result.scalar_one_or_none = MagicMock(return_value=user)
+                mock_result.all.return_value = []
+            elif call_count == 2:
+                mock_result.all.return_value = [row1, row2, row3]
+                mock_result.scalar_one_or_none = MagicMock(return_value=None)
+            else:
+                mock_result.all.return_value = [row1, row2, row3]
+                mock_result.scalar_one_or_none = MagicMock(return_value=None)
+            return mock_result
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_session.execute = AsyncMock(side_effect=lambda *a, **kw: _make_result())
+        mock_sf = MagicMock(return_value=mock_session)
+
+        with patch("gekko.config.get_settings") as mock_settings_fn, \
+             patch("gekko.dashboard.routes._get_session_factory") as mock_sf_fn:
+            settings = MagicMock()
+            settings.gekko_user_id = "testuser"
+            settings.dashboard_url = "http://localhost:8000"
+            mock_settings_fn.return_value = settings
+            mock_sf_fn.return_value = (mock_sf, None)
+
+            app = create_app()
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://test",
+                follow_redirects=False,
+            ) as client:
+                await client.post("/login", data={"passphrase": correct, "next": "/spend"})
+                resp = await client.get("/spend")
+
+        assert resp.status_code == 200
+        assert "Tech Momentum" in resp.text
+        assert "Dividend Yield" in resp.text
+    finally:
+        _vault.clear()
 
 
 @pytest.mark.asyncio
 async def test_spend_get_7day_history() -> None:
     """GET /spend response context contains history list with 7 entries (one per day)."""
-    # The 7-day history is a list of dicts [{date, spend}] covering the past 7
-    # calendar days in the user's configured timezone (D-11).
-    raise NotImplementedError(
-        "stub — implement after GET /spend route ships in Wave 3"
-    )
+    from gekko.dashboard.app import create_app
+    import gekko.vault.passphrase as _vault
+
+    correct = "test-passphrase-04-spend-history"
+    _vault.set_passphrase(correct)
+    try:
+        user = _make_user_row("5.00", "America/New_York")
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none = MagicMock(return_value=user)
+        mock_result.all.return_value = []
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_session.execute = AsyncMock(return_value=mock_result)
+        mock_sf = MagicMock(return_value=mock_session)
+
+        with patch("gekko.config.get_settings") as mock_settings_fn, \
+             patch("gekko.dashboard.routes._get_session_factory") as mock_sf_fn:
+            settings = MagicMock()
+            settings.gekko_user_id = "testuser"
+            settings.dashboard_url = "http://localhost:8000"
+            mock_settings_fn.return_value = settings
+            mock_sf_fn.return_value = (mock_sf, None)
+
+            app = create_app()
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://test",
+                follow_redirects=False,
+            ) as client:
+                await client.post("/login", data={"passphrase": correct, "next": "/spend"})
+                resp = await client.get("/spend")
+
+        assert resp.status_code == 200
+        # Should have the 7-day history table section header
+        assert "7-Day History" in resp.text
+    finally:
+        _vault.clear()
 
 
 @pytest.mark.asyncio

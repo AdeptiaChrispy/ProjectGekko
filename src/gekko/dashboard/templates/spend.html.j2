@@ -1,0 +1,98 @@
+{#
+  Spend page — COST-02 / D-11 LLM cost visibility dashboard.
+  Plan 04-05 Task 1.
+
+  Route: GET /spend
+
+  Context variables:
+    today_total  : Decimal  — today's total LLM spend (user's timezone day)
+    ceiling      : Decimal  — configured daily ceiling (or DEFAULT_DAILY_CEILING_USD)
+    pct          : Decimal  — percentage of ceiling consumed (0-100)
+    by_strategy  : list[{name: str, spend: Decimal}]  — per-strategy breakdown
+    history      : list[{date: str, spend: Decimal}]  — 7-day history (oldest first)
+
+  CSP note: read-only page — NO external script src, NO inline handlers.
+  Extends base.html.j2 which carries script-src 'self' CSP + vendored HTMX.
+  T-04-17: SRI lint gate (test_dashboard_templates_sri.py) stays GREEN.
+#}
+{% extends "base.html.j2" %}
+
+{% block title %}Spend — Gekko{% endblock %}
+
+{% block content %}
+<div class="container">
+  <h1>Daily LLM Spend</h1>
+
+  {# Today's spend vs ceiling #}
+  <section style="margin-bottom: 2rem;">
+    <h2 style="font-size: 1.1rem; font-weight: 600; margin-bottom: 0.5rem;">Today</h2>
+    <p>
+      <span style="font-size: 1.5rem; font-weight: 700;">${{ "%.2f"|format(today_total|float) }}</span>
+      <span style="color: #6b7280;"> of ${{ "%.2f"|format(ceiling|float) }} ceiling</span>
+      <span style="margin-left: 0.5rem; color: #6b7280;">({{ "%.1f"|format(pct|float) }}%)</span>
+    </p>
+
+    {# Progress bar #}
+    <div style="background: #e5e7eb; border-radius: 4px; height: 12px; margin-top: 0.5rem; max-width: 400px;">
+      {% set bar_pct = [pct|float, 100.0]|min %}
+      {% if pct|float >= 100.0 %}
+        {% set bar_color = "#ef4444" %}
+      {% elif pct|float >= 80.0 %}
+        {% set bar_color = "#f59e0b" %}
+      {% else %}
+        {% set bar_color = "#10b981" %}
+      {% endif %}
+      <div style="background: {{ bar_color }}; width: {{ bar_pct }}%; height: 100%; border-radius: 4px; transition: width 0.3s;"></div>
+    </div>
+    <p style="font-size: 0.75rem; color: #9ca3af; margin-top: 0.25rem;">
+      At 80% the agent enters degraded mode. At 100% all LLM calls halt until midnight reset.
+    </p>
+  </section>
+
+  {# Per-strategy breakdown #}
+  <section style="margin-bottom: 2rem;">
+    <h2 style="font-size: 1.1rem; font-weight: 600; margin-bottom: 0.5rem;">Per-Strategy Breakdown (Today)</h2>
+    {% if by_strategy %}
+    <table style="width: 100%; border-collapse: collapse;">
+      <thead>
+        <tr style="border-bottom: 1px solid #e5e7eb; text-align: left;">
+          <th style="padding: 0.5rem 1rem 0.5rem 0; color: #6b7280; font-weight: 600; font-size: 0.875rem;">Strategy</th>
+          <th style="padding: 0.5rem 0; color: #6b7280; font-weight: 600; font-size: 0.875rem;">Spend Today</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in by_strategy %}
+        <tr style="border-bottom: 1px solid #f3f4f6;">
+          <td style="padding: 0.5rem 1rem 0.5rem 0; font-size: 0.875rem;">{{ row.name }}</td>
+          <td style="padding: 0.5rem 0; font-size: 0.875rem;">${{ "%.4f"|format(row.spend|float) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p style="color: #9ca3af; font-size: 0.875rem;">No LLM costs logged today.</p>
+    {% endif %}
+  </section>
+
+  {# 7-day history #}
+  <section>
+    <h2 style="font-size: 1.1rem; font-weight: 600; margin-bottom: 0.5rem;">7-Day History</h2>
+    <table style="width: 100%; border-collapse: collapse;">
+      <thead>
+        <tr style="border-bottom: 1px solid #e5e7eb; text-align: left;">
+          <th style="padding: 0.5rem 1rem 0.5rem 0; color: #6b7280; font-weight: 600; font-size: 0.875rem;">Date</th>
+          <th style="padding: 0.5rem 0; color: #6b7280; font-weight: 600; font-size: 0.875rem;">Spend</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for day in history %}
+        <tr style="border-bottom: 1px solid #f3f4f6;">
+          <td style="padding: 0.5rem 1rem 0.5rem 0; font-size: 0.875rem;">{{ day.date }}</td>
+          <td style="padding: 0.5rem 0; font-size: 0.875rem;">${{ "%.4f"|format(day.spend|float) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+</div>
+{% endblock %}
