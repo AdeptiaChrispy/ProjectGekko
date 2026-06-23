@@ -126,7 +126,7 @@ Plans:
   4. At 80% of the configured per-user daily cost ceiling, agent enters graceful-degradation mode (longer cadence, Haiku for triage, shorter context) and Slack-DMs the user; at 100% it hard-halts further LLM calls and Slack-DMs again, resetting at user-configured timezone midnight
   5. Every LLM call is logged to the cost ledger (input tokens, output tokens, USD) and the dashboard shows spend per strategy and per user with the daily ceiling visible
 
-**Plans:** 3/5 plans executed
+**Plans:** 4/5 plans executed
 Plans:
 **Wave 1** *(Nyquist — test scaffolding)*
 
@@ -142,7 +142,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3)*
 
-- [ ] 04-04-PLAN.md — runtime.py ResultMessage capture + llm_cost ledger writes per query() call + Haiku triage gate (degradation only) + context-trim + jobs.py reschedule_strategy_degraded() + restore_strategy_normal_cadence() (COST-01/COST-04/COST-05)
+- [x] 04-04-PLAN.md — runtime.py ResultMessage capture + llm_cost ledger writes per query() call + Haiku triage gate (degradation only) + context-trim + jobs.py reschedule_strategy_degraded() + restore_strategy_normal_cadence() (COST-01/COST-04/COST-05)
 
 **Wave 5** *(blocked on Wave 4)*
 
@@ -250,7 +250,7 @@ Plans:
 | 1. Foundation & Vertical Slice | v1.0 | 9/9 | Complete ✅ | 2026-06-15 |
 | 2. OrderGuard & Real-Money Alpaca Live | v2.0 | 7/7 | Complete   | 2026-06-17 |
 | 3. Production HITL UX | v2.0 | 15/15 | Complete   | 2026-06-23 |
-| 4. Agent Architecture & Cost Bounds | v2.0 | 3/5 | In Progress|  |
+| 4. Agent Architecture & Cost Bounds | v2.0 | 4/5 | In Progress|  |
 | 5. Trust Ladder | v2.0 | 0/0 | Not started | - |
 | 6. Web Dashboard & Multi-User Auth | v3.0 | 0/0 | Not started | - |
 | 7. Operations & Observability | v3.0 | 0/0 | Not started | - |
