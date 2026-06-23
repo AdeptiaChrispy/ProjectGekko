@@ -337,14 +337,20 @@ async def test_single_dm_100(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.asyncio
 async def test_triage_gate_skips(monkeypatch: pytest.MonkeyPatch) -> None:
-    """In degraded mode the degradation_mode flag is set (Wave 4 wires the Haiku gate).
+    """Haiku pre-triage gate in degraded mode: 'NO' response → outcome='triage_skipped'.
 
-    The Haiku pre-triage gate is Wave 4 (04-04) scope, not Wave 3.
-    This test verifies that when the ceiling returns 'degrade', trigger_strategy_run
-    continues executing (does not return 'skipped_cost_halt').
+    Wave 4 (04-04): verifies the full triage gate behavior wired in trigger_strategy_run.
+    When the ceiling check returns 'degrade' AND the Haiku triage query returns 'NO',
+    trigger_strategy_run must return outcome='triage_skipped' without calling the
+    researcher or decision agents.
 
-    Full triage-skip test will land in 04-04 when the Haiku gate is wired.
+    D-05 invariant: model='haiku' is in trigger_strategy_run (triage only), never in
+    _run_decision or build_decision_prompt.
     """
+    from contextlib import asynccontextmanager
+    from claude_agent_sdk.types import ResultMessage as SDKResultMessage, AssistantMessage, TextBlock
+    from unittest.mock import MagicMock, AsyncMock
+
     ceiling_result = _make_ceiling_check(
         "degrade", Decimal("4.00"), Decimal("5.00")
     )
@@ -354,39 +360,94 @@ async def test_triage_gate_skips(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr("gekko.agent.runtime.check_cost_ceiling", _mock_check)
 
-    # Verify that a 'degrade' result does NOT cause skipped_cost_halt.
-    # The degrade path should continue (which means it will try to load strategy —
-    # we don't need to wire the full run, just confirm it doesn't short-circuit to halt).
-    #
-    # We'll monkeypatch session_factory construction so it doesn't need a real DB,
-    # but let it proceed past the ceiling gate to verify the outcome is NOT halt.
+    # Mock quiet-hours check (source="schedule" triggers it).
+    async def _mock_resolve_quiet_hours(*args, **kwargs) -> bool:
+        return False  # not in quiet hours
+
     monkeypatch.setattr(
-        "gekko.agent.runtime._get_passphrase",
-        lambda: "test-passphrase",
+        "gekko.approval.quiet_hours._resolve_quiet_hours",
+        _mock_resolve_quiet_hours,
     )
 
-    # For this test, we verify the degrade path does not produce skipped_cost_halt.
-    # It will fail with a DB error since no session_factory is seeded, but that's
-    # expected — the point is just to verify it doesn't halt at the ceiling gate.
-    # We'll catch any non-halt outcomes.
-    try:
+    # Build a real SDKResultMessage and AssistantMessage with "NO" text.
+    triage_assistant = AssistantMessage(
+        content=[TextBlock(text="NO")],
+        model="claude-haiku-4-5",
+        usage={"input_tokens": 10, "output_tokens": 5},
+    )
+    triage_result = SDKResultMessage(
+        subtype="success",
+        duration_ms=200,
+        duration_api_ms=150,
+        is_error=False,
+        num_turns=1,
+        session_id="triage-sess",
+        result="NO",
+        total_cost_usd=0.0002,
+    )
+
+    async def _fake_haiku_query(*args, **kwargs):
+        yield triage_assistant
+        yield triage_result
+
+    # Build a mock session factory for the triage llm_cost write.
+    mock_session = AsyncMock()
+    mock_begin_ctx = AsyncMock()
+    mock_begin_ctx.__aenter__ = AsyncMock(return_value=None)
+    mock_begin_ctx.__aexit__ = AsyncMock(return_value=False)
+    mock_session.begin = MagicMock(return_value=mock_begin_ctx)
+
+    @asynccontextmanager
+    async def _session_cm():
+        yield mock_session
+
+    mock_factory = MagicMock(side_effect=_session_cm)
+
+    # Patch query() and append_event at the runtime module level.
+    # Note: query() is called BOTH for triage AND for the researcher/decision phases.
+    # Since triage returns "NO", only ONE query() call should fire (the triage one).
+    query_call_count = []
+
+    async def _fake_query(*args, **kwargs):
+        query_call_count.append(1)
+        yield triage_assistant
+        yield triage_result
+
+    append_calls: list[dict] = []
+
+    async def _fake_append_event(session, *, user_id, strategy_id, event_type, payload, **kw):
+        append_calls.append({"event_type": event_type, "payload": payload})
+        return MagicMock()
+
+    with (
+        monkeypatch.context() as mp,
+    ):
+        mp.setattr("gekko.agent.runtime.query", _fake_query)
+        mp.setattr("gekko.agent.runtime.append_event", _fake_append_event)
+
         result = await trigger_strategy_run(
             user_id="test-user",
             strategy_name="alpha",
             source="schedule",
-            session_factory=None,
+            session_factory=mock_factory,
         )
-        # If it somehow completes, verify it's not a cost halt.
-        assert result.get("outcome") != "skipped_cost_halt", (
-            "degrade ceiling should not return skipped_cost_halt"
-        )
-    except Exception as exc:
-        # Any exception other than cost-halt is acceptable — the triage gate
-        # itself is Wave 4 scope (04-04).
-        exc_str = str(exc)
-        assert "skipped_cost_halt" not in exc_str, (
-            f"degrade path raised with skipped_cost_halt mention: {exc_str}"
-        )
+
+    assert result["outcome"] == "triage_skipped", (
+        f"Expected outcome='triage_skipped' when Haiku triage returns NO, "
+        f"got {result['outcome']!r}"
+    )
+    # Triage query fires exactly once (no researcher/decision query fires).
+    assert len(query_call_count) == 1, (
+        f"Expected exactly 1 query() call (triage only), got {len(query_call_count)}"
+    )
+    # Triage llm_cost event was written.
+    triage_cost_events = [
+        e for e in append_calls
+        if e["event_type"] == "llm_cost" and e["payload"].get("call_type") == "triage"
+    ]
+    assert len(triage_cost_events) == 1, (
+        f"Expected 1 triage llm_cost event, got {len(triage_cost_events)}"
+    )
 
 
 @pytest.mark.asyncio

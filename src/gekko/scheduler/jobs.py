@@ -250,6 +250,83 @@ def register_daily_pnl_cron(
     return job_id
 
 
+def reschedule_strategy_degraded(
+    scheduler: AsyncIOScheduler,
+    *,
+    user_id: str,
+    strategy_name: str,
+    original_schedule_time: str,
+) -> str:
+    """Double the interval between runs when the ceiling is in degraded mode (D-04).
+
+    Approximates cadence ×2 by shifting the daily fire time forward 12 hours
+    (wraps mod 24).  Uses ``reschedule_job`` (APScheduler 3.x API — NOT the
+    APScheduler 4.x ``AsyncScheduler``) so the updated trigger is persisted
+    to the SQLAlchemyJobStore without losing the job's kwargs.
+
+    :param scheduler: A running :class:`AsyncIOScheduler` built via
+        :func:`build_scheduler`.
+    :param user_id: Owner of the strategy.
+    :param strategy_name: Strategy slug.
+    :param original_schedule_time: ``'HH:MM IANA/Timezone'`` string from
+        ``Strategy.schedule_time``.
+    :returns: The deterministic job id ``f"run-{user_id}-{strategy_name}"``.
+
+    Per RESEARCH §Pitfall 6: use ``reschedule_job`` not remove+add to preserve
+    the job's kwargs (user_id, strategy_name, source) across the reschedule.
+    """
+    hh, mm, tz = _parse_schedule_time(original_schedule_time)
+    # Approximate cadence ×2: shift fire time by 12 hours (wraps mod 24).
+    degraded_hh = (hh + 12) % 24
+    job_id = f"run-{user_id}-{strategy_name}"
+    scheduler.reschedule_job(
+        job_id,
+        trigger=CronTrigger(hour=degraded_hh, minute=mm, timezone=tz),
+    )
+    log.info(
+        "scheduler.job.degraded_cadence",
+        job_id=job_id,
+        user_id=user_id,
+        strategy_name=strategy_name,
+        original_hh=hh,
+        degraded_hh=degraded_hh,
+    )
+    return job_id
+
+
+def restore_strategy_normal_cadence(
+    scheduler: AsyncIOScheduler,
+    *,
+    user_id: str,
+    strategy_name: str,
+    schedule_time: str,
+) -> str:
+    """Restore normal cadence after ceiling resets (D-03/D-09).
+
+    Delegates to :func:`schedule_strategy_daily` which calls ``add_job``
+    with ``replace_existing=True`` — same job id, updated trigger.
+
+    :param scheduler: A running :class:`AsyncIOScheduler`.
+    :param user_id: Owner of the strategy.
+    :param strategy_name: Strategy slug.
+    :param schedule_time: Original ``'HH:MM IANA/Timezone'`` string from
+        ``Strategy.schedule_time``.
+    :returns: The deterministic job id ``f"run-{user_id}-{strategy_name}"``.
+    """
+    log.info(
+        "scheduler.job.normal_cadence_restored",
+        job_id=f"run-{user_id}-{strategy_name}",
+        user_id=user_id,
+        strategy_name=strategy_name,
+    )
+    return schedule_strategy_daily(
+        scheduler,
+        user_id=user_id,
+        strategy_name=strategy_name,
+        schedule_time=schedule_time,
+    )
+
+
 def unschedule_strategy(
     scheduler: AsyncIOScheduler,
     *,
@@ -281,6 +358,8 @@ __all__: tuple[str, ...] = (
     "build_scheduler",
     "register_daily_pnl_cron",
     "register_expire_stale_sweep",
+    "reschedule_strategy_degraded",
+    "restore_strategy_normal_cadence",
     "schedule_strategy_daily",
     "unschedule_strategy",
 )

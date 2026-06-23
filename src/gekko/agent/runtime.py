@@ -698,7 +698,95 @@ async def trigger_strategy_run(
         session_factory = make_session_factory(engine)
         own_engine = True
 
-    budget = BudgetTracker()
+    # ---- Haiku pre-triage gate (D-04 tactic 2 / Wave 4) ---------------------
+    # Only active in degradation mode. Fires a cheap disposable query() on
+    # the Haiku model to assess whether the cycle is worth a full research
+    # run. "NO" → skip; anything else → proceed with reduced context.
+    #
+    # IMPORTANT (D-05 / T-04-10): model="haiku" appears ONLY here in
+    # trigger_strategy_run — it is NOT in _run_decision or build_decision_prompt.
+    # The AST gate in test_decision_prompt_isolation.py::test_decision_never_haiku_model
+    # checks _run_decision and build_decision_prompt exclusively; this function
+    # (trigger_strategy_run) is intentionally excluded from that check.
+    if _degradation_mode:
+        _triage_result_msg: SDKResultMessage | None = None
+        _triage_text: str = ""
+
+        _triage_opts = ClaudeAgentOptions(
+            system_prompt=(
+                "You are a research triage agent. Answer YES or NO only. "
+                "Do not explain your answer."
+            ),
+            model="haiku",
+            max_turns=1,
+            allowed_tools=[],
+        )
+        _triage_prompt = (
+            f"Strategy: {strategy_name!r}. "
+            f"The LLM cost for today is near the daily ceiling (degraded mode). "
+            "Is there likely new market information today that warrants a full "
+            "research run for this strategy? YES or NO."
+        )
+
+        _triage_input_tokens: int = 0
+        _triage_output_tokens: int = 0
+        async for _tmsg in query(prompt=_triage_prompt, options=_triage_opts):
+            if isinstance(_tmsg, SDKResultMessage):
+                _triage_result_msg = _tmsg
+            elif isinstance(_tmsg, AssistantMessage):
+                if _tmsg.usage:
+                    _triage_input_tokens += _tmsg.usage.get("input_tokens", 0)
+                    _triage_output_tokens += _tmsg.usage.get("output_tokens", 0)
+                for _tblock in _tmsg.content:
+                    if isinstance(_tblock, TextBlock):
+                        _triage_text += _tblock.text
+
+        # Write triage llm_cost ledger entry (COST-05 / call_type="triage").
+        _triage_cost_usd = (
+            Decimal(str(_triage_result_msg.total_cost_usd or 0.0))
+            if _triage_result_msg
+            else Decimal("0")
+        )
+        try:
+            async with session_factory() as _tc_session, _tc_session.begin():
+                await append_event(
+                    _tc_session,
+                    user_id=user_id,
+                    strategy_id=None,  # strategy not loaded yet at this point
+                    event_type="llm_cost",
+                    payload=normalize_decimals({
+                        "run_id": run_id,
+                        "strategy_name": strategy_name,
+                        "model": "haiku",
+                        "call_type": "triage",
+                        "input_tokens": _triage_input_tokens,
+                        "output_tokens": _triage_output_tokens,
+                        "cost_usd": _triage_cost_usd,
+                    }),
+                )
+        except Exception:
+            log.exception(
+                "agent.run.cost_ledger_persist_failed",
+                user_id=user_id,
+                run_id=run_id,
+                call_type="triage",
+            )
+
+        if "NO" in _triage_text.upper():
+            log.info(
+                "agent.cycle.skipped_triage",
+                user_id=user_id,
+                strategy_name=strategy_name,
+                source=source,
+                triage_response=_triage_text[:100],
+            )
+            return {
+                "run_id": run_id,
+                "outcome": "triage_skipped",
+                "source": source,
+            }
+
+    budget = BudgetTracker(soft_max_calls=6 if _degradation_mode else 12)
     set_tool_context(budget=budget, broker=broker)
 
     try:
