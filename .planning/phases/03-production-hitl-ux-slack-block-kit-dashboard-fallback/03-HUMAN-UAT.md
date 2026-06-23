@@ -3,7 +3,7 @@ status: partial
 phase: 03-production-hitl-ux-slack-block-kit-dashboard-fallback
 source: [03-VERIFICATION.md]
 started: 2026-06-18T14:00:00Z
-updated: 2026-06-22T12:00:00Z
+updated: 2026-06-23T13:30:00Z
 ---
 
 ## Current Test
@@ -75,7 +75,27 @@ third_round_2026_06_22: |
   (non-mocked, real SQLite) integration test covering: first_write happy path, duplicate re-click, and
   terminal-state action — for both approve and edit. Recommend a tested gap-closure plan (03-15) rather
   than another inline hand-patch.
-awaiting: decision — tested gap-closure plan (03-15) vs inline-fix-crash-first
+resolved_2026_06_23: |
+  All three bugs CLOSED by tested gap-closure Plan 03-15 (the decision taken: tested plan, not
+  inline patch). Verified in source by gsd-verifier (03-VERIFICATION.md, 6/6 must-haves) and by
+  the orchestrator with real test runs:
+    BUG B — edit_size_submit duplicate branch now re-reads on a FRESH _get_session_factory session
+            outside the rolled-back session2.begin() block (routes.py ~1034-1055). fix 6986663.
+    BUG C — _TERMINAL_STATUSES guard precedes the PENDING→APPROVED transition in approve/reject/
+            edit-submit; terminal cards render read-only status chips, no action buttons
+            (routes.py + _proposal_card.html.j2). fix 6986663 + 54c6176.
+    BUG A — edit_size_get branches on HX-Request; non-HX Slack deep-link → 302 redirect to
+            /approvals?open_edit={id} (styled page); HTMX swap keeps the bare fragment. fix 54c6176.
+  Root-cause test gap closed: tests/integration/test_dashboard_hitl_actions.py — 8 real-SQLite
+  tests (approve+edit × first-write/duplicate/terminal + Bug A fragment-vs-page), zero mocks on
+  claim_action/transition_status/append_event. 8/8 pass (commit 64ee8f7). No regressions:
+  the kill-modal SessionMiddleware failure + walking-skeleton cross-test pollution were confirmed
+  IDENTICAL at the pre-03-15 baseline (41f9821).
+awaiting: browser retest — RESTART `uv run gekko serve` (Python not hot-reloaded), then on /approvals:
+  (1) click Edit Size twice on the same proposal → second click returns the card at 200, no 500;
+  (2) open the Slack "Edit size" deep-link in a browser → lands on the styled /approvals page;
+  (3) act on an already-FILLED/EXPIRED proposal → card re-renders "already handled", no 500.
+  Then run `/gsd-verify-work 3` to record results and close Phase 3.
 
 ## Tests
 

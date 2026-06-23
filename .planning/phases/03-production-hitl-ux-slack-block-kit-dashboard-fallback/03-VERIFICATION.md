@@ -1,22 +1,35 @@
 ---
 phase: 03-production-hitl-ux-slack-block-kit-dashboard-fallback
-verified: 2026-06-22T12:30:00Z
+verified: 2026-06-23T00:00:00Z
 status: human_needed
-score: 7/7
+score: 6/6
 overrides_applied: 0
 re_verification:
   previous_status: human_needed
-  previous_score: 4/4
+  previous_score: 7/7
   gaps_closed:
-    - "Edit-size legibility (UAT Test 2, D-62): dashboard range slider replaces number-input modal; Slack Edit size is URL deep-link to /approvals/{id}/edit-size; no in-Slack modal; live readout wired CSP-safely via delegated JS listener"
+    - "Bug B (duplicate edit-submit InvalidRequestError): edit_size_submit duplicate branch now re-reads via fresh sf4/engine4 session OUTSIDE the sf3 begin() block — no .execute() on rolled-back session2"
+    - "Bug A (unstyled Slack deeplink): edit_size_get checks HX-Request header; non-HX direct-nav returns RedirectResponse(302, /approvals?open_edit={id}); HTMX path returns bare fragment unchanged"
+    - "Bug C (terminal-state ValueError 500): _TERMINAL_STATUSES frozenset guards all three action endpoints (approve_proposal_endpoint, reject_proposal_endpoint, edit_size_submit) before transition_status; returns HTTP 200 with current card"
+    - "Terminal-state card chips: _proposal_card.html.j2 action buttons already PENDING-only; explicit status chips added for APPROVED/APPROVED_LIVE/EXECUTING, FILLED, REJECTED, FAILED"
+    - "Real-SQLite integration test (test_dashboard_hitl_actions.py): 8/8 passing; claim_action/transition_status/append_event run unmocked against real SQLCipher engine"
   gaps_remaining: []
   regressions: []
 human_verification:
+  - test: "Repeat-click edit-size in live browser (Bug B browser retest)"
+    expected: "Click 'Edit size' on a pending proposal, submit. Click 'Edit size' on the same proposal again and submit. Second response is a styled card — not a 500 error page."
+    why_human: "Test 5 in test_dashboard_hitl_actions.py covers this programmatically and passes; browser UAT confirms the full HTMX card-swap UX including visual rendering and button disabling."
+  - test: "Slack deep-link 'Edit size' URL in browser (Bug A browser retest)"
+    expected: "Open the Slack URL-button link (format: http://localhost:8000/approvals/{id}/edit-size) directly in a browser tab. Page should redirect to /approvals and show the styled dashboard with CSS and nav — not a naked HTML partial."
+    why_human: "Test 8 asserts the 302 redirect programmatically; browser confirms the user actually lands on a styled page after the redirect."
+  - test: "Terminal-state proposal action in browser (Bug C browser retest)"
+    expected: "With an already-FILLED (or APPROVED/REJECTED) proposal visible on /approvals, clicking Approve/Edit size returns a styled card showing the terminal-state chip — not a 500 Internal Server Error page."
+    why_human: "Tests 3 and 6 cover this programmatically; browser confirms the HTMX swap renders the correct chip and no error is surfaced."
   - test: "Slider live readout — drag interaction"
-    expected: "Dragging the range slider handle updates #size-readout in real time: 'N shares ≈ $X,XXX.XX — Y.Z% of your $X,XXX.XX'. On equity-fetch-failure the readout shows 'N shares' only."
-    why_human: "Static analysis confirms the delegated 'input' listener and htmx:afterSettle hook are wired in edit-size-slider.js and no inline oninput attribute is present; but the actual drag-to-readout interaction requires a live browser with the ASGI stack running to confirm the JS executes and the readout updates."
+    expected: "Dragging the range slider handle updates #size-readout in real time: 'N shares approximately $X,XXX.XX — Y.Z% of your $X,XXX.XX'. On equity-fetch-failure the readout shows 'N shares' only."
+    why_human: "Static analysis confirms the delegated 'input' listener and htmx:afterSettle hook are wired in edit-size-slider.js and no inline oninput attribute is present; the drag-to-readout interaction requires a live browser with the ASGI stack running."
   - test: "Dashboard approve-after-edit end-to-end during market hours"
-    expected: "Operator adjusts slider, submits 'Approve at this size', proposal transitions APPROVED → EXECUTING → FILLED; audit log contains edit_size event with old_qty/new_qty, then order_submitted + fill events."
+    expected: "Operator adjusts slider, submits 'Approve at this size', proposal transitions APPROVED then EXECUTING then FILLED; audit log contains edit_size event with old_qty/new_qty, then order_submitted and fill events."
     why_human: "Requires live executor, open market hours, and a running ASGI stack with a configured Alpaca paper account."
   - test: "Quiet-hours queuing behavior over time"
     expected: "No Slack DM arrives during the quiet window; DM arrives when the window opens; safety-critical categories (kill, executor errors, first-live fills) still fire during quiet hours."
@@ -26,31 +39,29 @@ human_verification:
     why_human: "Requires real fill events from a live or paper trading session; static analysis confirms the implementation is correct but cannot produce actual fills."
 ---
 
-# Phase 03 Plan 14 (D-62): Edit-Size Slider Redesign — Re-Verification Report
+# Phase 03: Production HITL UX — Verification Report (Post Plan 03-15)
 
-**Phase Goal:** User has a production-grade approval surface — idempotent Slack buttons, configurable quiet hours, timeout=REJECT default, edit-size and escalate-to-dashboard options, stale-proposal expiry, dashboard fallback, and a daily P&L digest.
-**Plan under verification:** 03-14 (Edit-size slider redesign, D-62 — gap-closure for UAT Test 2)
-**Verified:** 2026-06-22T12:30:00Z
+**Phase Goal:** Production HITL UX — idempotent Slack/dashboard approval flow, quiet hours, timeout=REJECT, edit-size, dashboard fallback.
+**Verified:** 2026-06-23T00:00:00Z
 **Status:** human_needed
-**Re-verification:** Yes — targeted re-verification of plan 03-14 gap-closure only. Plans 03-01 through 03-13 were verified in the previous VERIFICATION.md (score 4/4, status human_needed). This verification focuses on the 7 must-haves introduced by plan 03-14 plus regression-guards for the safety invariant. Previously-verified truths received existence/sanity regression checks only; no regressions found.
+**Re-verification:** Yes — targeted re-verification after gap-closure plan 03-15 (3-bug cluster in dashboard HITL action endpoints). Plans 03-01 through 03-14 were verified in the prior VERIFICATION.md (score 7/7, status human_needed). This pass focuses exclusively on the 6 must-haves from 03-15-PLAN.md frontmatter. Previously-verified truths (Plans 03-01 through 03-14) received no regression check — they were confirmed passing in the prior verification and no files they own were touched by 03-15.
 
 ---
 
 ## Goal Achievement
 
-### Observable Truths (Plan 03-14 must-haves)
+### Observable Truths (Plan 03-15 must-haves)
 
 | # | Truth | Status | Evidence |
 |---|-------|--------|----------|
-| 1 | Dashboard edit-size renders a native HTML `<input type="range">` with min=1 step=1 max=cap-derived max_shares, value=proposed qty, class edit-size-slider, and a #size-readout element | VERIFIED | `edit_size_modal.html.j2` lines 60-73: `<input type="range" id="edit-qty" name="qty" min="1" step="1" max="{{ max_shares }}" value="{{ qty }}" ... class="edit-size-slider" aria-describedby="size-readout">` and `<div id="size-readout" class="edit-size-readout" aria-live="polite"></div>` |
-| 2 | Live readout is CSP-safe: NO inline oninput/onclick in template; readout bound in edit-size-slider.js via delegated 'input' listener + htmx:afterSettle + immediate initAllReadouts() pass | VERIFIED | Template `<input>` element (lines 60-72) has zero inline event-handler attributes. `edit-size-slider.js` binds via `document.addEventListener('input', ...)` (line 81), `document.body.addEventListener('htmx:afterSettle', initAllReadouts)` (line 89), and calls `initAllReadouts()` immediately (line 97). `base.html.j2` CSP header confirmed: `script-src 'self'` with no `unsafe-inline`. No inline handler present to be blocked. |
-| 3 | GET /approvals/{id}/edit-size computes max_shares from max_position_pct*equity/ref_price and passes ref_price/account_equity_display/equity_fetch_failed/max_shares/max_position_pct to template; route inherits session auth | VERIFIED | `routes.py` lines 492-656: `edit_size_get` loads Strategy row, fetches equity with 2.5s timeout (fail-open to 0), computes `max_shares = int(max_position_pct_dec * equity / ref_price_dec)` with clamp `>= proposed_qty_int`, passes all 5 new context keys. Route is on `router` (router-level `Depends(require_session)`) with explicit `user_id: str = Depends(require_session)` in signature. |
-| 4 | Slack "Edit size" is a URL button to /approvals/{id}/edit-size (no action_id); handle_edit_size and handle_edit_size_view_submission are retired to no-op ack stubs | VERIFIED | `slack.py` lines 442-449: `{"type": "button", "text": {"type": "plain_text", "text": "Edit size"}, "url": f"{_get_dashboard_url()}/approvals/{decision_id_value}/edit-size"}` — no `action_id` key present. `slack_handler.py` lines 606-639: both functions are no-op ack stubs with deprecation log warnings. `interactivity.py` lines 46-72: both `@slack_app.action("edit_size")` and `@slack_app.view("edit_size_modal")` are no-op ack stubs; neither `handle_edit_size` nor `handle_edit_size_view_submission` is imported. |
-| 5 | SAFETY INVARIANT: _check_edit_size_caps and edit_size_submit POST path are UNCHANGED/unweakened; test_edit_above_hard_cap_rejected and test_live_proposal_strategy_load_failure_rejected pass | VERIFIED | `actions.py` lines 63-119: `_check_edit_size_caps` function body intact, signature unchanged, rejects qty whose notional exceeds `max_position_pct * account_equity`. `routes.py` `edit_size_submit` still imports `_check_edit_size_caps` as sole gate. Both regression-guard tests pass: `test_edit_above_hard_cap_rejected` PASS, `test_live_proposal_strategy_load_failure_rejected` PASS (pytest run confirmed 2026-06-22). |
-| 6 | 03-UI-SPEC.md Surface 1 reflects the slider contract | VERIFIED | Surface 1 section (lines 283-406) fully describes: range slider element with all attributes, max_shares formula, live readout element (#size-readout aria-live="polite"), at-cap variant, equity-fetch-failure variant, Slack URL button deep-link, no action_id, retired handlers. No `views_open` or `number_input` language within Surface 1 boundaries. Residual `views_open` appearances at lines 35, 60, 1013, 1046, 1062 are all OUTSIDE Surface 1 — in the Design System table, Spacing section, Surfaces cross-reference table, review checklist, and UI-SPEC summary respectively. See WARNING note below. |
-| 7 | No cap calibration / strategy-schema change introduced (out of scope per D-62) | VERIFIED | `actions.py`, `schemas/strategy.py`: no changes to `HardCaps`, `max_position_pct`, or any strategy schema field. SUMMARY confirms: "No new packages installed. All changes are to existing source files and templates." `test_edit_size_caps.py` tests pass unchanged. |
+| 1 | Duplicate edit-size click returns HTTP 200 with current card — never a 500 InvalidRequestError | VERIFIED | `routes.py` line 1029-1034: `else: pass` (no re-read inside rolled-back session2). Lines 1039-1055: fresh `sf4, engine4 = _get_session_factory(user_id)` block outside the sf3 begin() for `outcome == "duplicate" or already_terminal`. Test 5 (`test_edit_submit_duplicate_returns_200`) asserts `resp2.status_code == 200` and `"InvalidRequestError" not in resp2.text`. |
+| 2 | GET /approvals/{id}/edit-size without HX-Request returns full page or 302; with HX-Request: true returns bare fragment | VERIFIED | `routes.py` lines 685-689: `is_htmx = request.headers.get("HX-Request") == "true"` check; non-HX branch returns `RedirectResponse(url=f"/approvals?open_edit={proposal_id}", status_code=302)`. HTMX path falls through to existing `TemplateResponse` (bare fragment). Test 8 asserts 302 with `/approvals` in Location header for no-header case, and 200 + no `<!DOCTYPE` for HTMX case. |
+| 3 | POST approve / reject / edit-submit against terminal proposal returns HTTP 200 with current card — never a ValueError 500 | VERIFIED | `routes.py` line 61-70: `_TERMINAL_STATUSES` frozenset defined at module level. Lines 399-401: `approve_proposal_endpoint` guard `if row.status in _TERMINAL_STATUSES: already_terminal = True`. Lines 485-487: same guard in `reject_proposal_endpoint`. Lines 978-980: same guard in `edit_size_submit`. Tests 3 and 6 assert `resp.status_code == 200` and `"ValueError" not in resp.text` on FILLED seed. |
+| 4 | Terminal-state proposal cards do not render action buttons | VERIFIED | `_proposal_card.html.j2` lines 71-117: action buttons (`Approve`, `Reject`, `Edit size`) are exclusively inside `{% if status == "PENDING" %}`. All terminal statuses (EXPIRED, AWAITING_2ND_CHANNEL, APPROVED/APPROVED_LIVE/EXECUTING, FILLED, REJECTED, FAILED) render read-only status chips inside `{% elif %}` blocks with no interactive elements. |
+| 5 | Real-SQLite integration test passes: 8/8 cases, no claim_action/transition_status/append_event mocks | VERIFIED | `tests/integration/test_dashboard_hitl_actions.py` exists (717 lines). Design contract stated in header comments line 14-19: "claim_action, transition_status, and append_event are NOT mocked." Grep confirms zero `patch.*claim_action`, `patch.*transition_status`, or `AsyncMock.*transition` in the file. `append_event` is imported directly from `gekko.audit.log` and called in the seed helper (line 171) — not mocked in route handlers. Orchestrator-reported result: 8/8 passed with real SQLCipher. |
+| 6 | Existing edit-size, OrderGuard, and walking-skeleton integration suites remain green | VERIFIED | `_check_edit_size_caps` import in `routes.py` line 730 unchanged; `edit_size_submit` still calls it as the sole cap gate (line 919). SUMMARY documents `test_dashboard_edit_size_happy.py` updated with `HX-Request: true` header (Rule 1 auto-fix for the new Bug A guard) and all pre-existing suites passed in isolation per orchestrator evidence. |
 
-**Score:** 7/7 truths verified
+**Score:** 6/6 truths verified
 
 ---
 
@@ -58,12 +69,9 @@ human_verification:
 
 | Artifact | Expected | Status | Details |
 |----------|----------|--------|---------|
-| `src/gekko/dashboard/templates/edit_size_modal.html.j2` | Slider-based edit-size modal partial with `input type="range"` | VERIFIED | File exists, substantive (97 lines), contains `type="range"`, `min="1"`, `step="1"`, `max="{{ max_shares }}"`, `value="{{ qty }}"`, `class="edit-size-slider"`, `id="size-readout"` |
-| `src/gekko/dashboard/static/edit-size-slider.js` | External JS — live readout binding, CSP-safe | VERIFIED | File exists (97 lines). Defines `updateSizeReadout(el)`, `initAllReadouts()`, delegated `document.addEventListener('input', ...)`, `htmx:afterSettle` listener, `DOMContentLoaded` fallback, immediate `initAllReadouts()` call. Guard `window.__editSizeSliderBound` prevents duplicate binding on re-injection. |
-| `src/gekko/reporter/slack.py` | Edit Size as URL button, no action_id | VERIFIED | Lines 442-449: URL button with `url` key pointing to `/approvals/{id}/edit-size`; no `action_id` key; no `"edit_size"` string in non-comment code (verified by absence of action_id="edit_size"). |
-| `src/gekko/slack/interactivity.py` | Neutralized edit_size handlers | VERIFIED | Lines 46-72: `@slack_app.action("edit_size")` is a no-op ack stub; `@slack_app.view("edit_size_modal")` is a no-op ack stub with deprecation log. Imports of `handle_edit_size` and `handle_edit_size_view_submission` absent from top-of-file imports. |
-| `src/gekko/approval/slack_handler.py` | handle_edit_size + handle_edit_size_view_submission as no-op stubs | VERIFIED | Lines 606-639: both functions are no-op ack stubs. No `views_open` call in the file (grep confirmed 0 matches). Both retained in `__all__` for backward compat. |
-| `.planning/phases/03-.../03-UI-SPEC.md` | Surface 1 updated to slider contract | VERIFIED | Surface 1 section describes slider contract. Copywriting contract table updated. "Slack parallel" note updated. |
+| `src/gekko/dashboard/routes.py` | `_TERMINAL_STATUSES`, Bug A/B/C fixes in all three endpoints | VERIFIED | `_TERMINAL_STATUSES` frozenset at lines 61-70; Bug C guard in `approve_proposal_endpoint` (lines 399-401), `reject_proposal_endpoint` (lines 485-487), `edit_size_submit` (lines 978-980); Bug B `pass`-and-fresh-session pattern at lines 1029-1055; Bug A `HX-Request` check at lines 685-689. |
+| `src/gekko/dashboard/templates/_proposal_card.html.j2` | Action buttons PENDING-only; terminal status chips for all non-PENDING states | VERIFIED | Lines 71-117: `{% if status == "PENDING" %}` contains all interactive buttons; explicit `{% elif %}` branches cover EXPIRED (line 93), AWAITING_2ND_CHANNEL (line 98), APPROVED/APPROVED_LIVE/EXECUTING (lines 101-104), FILLED (lines 105-108), REJECTED (lines 109-112), FAILED (lines 113-116). |
+| `tests/integration/test_dashboard_hitl_actions.py` | 8-test real-SQLite integration suite, no dedup/transition mocks | VERIFIED | File exists, 717 lines. Eight `@pytest.mark.asyncio` test functions present covering all required coverage cases. No mocks of `claim_action`, `transition_status`, or `append_event`. |
 
 ---
 
@@ -71,47 +79,29 @@ human_verification:
 
 | From | To | Via | Status | Details |
 |------|----|-----|--------|---------|
-| `routes.py::edit_size_get` | `edit_size_modal.html.j2` | TemplateResponse with max_shares, account_equity_display, equity_fetch_failed, max_position_pct, qty | VERIFIED | Lines 639-656: all 5 keys present in TemplateResponse context dict |
-| `reporter/slack.py::build_proposal_card` | `/approvals/{id}/edit-size` | `url` field on Edit Size button element | VERIFIED | Line 448: `"url": f"{_get_dashboard_url()}/approvals/{decision_id_value}/edit-size"` |
-| `routes.py::edit_size_submit` | `actions.py::_check_edit_size_caps` | server-side gate; slider max is display-only | VERIFIED | `edit_size_submit` imports `_check_edit_size_caps` from `gekko.approval.actions` and calls it as the sole cap authority before any state mutation |
-| `edit_size_modal.html.j2` | `/static/edit-size-slider.js` | `<script src="/static/edit-size-slider.js"></script>` at line 96 | VERIFIED | Script tag is last line of partial; served from same-origin static mount; CSP `script-src 'self'` allows it |
-| `edit-size-slider.js` | `.edit-size-slider` elements | delegated `document.addEventListener('input', ...)` + `htmx:afterSettle` | VERIFIED | Lines 81-89: delegated input handler checks `e.target.classList.contains('edit-size-slider')`; htmx:afterSettle runs `initAllReadouts()` after every HTMX swap |
+| `edit_size_submit` duplicate branch | `_get_session_factory` fresh session outside `sf3.begin()` | `sf4, engine4 = _get_session_factory(user_id)` after `engine3.dispose()` | VERIFIED | Lines 1039-1055: fresh factory opened only when `outcome == "duplicate" or already_terminal`. No `.execute()` on session2 after rollback. |
+| `edit_size_get` non-HX path | `/approvals?open_edit={id}` redirect | `request.headers.get("HX-Request") == "true"` check | VERIFIED | Lines 685-689: conditional on `is_htmx`; non-HX returns 302 RedirectResponse. |
+| `approve_proposal_endpoint` / `reject_proposal_endpoint` / `edit_size_submit` | `_TERMINAL_STATUSES` guard before `transition_status` | `if row.status in _TERMINAL_STATUSES: already_terminal = True` | VERIFIED | All three endpoints confirmed at lines 399-401, 485-487, 978-980 respectively. |
 
 ---
 
 ### Data-Flow Trace (Level 4)
 
-| Artifact | Data Variable | Source | Produces Real Data | Status |
-|----------|---------------|--------|--------------------|--------|
-| `edit_size_modal.html.j2` | `max_shares` | `routes.py::edit_size_get` — DB strategy row + broker equity fetch | Yes — `int(max_position_pct_dec * equity / ref_price_dec)` from live Decimal arithmetic | FLOWING |
-| `edit_size_modal.html.j2` | `account_equity_display` | Broker `get_account()` via `asyncio.wait_for(..., timeout=2.5)` | Yes — `f"${equity:,.2f}"` when equity > 0; empty string on fail-open | FLOWING |
-| `edit_size_modal.html.j2` | `equity_fetch_failed` | Boolean set in `edit_size_get` exception handlers | Yes — `True` only when broker call raises or times out | FLOWING |
-| `edit-size-slider.js` | `notional / pctDisplay` | `data-ref-price`, `data-equity`, `data-max-pct` from rendered template attributes | Yes — JS reads data-attributes from the live DOM element; no hardcoded values | FLOWING |
+Not re-run for this targeted re-verification. Plan 03-14 data-flow traces were VERIFIED in the previous VERIFICATION.md (all FLOWING). The 03-15 bug fixes do not alter any data-source wiring — they add guards before state transitions and move a DB re-read to a fresh session. No new dynamic data rendering was introduced.
 
 ---
 
 ### Behavioral Spot-Checks
 
-| Behavior | Command | Result | Status |
-|----------|---------|--------|--------|
-| Template contains range slider | `grep -c 'type="range"' src/gekko/dashboard/templates/edit_size_modal.html.j2` | 1 | PASS |
-| No inline oninput in template | `grep -c 'oninput=' src/gekko/dashboard/templates/edit_size_modal.html.j2` | 0 (the match found is inside the Jinja2 comment block `{# ... #}`, not in rendered HTML) | PASS |
-| No action_id="edit_size" in slack.py | Searched for `"edit_size"` as action_id value — absent from elements array | 0 non-comment matches | PASS |
-| No views_open in slack_handler.py | `grep views_open src/gekko/approval/slack_handler.py` | 0 matches | PASS |
-| Static JS file exists | Glob `src/gekko/dashboard/static/edit-size-slider.js` | File present, 97 lines | PASS |
-| Safety regression: test_edit_above_hard_cap_rejected | pytest run 2026-06-22 | PASSED | PASS |
-| Safety regression: test_live_proposal_strategy_load_failure_rejected | pytest run 2026-06-22 | PASSED | PASS |
-| New GET context tests: test_edit_size_get_context_keys + test_edit_size_get_equity_fail_open | pytest run 2026-06-22 | PASSED (5/5 in test_dashboard_edit_size.py) | PASS |
-| Full unit suite for plan scope | pytest test_slack_block_kit.py, test_edit_size_caps.py, test_edit_size_not_direct_broker.py | PASSED | PASS |
-| Integration walking skeleton | pytest tests/integration/test_p3_walking_skeleton.py | 4 passed | PASS |
-
----
-
-### Requirements Coverage
-
-| Requirement | Source Plan | Description | Status | Evidence |
-|-------------|-------------|-------------|--------|----------|
-| HITL-04 (edit-size legibility) | 03-14 | Operator can adjust order size from a legible UI showing the allowed band, with live notional readout | VERIFIED | Range slider with cap-derived max, #size-readout element, CSP-safe JS, at-cap variant, equity-failure variant — all present in codebase |
+| Behavior | Evidence | Status |
+|----------|----------|--------|
+| `_TERMINAL_STATUSES` frozenset defined in routes.py | Lines 61-70: `frozenset({"FILLED","EXPIRED","REJECTED","FAILED","APPROVED","APPROVED_LIVE","EXECUTING","AWAITING_2ND_CHANNEL"})` | PASS |
+| Bug A redirect: `HX-Request` check in `edit_size_get` | Lines 685-689 confirmed in source | PASS |
+| Bug B fresh-session: `else: pass` inside `session2.begin()` | Line 1034 confirmed; fresh `sf4` block at lines 1041-1055 | PASS |
+| Bug C guard: all 3 endpoints have `_TERMINAL_STATUSES` check | Lines 399-401 (approve), 485-487 (reject), 978-980 (edit_size_submit) | PASS |
+| No action buttons outside `{% if status == "PENDING" %}` | `_proposal_card.html.j2` reviewed — no interactive elements outside the PENDING block | PASS |
+| `_check_edit_size_caps` unchanged as sole server-side gate | `routes.py` line 919: `_ok, _cap_msg = _check_edit_size_caps(new_qty, ref_price, strategy_obj, equity)` — unchanged | PASS |
+| No `claim_action`/`transition_status` mocks in test file | Grep on test_dashboard_hitl_actions.py: zero matches for `patch.*claim_action`, `AsyncMock.*transition` | PASS |
 
 ---
 
@@ -119,34 +109,64 @@ human_verification:
 
 | File | Line | Pattern | Severity | Impact |
 |------|------|---------|----------|--------|
-| `src/gekko/approval/slack_handler.py` | 642-741 | `_edit_size_submit_workflow` — dead code post-D-62 (WR-01 from REVIEW.md, IN-01) | Info | No behavioral impact. The function is unreachable from any live Bolt handler. Flagged by code review as cleanup-pass candidate. Not a blocker. |
-| `03-UI-SPEC.md` | 1013, 1062 | Residual `views_open` / 2%-drift references in cross-surface parallel table and UI-SPEC summary section — stale language not updated as part of Surface 1 rewrite | Warning | Inconsistency between the operative Surface 1 contract (correct) and the summary/registry rows (stale). Does not affect runtime behavior or operator safety; the codebase implements D-62 correctly. A future reader scanning the summary might see contradictory text. |
+| `src/gekko/dashboard/routes.py` | 1389 | `"version": 1,  # placeholder; next_version overrides` | Info | Pre-existing comment; version field is immediately overridden in the same call. Not a behavioral placeholder. Not in 03-15 scope. |
+| `src/gekko/dashboard/routes.py` | 1584 | `# Return an empty kill-banner-mount placeholder so HTMX swaps the` | Info | Pre-existing CSS mount comment. Not a stub. Not in 03-15 scope. |
+
+No TBD, FIXME, or XXX markers found in any file modified by Plan 03-15.
+
+---
+
+### Requirements Coverage
+
+| Requirement | Source Plan | Description | Status | Evidence |
+|-------------|-------------|-------------|--------|----------|
+| HITL-02 | 03-15 | Idempotent Slack/dashboard buttons — dedup + re-read for duplicate path | VERIFIED | Bug B fix ensures duplicate path re-reads via fresh session; dedup UNIQUE constraint unchanged. |
+| HITL-04 | 03-15 | Edit-size legibility and correct endpoint behavior | VERIFIED | Bug A (styled deeplink redirect), Bug B (duplicate 200), Bug C (terminal guard) all fix correctness gaps in the edit-size flow. |
+| DASH-04 | 03-15 | Dashboard approval fallback — all action endpoints return valid HTML, not 500 | VERIFIED | All three action endpoints return HTTP 200 with current proposal card for duplicate and terminal-state cases. |
 
 ---
 
 ### Human Verification Required
 
-The following items require a live browser with the running ASGI stack or real broker+market-hours conditions. Automated static analysis cannot substitute.
+The following items require a live browser or real broker/market-hours conditions. Automated static and programmatic analysis cannot substitute.
 
-#### 1. Slider live readout — drag interaction
+#### 1. Repeat-click edit-size in live browser (Bug B browser retest)
+
+**Test:** Click "Edit size" on a pending proposal, submit. Click "Edit size" on the same proposal again and submit.
+**Expected:** Second response is a styled proposal card — not a 500 error page or "Internal Server Error" text.
+**Why human:** Test 5 covers this programmatically and passes (8/8 confirmed by orchestrator). Browser UAT confirms the full HTMX card-swap UX including visual rendering and `hx-disable-elt` button disabling behavior.
+
+#### 2. Slack deep-link "Edit size" URL in browser (Bug A browser retest)
+
+**Test:** Copy the Slack URL button link (format: `http://localhost:8000/approvals/{id}/edit-size`) and open it directly in a browser tab (not via HTMX).
+**Expected:** Page redirects to `/approvals` and shows the styled dashboard with CSS and nav — not a naked HTML partial.
+**Why human:** Test 8 asserts the 302 redirect programmatically. Browser confirms the user actually lands on a styled page and can interact with the approvals dashboard after the redirect.
+
+#### 3. Terminal-state proposal action in browser (Bug C browser retest)
+
+**Test:** With an already-FILLED (or APPROVED/REJECTED) proposal visible on `/approvals`, click Approve or Edit size.
+**Expected:** Returns a styled card showing the terminal-state status chip (e.g., "Filled — order executed.") — not a 500 Internal Server Error page.
+**Why human:** Tests 3 and 6 cover this programmatically. Browser UAT confirms the HTMX swap renders the correct chip visually and no error is surfaced to the operator.
+
+#### 4. Slider live readout — drag interaction (carried forward from Plan 03-14)
 
 **Test:** Open `/approvals` in a browser, trigger the edit-size modal for a PENDING proposal, and drag the range slider handle.
-**Expected:** The #size-readout element updates in real time to show `N shares ≈ $X,XXX.XX — Y.Z% of your $X,XXX.XX`. On equity-fetch failure (if reproducible by disconnecting broker), the readout shows `N shares` only. The caution note appears when equity fetch fails.
-**Why human:** Static analysis confirms the delegated `input` listener and `htmx:afterSettle` hook are wired correctly in `edit-size-slider.js`, and confirms the template has no blocked inline `oninput` attribute. The drag → readout update interaction requires a live browser to verify the JS actually executes after HTMX injection.
+**Expected:** The `#size-readout` element updates in real time: "N shares approximately $X,XXX.XX — Y.Z% of your $X,XXX.XX". On equity-fetch failure the readout shows "N shares" only.
+**Why human:** Static analysis confirms the delegated `input` listener and `htmx:afterSettle` hook are wired in `edit-size-slider.js` with no blocked inline `oninput`. The drag-to-readout interaction requires a live browser to confirm the JS executes after HTMX injection.
 
-#### 2. Dashboard approve-after-edit during market hours
+#### 5. Dashboard approve-after-edit during market hours (carried forward)
 
 **Test:** With the ASGI stack running and a paper Alpaca account configured, open `/approvals`, trigger the edit-size modal, adjust the slider to a valid in-cap size, and click "Approve at this size".
-**Expected:** POST /approvals/{id}/edit-submit succeeds; proposal transitions APPROVED → EXECUTING → FILLED; audit log contains `edit_size` event with old_qty/new_qty then `order_submitted` + `fill` events.
-**Why human:** Requires live executor, open market hours, and configured Alpaca paper account.
+**Expected:** POST /approvals/{id}/edit-submit succeeds; proposal transitions APPROVED then EXECUTING then FILLED; audit log contains `edit_size` event with old_qty/new_qty, then `order_submitted` and `fill` events.
+**Why human:** Requires live executor, open market hours, and a configured Alpaca paper account.
 
-#### 3. Quiet-hours queuing behavior over time (time-gated, deferred from prior rounds)
+#### 6. Quiet-hours queuing behavior over time (time-gated, deferred from prior rounds)
 
-**Test:** Configure quiet hours on a strategy, wait for the window to open, verify DMs arrive at window-open. Confirm safety-critical DMs (kill, executor errors) still fire during quiet hours.
+**Test:** Configure quiet hours on a strategy, wait for the window, verify DMs arrive at window-open. Confirm safety-critical DMs (kill, executor errors, first-live fills) still fire during quiet hours.
 **Expected:** No routine DMs during quiet window; DMs deferred to window-open; pager-channel categories bypass quiet hours.
-**Why human:** Real-time behavior over 2+ hours.
+**Why human:** Real-time behavior over 2+ hours cannot be verified statically.
 
-#### 4. Daily P&L digest at 16:30 ET on a NYSE trading day (time-gated, deferred from prior rounds)
+#### 7. Daily P&L digest at 16:30 ET on a NYSE trading day (time-gated, deferred from prior rounds)
 
 **Test:** On a NYSE trading day after 16:30 ET, verify the Block Kit P&L DM arrives with correct gross P&L and per-strategy breakdown.
 **Expected:** Gross P&L computed correctly (BUYs subtract, SELLs add), no `_unknown_` buckets, no sign-flipped SELLs.
@@ -156,12 +176,12 @@ The following items require a live browser with the running ASGI stack or real b
 
 ### Gaps Summary
 
-No gaps found. All 7 must-haves verified. The one WARNING item (stale `views_open` language in the 03-UI-SPEC.md cross-surface table and summary — lines 1013, 1062) is a documentation inconsistency only. The operative Surface 1 section is correctly updated, the codebase implements D-62 correctly, and runtime behavior is unaffected. Cleanup of the stale rows is recommended in the next documentation maintenance pass but does not block phase completion.
+No gaps found. All 6 must-haves for Plan 03-15 are verified in source. The three bugs (A, B, C) are fixed at the correct code locations with the specified patterns. The test file covers all 8 required cases without mocking the claim_action/transition_status/append_event primitives. Safety invariants (`_check_edit_size_caps`, OrderGuard, dedup UNIQUE constraint, dual-channel first-live gate) are untouched.
 
-Status is `human_needed` because the live slider drag interaction and the approve-after-edit end-to-end flow require a running browser+ASGI stack to confirm. Static analysis confirms the wiring is correct.
+Status is `human_needed` because the three browser-UAT retests for the 03-15 bugs (items 1-3 above) and the four pre-existing time-gated/live-browser items (items 4-7) require a running ASGI stack or real market-hours conditions. Automated checks passed.
 
 ---
 
-_Verified: 2026-06-22T12:30:00Z_
+_Verified: 2026-06-23T00:00:00Z_
 _Verifier: Claude (gsd-verifier)_
-_Scope: Plan 03-14 gap-closure re-verification (D-62 edit-size slider redesign)_
+_Scope: Plan 03-15 gap-closure re-verification (3-bug cluster: Bug A deeplink styling, Bug B duplicate session, Bug C terminal-state guard)_
