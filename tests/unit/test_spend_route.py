@@ -425,6 +425,182 @@ async def test_spend_get_canonical_payload_unwrap() -> None:
 
 
 @pytest.mark.asyncio
+async def test_spend_get_corrupted_ceiling_uses_default() -> None:
+    """GET /spend with over-quoted ceiling "'5.00'" (6-char) → 200 + DEFAULT ceiling shown.
+
+    Regression gate: fails against pre-fix code where truthiness-only guard
+    lets the corrupted value reach Decimal() → InvalidOperation → 500.
+    """
+    from gekko.dashboard.app import create_app
+    import gekko.vault.passphrase as _vault
+
+    correct = "test-passphrase-04-spend-corrupted"
+    _vault.set_passphrase(correct)
+    try:
+        # The real corrupted value stored by migration 0005's wrong server_default:
+        # a 6-char string with literal apostrophes.
+        user = _make_user_row(daily_cost_ceiling_usd="'5.00'", timezone="America/New_York")
+
+        call_count = 0
+
+        def _make_result(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            mock_result = MagicMock()
+            if call_count == 1:
+                mock_result.scalar_one_or_none = MagicMock(return_value=user)
+                mock_result.all.return_value = []
+            else:
+                mock_result.all.return_value = []
+                mock_result.scalar_one_or_none = MagicMock(return_value=None)
+            return mock_result
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_session.execute = AsyncMock(side_effect=lambda *a, **kw: _make_result())
+        mock_sf = MagicMock(return_value=mock_session)
+
+        with patch("gekko.config.get_settings") as mock_settings_fn, \
+             patch("gekko.dashboard.routes._get_session_factory") as mock_sf_fn:
+            settings = MagicMock()
+            settings.gekko_user_id = "testuser"
+            settings.dashboard_url = "http://localhost:8000"
+            mock_settings_fn.return_value = settings
+            mock_sf_fn.return_value = (mock_sf, None)
+
+            app = create_app()
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://test",
+                follow_redirects=False,
+            ) as client:
+                await client.post("/login", data={"passphrase": correct, "next": "/spend"})
+                resp = await client.get("/spend")
+
+        assert resp.status_code == 200, (
+            f"Expected 200 with corrupted ceiling "'5.00'", got {resp.status_code} — "
+            "spend_get is not defensively parsing the ceiling value"
+        )
+        # DEFAULT_DAILY_CEILING_USD = Decimal("5.00") — should appear as "5.00"
+        assert "5.00" in resp.text, (
+            "DEFAULT ceiling '5.00' not visible in response; defensive parse may be broken"
+        )
+    finally:
+        _vault.clear()
+
+
+@pytest.mark.asyncio
+async def test_spend_get_null_ceiling_uses_default() -> None:
+    """GET /spend with daily_cost_ceiling_usd=None → 200 + DEFAULT ceiling."""
+    from gekko.dashboard.app import create_app
+    import gekko.vault.passphrase as _vault
+
+    correct = "test-passphrase-04-spend-null-ceil"
+    _vault.set_passphrase(correct)
+    try:
+        user = _make_user_row(daily_cost_ceiling_usd=None, timezone="America/New_York")
+
+        call_count = 0
+
+        def _make_result(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            mock_result = MagicMock()
+            if call_count == 1:
+                mock_result.scalar_one_or_none = MagicMock(return_value=user)
+                mock_result.all.return_value = []
+            else:
+                mock_result.all.return_value = []
+                mock_result.scalar_one_or_none = MagicMock(return_value=None)
+            return mock_result
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_session.execute = AsyncMock(side_effect=lambda *a, **kw: _make_result())
+        mock_sf = MagicMock(return_value=mock_session)
+
+        with patch("gekko.config.get_settings") as mock_settings_fn, \
+             patch("gekko.dashboard.routes._get_session_factory") as mock_sf_fn:
+            settings = MagicMock()
+            settings.gekko_user_id = "testuser"
+            settings.dashboard_url = "http://localhost:8000"
+            mock_settings_fn.return_value = settings
+            mock_sf_fn.return_value = (mock_sf, None)
+
+            app = create_app()
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://test",
+                follow_redirects=False,
+            ) as client:
+                await client.post("/login", data={"passphrase": correct, "next": "/spend"})
+                resp = await client.get("/spend")
+
+        assert resp.status_code == 200, (
+            f"Expected 200 with NULL ceiling, got {resp.status_code}"
+        )
+    finally:
+        _vault.clear()
+
+
+@pytest.mark.asyncio
+async def test_spend_get_empty_ceiling_uses_default() -> None:
+    """GET /spend with daily_cost_ceiling_usd="" (empty string) → 200 + DEFAULT ceiling."""
+    from gekko.dashboard.app import create_app
+    import gekko.vault.passphrase as _vault
+
+    correct = "test-passphrase-04-spend-empty-ceil"
+    _vault.set_passphrase(correct)
+    try:
+        user = _make_user_row(daily_cost_ceiling_usd="", timezone="America/New_York")
+
+        call_count = 0
+
+        def _make_result(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            mock_result = MagicMock()
+            if call_count == 1:
+                mock_result.scalar_one_or_none = MagicMock(return_value=user)
+                mock_result.all.return_value = []
+            else:
+                mock_result.all.return_value = []
+                mock_result.scalar_one_or_none = MagicMock(return_value=None)
+            return mock_result
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_session.execute = AsyncMock(side_effect=lambda *a, **kw: _make_result())
+        mock_sf = MagicMock(return_value=mock_session)
+
+        with patch("gekko.config.get_settings") as mock_settings_fn, \
+             patch("gekko.dashboard.routes._get_session_factory") as mock_sf_fn:
+            settings = MagicMock()
+            settings.gekko_user_id = "testuser"
+            settings.dashboard_url = "http://localhost:8000"
+            mock_settings_fn.return_value = settings
+            mock_sf_fn.return_value = (mock_sf, None)
+
+            app = create_app()
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://test",
+                follow_redirects=False,
+            ) as client:
+                await client.post("/login", data={"passphrase": correct, "next": "/spend"})
+                resp = await client.get("/spend")
+
+        assert resp.status_code == 200, (
+            f"Expected 200 with empty-string ceiling, got {resp.status_code}"
+        )
+    finally:
+        _vault.clear()
+
+
+@pytest.mark.asyncio
 async def test_spend_get_requires_auth() -> None:
     """Unauthenticated GET /spend returns 302 redirect to /login (auth gate)."""
     from gekko.dashboard.app import create_app

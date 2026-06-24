@@ -124,6 +124,56 @@ async def test_ceiling_saved() -> None:
 
 
 @pytest.mark.asyncio
+async def test_settings_get_corrupted_ceiling_renders_default() -> None:
+    """GET /settings with over-quoted ceiling "'5.00'" (6-char) → 200 + DEFAULT shown.
+
+    Regression gate: fails against pre-fix code where truthiness-only guard
+    lets the corrupted value reach the template without defensive parsing → crash
+    or displays the literal "'5.00'" string (with apostrophes) instead of "5.00".
+    """
+    from gekko.dashboard.app import create_app
+    import gekko.vault.passphrase as _vault
+
+    correct = "test-passphrase-04-settings-corrupted"
+    _vault.set_passphrase(correct)
+    try:
+        # The real corrupted value stored by migration 0005's wrong server_default
+        user = _make_user_row(daily_cost_ceiling_usd="'5.00'")
+        _mock_session, mock_sf = _build_mock_session(user)
+
+        with patch("gekko.config.get_settings") as mock_settings_fn, \
+             patch("gekko.dashboard.routes._get_session_factory") as mock_sf_fn:
+            settings = MagicMock()
+            settings.gekko_user_id = "testuser"
+            settings.dashboard_url = "http://localhost:8000"
+            mock_settings_fn.return_value = settings
+            mock_sf_fn.return_value = (mock_sf, None)
+
+            app = create_app()
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://test",
+                follow_redirects=False,
+            ) as client:
+                await client.post("/login", data={"passphrase": correct, "next": "/settings"})
+                resp = await client.get("/settings")
+
+        assert resp.status_code == 200, (
+            f"Expected 200 with corrupted ceiling \"'5.00'\", got {resp.status_code} — "
+            "settings_get is not defensively parsing the ceiling value"
+        )
+        # Should render the DEFAULT "5.00", not the corrupted "'5.00'" with apostrophes
+        assert "5.00" in resp.text, (
+            "DEFAULT ceiling '5.00' not visible in settings response"
+        )
+        assert "Daily LLM Cost Ceiling" in resp.text, (
+            "Settings page section header 'Daily LLM Cost Ceiling' not found"
+        )
+    finally:
+        _vault.clear()
+
+
+@pytest.mark.asyncio
 async def test_ceiling_defaults_to_5() -> None:
     """Fresh user row (no daily_cost_ceiling_usd set) → GET /settings shows '5.00'.
 
