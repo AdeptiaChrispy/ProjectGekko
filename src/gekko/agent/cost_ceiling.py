@@ -19,8 +19,9 @@ Design decisions (D-01, D-02, D-03, D-06, D-07, D-08, D-09):
     - pct <  80%  → ``allow``   — proceed normally
 * **One DM per day** (D-06/D-08): ``just_crossed_80`` / ``just_crossed_100``
   are True on the FIRST call that tips over a threshold; the column
-  ``cost_alert_*_sent_date`` is updated in the same DB session so the next
-  call returns False.  No repeat DM spam.
+  ``cost_alert_*_sent_date`` is updated and **committed** via the
+  ``session.begin()`` context manager so the next call returns False.
+  No repeat DM spam.
 * **Deterministic** (T-04-05): no LLM calls anywhere in this module.
   The agent CANNOT reason past this gate.
 
@@ -129,7 +130,7 @@ async def check_cost_ceiling(
         own_engine = True
 
     try:
-        async with session_factory() as session:  # type: ignore[attr-defined]
+        async with session_factory() as session, session.begin():  # type: ignore[attr-defined]
             # --- Load User row -------------------------------------------
             user: User | None = await session.get(User, user_id)
             if user is None:

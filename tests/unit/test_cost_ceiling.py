@@ -105,6 +105,14 @@ def _make_fake_session_factory(
     mock_session.execute = AsyncMock(return_value=mock_result)
     mock_session.flush = AsyncMock()
 
+    # Support `session.begin()` as an async context manager (needed by the
+    # `async with session_factory() as session, session.begin():` two-manager
+    # form introduced by the session.begin() commit fix).
+    mock_begin_ctx = AsyncMock()
+    mock_begin_ctx.__aenter__ = AsyncMock(return_value=None)
+    mock_begin_ctx.__aexit__ = AsyncMock(return_value=False)
+    mock_session.begin = MagicMock(return_value=mock_begin_ctx)
+
     # Context manager (__aenter__ returns the mock_session).
     mock_ctx = AsyncMock()
     mock_ctx.__aenter__.return_value = mock_session
