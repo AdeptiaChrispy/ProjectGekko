@@ -8,7 +8,13 @@ updated: 2026-06-24T00:00:00Z
 
 ## Current Test
 
-[awaiting gap-closure 04-08 — see Test 2 issue (DM dedup not persisting)]
+number: 3
+name: Hard-halt resume + tz-midnight reset
+expected: |
+  While hard-halted at 100%, raising the daily ceiling in Settings un-halts the NEXT cycle
+  (no restart). Separately, leaving it halted, the spend counter/ceiling resets at the user's
+  configured timezone midnight and cycles resume automatically the next day.
+awaiting: user response
 
 ### 0. Prerequisite — migrate the live operator DB 0004 → 0005
 expected: live DB advanced to Alembic revision 0005 (cost-ceiling columns + new event types) so /spend, the ceiling guard, and the Settings ceiling field work at runtime.
@@ -73,7 +79,8 @@ expected: |
   pre-triage gate engages, but the trade Decision still runs on the full model. At 100%,
   scheduled cycles are SKIPPED (no trades attempted). Cost-alert DMs arrive even during quiet
   hours (cost_alert bypasses quiet hours).
-result: issue   # 2026-06-24 — thresholds/halt FIRE correctly, but DMs SPAM (5x at 80%, 2x at 100%); once-per-day dedup not persisting
+result: pass   # 2026-06-24 — after gap-closure 04-08 (session.begin() commits the sent-date), operator re-tested live: exactly one DM per threshold, no spam
+prior_result: issue   # thresholds/halt FIRE correctly, but DMs SPAMMED (5x at 80%, 2x at 100%); once-per-day dedup not persisting (flush w/o commit)
 reported: |
   Live Slack log: 80% degrade DM fired 5x (87.8%, then 93.6% x4) and 100% halt DM fired 2x
   ($1.0051 x2). Operator clicked trigger per alert; each trigger re-DM'd. (A live paper fill
@@ -123,12 +130,12 @@ result: [pending]
 ## Summary
 
 total: 4
-passed: 1   # Test 1 — /spend renders correctly (fixed by 04-07, confirmed live)
-issues: 1   # Test 2 — cost-alert DMs spam (dedup sent-date not committed); gap-closure 04-08
-pending: 2   # Tests 3-4 behind the DM-dedup fix
+passed: 2   # Test 1 (/spend, 04-07) + Test 2 (DM dedup, 04-08) — both fixed + confirmed live
+issues: 0
+pending: 2   # Tests 3-4
 skipped: 0
 blocked: 0
-prerequisite: pass   # live DB at 0005 (now 0006 after 04-07)
+prerequisite: pass   # live DB at 0006
 
 ## Gaps
 
@@ -139,7 +146,7 @@ prerequisite: pass   # live DB at 0005 (now 0006 after 04-07)
   test: 1
 
 - truth: "Exactly one Slack DM per threshold per day (80%, 100%); no repeats on subsequent same-day triggers"
-  status: failed
+  status: resolved   # closed by gap-closure 04-08 (session.begin() commits sent-date); confirmed live 2026-06-24 — one DM per threshold
   reason: "Live: 80% DM fired 5x + 100% DM fired 2x. check_cost_ceiling (cost_ceiling.py) sets user.cost_alert_80/100_sent_date then only flush()es (line 240) inside `async with session_factory() as session:` opened WITHOUT .begin() and with NO commit anywhere → the dedup marker is rolled back on session close → every trigger re-DMs. Enforcement (halt) is correct; alert-spam only. Violates D-06/D-08/D-12."
   severity: major
   test: 2
