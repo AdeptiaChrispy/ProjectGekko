@@ -135,6 +135,16 @@ Both are out-of-scope for this plan. Logged here for tracking; deferred to a fut
 - Operator must run `alembic upgrade head` to advance live DB to 0006 (repairs the stored `'5.00'` → `5.00`)
 - After migration, UAT Test 1 (/spend 500) should be resolved; Tests 2–4 (80%/100% Slack DMs, hard-halt+reset, suspicious_content) are unblocked
 
+## Self-Check: PASSED
+
+- migrations/versions/0006_p4_cost_ceiling_repair.py: FOUND
+- .planning/phases/04-agent-architecture-cost-bounds/04-07-SUMMARY.md: FOUND
+- Commit 348104f (test RED): FOUND
+- Commit 9da3225 (feat migration 0006): FOUND
+- Commit 0d147c3 (test RED routes): FOUND
+- Commit 9edf4d6 (fix routes defensive parse): FOUND
+- Commit 4e586bf (docs metadata): FOUND
+
 ---
 *Phase: 04-agent-architecture-cost-bounds*
 *Completed: 2026-06-24*
