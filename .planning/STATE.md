@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Safety & Trust
 status: verifying
-last_updated: "2026-06-24T17:19:08.297Z"
+last_updated: "2026-06-24T18:58:09Z"
 last_activity: 2026-06-24
 progress:
   total_phases: 4
@@ -15,7 +15,7 @@ progress:
 
 # Project State: Project Gekko
 
-**Last updated:** 2026-06-24 (**Plan 04-06 complete (GAP CLOSURE) — SC-5 canonical-payload unwrap fix in spend_get: inner = payload.get("payload", payload) in both today_rows and history_rows loops; test_spend_route.py hardened with canonical-wrapper rows + regression gate test_spend_get_canonical_payload_unwrap; 7/7 GREEN. COST-02 + COST-05 gaps closed. Phase 04 ALL 6 PLANS COMPLETE.**)
+**Last updated:** 2026-06-24 (**Plan 04-08 complete (GAP CLOSURE) — session.begin() commit fix in check_cost_ceiling (cost_alert_*_sent_date now persists, eliminating DM alert spam D-06/D-08); real-session regression test test_cost_ceiling_dedup.py added; 30/30 GREEN. COST-04 gap closed. Phase 04 gap-closure complete.**)
 
 ## Project Reference
 
@@ -62,6 +62,7 @@ Last activity: 2026-06-24
 | Phase 04 P05 | 17min | 2 tasks | 6 files |
 | Phase 04 P06 | 12min | 3 tasks | 2 files |
 | Phase 04-agent-architecture-cost-bounds P07 | 35 | 3 tasks | 6 files |
+| Phase 04-agent-architecture-cost-bounds P08 | 8min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -80,6 +81,11 @@ Last activity: 2026-06-24
 | SQLCipher whole-DB encryption + passphrase-on-start | ARCH recommendation chosen over STACK's Fernet+keychain for cross-platform parity (avoids silent failures when service runs without logged-in user session) |
 | Decimal for money math, idempotency via `client_order_id` | Non-negotiable per PITFALLS Pitfall 1 (Knight Capital prevention) |
 | Robinhood Agentic Trading API status check in P1 | Re-validate the official API before committing to browser adapter in P9 (per BROK-R-01 and PITFALLS Pitfall 8) |
+
+### Decisions from Plan 04-08 (added 2026-06-24)
+
+- _check_cost_ceiling uses `session.begin()` two-manager form to commit sent-date writes._ `async with session_factory() as session, session.begin():` replaces the bare `async with session_factory() as session:`. The `session.begin()` context manager commits on clean exit, rolls back on exception. This is the established idiom (proposal_writer.py) and ensures `cost_alert_80_sent_date` / `cost_alert_100_sent_date` persist to SQLite so subsequent same-day calls return `just_crossed_*=False` — eliminating DM alert spam (D-06/D-08 fix).
+- _Unit test mock factories for session.begin() need an explicit async context manager stub._ AsyncMock defaults make `.begin()` return a coroutine, not an async context manager. Any mock session used with the two-manager form must set `mock_session.begin = MagicMock(return_value=AsyncMock with __aenter__/__aexit__)`. Pattern locked in test_cost_ceiling.py for downstream use.
 
 ### Decisions from Plan 04-02 (added 2026-06-23)
 
