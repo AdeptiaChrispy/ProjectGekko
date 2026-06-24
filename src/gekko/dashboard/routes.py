@@ -1093,8 +1093,17 @@ async def settings_get(
             await engine.dispose()
 
     # user may be None for early-bootstrap state; provide safe defaults
+    from gekko.agent.pricing import DEFAULT_DAILY_CEILING_USD
     iana_timezones = sorted(zoneinfo.available_timezones())
-    ceiling_value = (user.daily_cost_ceiling_usd if user is not None and user.daily_cost_ceiling_usd else "5.00")
+    _raw_ceiling = user.daily_cost_ceiling_usd if user is not None else None
+    if _raw_ceiling:
+        try:
+            _parsed = Decimal(_raw_ceiling)
+            ceiling_value = str(_parsed) if _parsed > Decimal("0") else str(DEFAULT_DAILY_CEILING_USD)
+        except Exception:
+            ceiling_value = str(DEFAULT_DAILY_CEILING_USD)
+    else:
+        ceiling_value = str(DEFAULT_DAILY_CEILING_USD)
     return templates.TemplateResponse(
         request,
         "settings.html.j2",
@@ -1161,7 +1170,16 @@ async def settings_post(
         finally:
             if engine is not None:
                 await engine.dispose()
-        ceiling_value = (user.daily_cost_ceiling_usd if user is not None and user.daily_cost_ceiling_usd else "5.00")
+        from gekko.agent.pricing import DEFAULT_DAILY_CEILING_USD as _DCC_USD
+        _raw_ceiling = user.daily_cost_ceiling_usd if user is not None else None
+        if _raw_ceiling:
+            try:
+                _parsed = Decimal(_raw_ceiling)
+                ceiling_value = str(_parsed) if _parsed > Decimal("0") else str(_DCC_USD)
+            except Exception:
+                ceiling_value = str(_DCC_USD)
+        else:
+            ceiling_value = str(_DCC_USD)
         return templates.TemplateResponse(
             request,
             "settings.html.j2",
@@ -1211,7 +1229,16 @@ async def settings_post(
         if engine2 is not None:
             await engine2.dispose()
 
-    ceiling_value = (user.daily_cost_ceiling_usd if user is not None and user.daily_cost_ceiling_usd else "5.00")
+    from gekko.agent.pricing import DEFAULT_DAILY_CEILING_USD as _DCC_USD2
+    _raw_ceiling = user.daily_cost_ceiling_usd if user is not None else None
+    if _raw_ceiling:
+        try:
+            _parsed = Decimal(_raw_ceiling)
+            ceiling_value = str(_parsed) if _parsed > Decimal("0") else str(_DCC_USD2)
+        except Exception:
+            ceiling_value = str(_DCC_USD2)
+    else:
+        ceiling_value = str(_DCC_USD2)
     return templates.TemplateResponse(
         request,
         "settings.html.j2",
@@ -1258,10 +1285,16 @@ async def spend_get(
                 )
             ).scalar_one_or_none()
 
-            # Resolve ceiling
-            if user is not None and user.daily_cost_ceiling_usd:
-                ceiling = Decimal(user.daily_cost_ceiling_usd)
+            # Resolve ceiling — defensive parse mirroring cost_ceiling.py:149-161
+            ceiling_str = user.daily_cost_ceiling_usd if user is not None else None
+            if ceiling_str:
+                try:
+                    ceiling = Decimal(ceiling_str)
+                except Exception:
+                    ceiling = DEFAULT_DAILY_CEILING_USD
             else:
+                ceiling = DEFAULT_DAILY_CEILING_USD
+            if ceiling <= Decimal("0"):
                 ceiling = DEFAULT_DAILY_CEILING_USD
 
             # Resolve timezone
