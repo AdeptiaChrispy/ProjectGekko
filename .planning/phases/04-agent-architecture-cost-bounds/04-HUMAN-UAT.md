@@ -8,18 +8,44 @@ updated: 2026-06-24T00:00:00Z
 
 ## Current Test
 
-[awaiting human testing]
+[awaiting gap-closure 04-07 — see Test 1 issue]
 
-number: 0
-name: Prerequisite — migrate the live operator DB 0004 → 0005
+### 0. Prerequisite — migrate the live operator DB 0004 → 0005
+expected: live DB advanced to Alembic revision 0005 (cost-ceiling columns + new event types) so /spend, the ceiling guard, and the Settings ceiling field work at runtime.
+result: pass   # 2026-06-24 — operator confirmed `alembic current` = "0005_p4_cost_ceiling (head)"
+
+### 1. /spend dashboard renders live cost after real cycles
 expected: |
-  The live per-user SQLCipher DB is currently at Alembic revision 0004. Migration 0005
-  (the 3 User cost-ceiling columns + the llm_cost/suspicious_content event_types) must be
-  applied to the POPULATED live DB before /spend, the ceiling guard, and the Settings
-  ceiling field work at runtime. Apply it (e.g. `uv run alembic upgrade head` with the DB
-  passphrase, or via the app's startup migration path), confirm it lands cleanly on data,
-  then proceed with the tests below. (Mirrors the Phase-3 0004 live-migration step.)
-awaiting: operator — apply 0005 to the live DB, then run the 4 tests below
+  After several real `/gekko run` cycles, /spend shows today vs ceiling, per-strategy
+  breakdown with real names + non-zero $, 7-day history, ceiling visible.
+result: issue   # 2026-06-24 — GET /spend → 500 InvalidOperation on Decimal(daily_cost_ceiling_usd)
+reported: "GET /spend HTTP 500 — decimal.InvalidOperation (ConversionSyntax) at routes.py:1263 Decimal(user.daily_cost_ceiling_usd)"
+severity: blocker
+diagnosis_2026_06_24: |
+  DETERMINISTIC ROOT CAUSE (proven in-memory, no DB access needed):
+  Migration 0005 declares the column with `server_default="'5.00'"` (already-quoted string).
+  SQLAlchemy renders that as DDL `DEFAULT '''5.00'''`, which SQLite stores as the 6-char
+  string `'5.00'` INCLUDING the literal single-quote characters (verified: stored value
+  repr is "'5.00'", len 6). Decimal("'5.00'") raises InvalidOperation. This corrupts BOTH
+  the backfilled pre-existing `chris` row AND every new row created via the column default.
+
+  TWO LAYERS:
+  (A) Migration data corruption — `server_default="'5.00'"` should be `server_default="5.00"`
+      (SQLAlchemy adds the SQL quotes). 0005 is already applied to the live DB, so a repair
+      migration 0006 must (1) repair existing values (strip the surrounding quotes / reset
+      `'5.00'`→`5.00`) and (2) correct the column default going forward. (Planner to decide
+      whether to also correct 0005's source for fresh-install correctness, given single-user
+      self-hosted scope.)
+  (B) Route fragility — `spend_get` (routes.py:1262-1263) uses a truthiness-only guard, so a
+      truthy-but-invalid value reaches Decimal() and 500s. The ceiling GUARD (cost_ceiling.py
+      :149-161) already wraps this in try/except → DEFAULT_DAILY_CEILING_USD, which is why
+      cost ENFORCEMENT is unaffected (safe $5 fallback) — this is DISPLAY-ONLY, not a safety
+      bug. spend_get + settings_get/post should mirror the guard's defensive parse.
+
+  WHY TESTS MISSED IT: test_spend_route.py seeds User rows with a clean daily_cost_ceiling_usd;
+  no test seeded the over-quoted/NULL real-data shape, and no test exercised the migration's
+  actual stored default value. Same "test didn't use the real data shape" class as 04-06.
+awaiting: tested gap-closure plan 04-07 (migration 0006 repair + spend_get/settings defensive parse + test seeding the corrupted/NULL shapes)
 
 ## Tests
 
@@ -62,13 +88,29 @@ result: [pending]
 
 total: 4
 passed: 0
-issues: 0
-pending: 4
+issues: 1   # Test 1 — /spend 500 (migration over-quote + route fragility); gap-closure 04-07
+pending: 3   # Tests 2-4 blocked behind the /spend fix + live spend
 skipped: 0
 blocked: 0
+prerequisite: pass   # live DB at 0005
 
 ## Gaps
 
-# All 5 success criteria are CODE-verified (04-VERIFICATION.md, 5/5). These 4 items
-# require a live ASGI stack + real Claude spend + a wall-clock day boundary, so they
-# are human-verify only. Run `/gsd-verify-work 4` to record results and close Phase 4.
+- truth: "/spend renders today-vs-ceiling + per-strategy + 7-day history without error"
+  status: failed
+  reason: "GET /spend → 500 decimal.InvalidOperation. Migration 0005 server_default=\"'5.00'\" renders DEFAULT '''5.00''' → stores literal `'5.00'` (with quote chars); Decimal() crashes. spend_get's truthiness-only guard lets the corrupted value reach Decimal() (the cost_ceiling.py guard has a try/except fallback, so enforcement is safe — this is display-only)."
+  severity: blocker
+  test: 1
+  artifacts:
+    - "migrations/versions/0005_p4_cost_ceiling.py — server_default=\"'5.00'\" over-quote (lines ~94-97)"
+    - "src/gekko/dashboard/routes.py — spend_get Decimal(user.daily_cost_ceiling_usd) line ~1263 (truthiness-only guard); settings_get/post ceiling reads ~1097/1164/1214"
+    - "src/gekko/agent/cost_ceiling.py:149-161 — the defensive try/except parse to MIRROR"
+    - "tests/unit/test_spend_route.py — never seeded the over-quoted/NULL real-data shape"
+  missing:
+    - "Repair migration 0006: fix existing daily_cost_ceiling_usd values (strip surrounding quotes / `'5.00'`→`5.00`) + correct the column server_default to the un-quoted form going forward"
+    - "spend_get + settings_get/post: defensive Decimal parse → DEFAULT_DAILY_CEILING_USD on malformed/NULL (mirror cost_ceiling.py)"
+    - "Test seeding the corrupted (`'5.00'` with quotes) AND NULL/empty daily_cost_ceiling_usd shapes → /spend returns 200 with DEFAULT, not 500; migration-default test asserts the stored default is Decimal-parseable"
+
+# Tests 2-4 (80%/100% DMs, hard-halt+reset, suspicious_content event) remain pending —
+# they need real spend over live cycles and depend on /spend working first.
+# Prerequisite (live DB → 0005) PASSED.
