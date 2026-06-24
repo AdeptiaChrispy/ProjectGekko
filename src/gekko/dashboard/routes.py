@@ -1299,10 +1299,15 @@ async def spend_get(
             for row in today_rows:
                 try:
                     payload = json.loads(row.payload_json)
-                    cost = Decimal(str(payload.get("cost_usd", "0")))
+                    # payload_json is the full canonical-subset string
+                    # ({"event_type":...,"payload":{...actual fields...},"ts":...,"user_id":...})
+                    # Mirror cost_ceiling.py line 202: unwrap to the inner "payload" dict.
+                    # The fallback to `payload` tolerates legacy-flat rows (no KeyError).
+                    inner = payload.get("payload", payload)
+                    cost = Decimal(str(inner.get("cost_usd", "0")))
                     today_total += cost
                     # Per-strategy accumulation using strategy_name from payload
-                    strat_name = str(payload.get("strategy_name", "Unknown"))
+                    strat_name = str(inner.get("strategy_name", "Unknown"))
                     if strat_name not in strategy_spend:
                         strategy_spend[strat_name] = Decimal("0")
                     strategy_spend[strat_name] += cost
@@ -1333,7 +1338,9 @@ async def spend_get(
             for row in history_rows:
                 try:
                     payload = json.loads(row.payload_json)
-                    cost = Decimal(str(payload.get("cost_usd", "0")))
+                    # Same canonical-payload unwrap as the today_rows loop above.
+                    inner = payload.get("payload", payload)
+                    cost = Decimal(str(inner.get("cost_usd", "0")))
                     # Parse ts (ISO-8601 UTC) → local date string
                     event_ts = row.ts
                     try:
