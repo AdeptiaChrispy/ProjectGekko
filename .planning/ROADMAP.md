@@ -126,7 +126,7 @@ Plans:
   4. At 80% of the configured per-user daily cost ceiling, agent enters graceful-degradation mode (longer cadence, Haiku for triage, shorter context) and Slack-DMs the user; at 100% it hard-halts further LLM calls and Slack-DMs again, resetting at user-configured timezone midnight
   5. Every LLM call is logged to the cost ledger (input tokens, output tokens, USD) and the dashboard shows spend per strategy and per user with the daily ceiling visible
 
-**Plans:** 7/7 plans complete
+**Plans:** 10 plans (7 executed + 3 gap-closure)
 Plans:
 **Wave 1** *(Nyquist — test scaffolding)*
 
@@ -147,6 +147,18 @@ Plans:
 **Wave 5** *(blocked on Wave 4)*
 
 - [x] 04-05-PLAN.md — GET /spend route + spend.html.j2 (today total vs ceiling + per-strategy + 7-day history) + settings.html.j2 ceiling fieldset + base.html.j2 Spend nav link (COST-02/COST-03)
+
+**Wave 6 (gap closure)**
+
+- [x] 04-06-PLAN.md — Alembic 0006 migration: add missing columns to users table and extend events CHECK constraint (COST-01/COST-04)
+
+**Wave 7 (gap closure)**
+
+- [x] 04-07-PLAN.md — Repair migration 0006 server_default corruption + defensive Decimal parse in spend_get/settings_get/settings_post (COST-02/COST-03)
+
+**Wave 8 (gap closure)**
+
+- [ ] 04-08-PLAN.md — Commit sent-date write in check_cost_ceiling (session.begin()) + real-session regression test for two-call dedup persistence (COST-04)
 
 **UI hint**: yes
 
