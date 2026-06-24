@@ -3,19 +3,19 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Safety & Trust
 status: verifying
-last_updated: "2026-06-23T22:59:53.976Z"
-last_activity: 2026-06-23
+last_updated: "2026-06-24T11:42:19.679Z"
+last_activity: 2026-06-24
 progress:
   total_phases: 4
   completed_phases: 4
-  total_plans: 36
-  completed_plans: 36
+  total_plans: 37
+  completed_plans: 37
   percent: 100
 ---
 
 # Project State: Project Gekko
 
-**Last updated:** 2026-06-23 (**Plan 04-05 complete (FINAL WAVE) — GET /spend route + spend.html.j2 template (COST-02); settings_post extended with daily_cost_ceiling_usd Form field + Decimal validation (COST-03); Daily LLM Cost Ceiling fieldset added to settings.html.j2; Spend nav link in base.html.j2. test_spend_route.py 6/6 GREEN; test_settings_route.py 2/2 GREEN; test_dashboard_templates_sri.py 3/3 GREEN. Phase 04 ALL 5 PLANS COMPLETE.**)
+**Last updated:** 2026-06-24 (**Plan 04-06 complete (GAP CLOSURE) — SC-5 canonical-payload unwrap fix in spend_get: inner = payload.get("payload", payload) in both today_rows and history_rows loops; test_spend_route.py hardened with canonical-wrapper rows + regression gate test_spend_get_canonical_payload_unwrap; 7/7 GREEN. COST-02 + COST-05 gaps closed. Phase 04 ALL 6 PLANS COMPLETE.**)
 
 ## Project Reference
 
@@ -28,7 +28,7 @@ progress:
 Phase: 04 (agent-architecture-cost-bounds) — COMPLETE
 Plan: 5 of 5 (ALL COMPLETE)
 Status: Phase complete — ready for verification
-Last activity: 2026-06-23
+Last activity: 2026-06-24
 
 ## Performance Metrics
 
@@ -60,6 +60,7 @@ Last activity: 2026-06-23
 | Phase 04 P03 | 35min | 2 tasks | 6 files |
 | Phase 04 P04 | 45m | 2 tasks | 5 files |
 | Phase 04 P05 | 17min | 2 tasks | 6 files |
+| Phase 04 P06 | 12min | 3 tasks | 2 files |
 
 ## Accumulated Context
 
