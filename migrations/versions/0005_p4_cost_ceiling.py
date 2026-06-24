@@ -94,7 +94,7 @@ def upgrade() -> None:
                 "daily_cost_ceiling_usd",
                 sa.String(),
                 nullable=True,
-                server_default="'5.00'",
+                server_default="5.00",
             )
         )
         bop.add_column(
