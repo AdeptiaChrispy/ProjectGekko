@@ -171,3 +171,53 @@ async def test_0005_alembic_round_trip(tmp_path: Path) -> None:
         assert "cost_alert_100_sent_date" in user_cols
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# 0006 in-process logic tests (Task 3 — always runs, no subprocess)
+# ---------------------------------------------------------------------------
+
+
+def test_0006_revision_wiring() -> None:
+    """0006 revision and down_revision are correctly wired to chain from 0005."""
+    mod = _load_migration("migrations/versions/0006_p4_cost_ceiling_repair.py")
+    assert mod.revision == "0006_p4_cost_ceiling_repair"
+    assert mod.down_revision == "0005_p4_cost_ceiling"
+
+
+def test_0006_frozen_vocab_chain() -> None:
+    """0006 _FROZEN_EVENT_TYPES == 0005 _FROZEN_EVENT_TYPES_POST (chain unbroken)."""
+    mod5 = _load_migration("migrations/versions/0005_p4_cost_ceiling.py")
+    mod6 = _load_migration("migrations/versions/0006_p4_cost_ceiling_repair.py")
+    assert hasattr(mod6, "_FROZEN_EVENT_TYPES"), (
+        "0006 must have a _FROZEN_EVENT_TYPES attribute (not PRE/POST split — "
+        "it inherits the full set from 0005 POST without adding new types)"
+    )
+    assert set(mod6._FROZEN_EVENT_TYPES) == set(mod5._FROZEN_EVENT_TYPES_POST), (
+        "0006 _FROZEN_EVENT_TYPES diverges from 0005 _FROZEN_EVENT_TYPES_POST — "
+        f"extra in 0006: {set(mod6._FROZEN_EVENT_TYPES) - set(mod5._FROZEN_EVENT_TYPES_POST)}, "
+        f"missing in 0006: {set(mod5._FROZEN_EVENT_TYPES_POST) - set(mod6._FROZEN_EVENT_TYPES)}"
+    )
+
+
+def test_0006_repair_sql_idempotent() -> None:
+    """The repair UPDATE WHERE clause targets only the over-quoted form, not clean values.
+
+    Source-inspection gate: verifies that upgrade() matches the over-quoted
+    6-char string ('''5.00''') and repairs to the clean 4-char form ('5.00'),
+    ensuring future edits don't accidentally widen the WHERE clause.
+    """
+    import inspect
+
+    mod6 = _load_migration("migrations/versions/0006_p4_cost_ceiling_repair.py")
+    source = inspect.getsource(mod6.upgrade)
+    # The WHERE clause must match ONLY the over-quoted 6-char form
+    assert "'''5.00'''" in source, (
+        "upgrade() source does not contain the WHERE target '''5.00''' — "
+        "the repair SQL may have been widened or is missing"
+    )
+    # The SET clause must use the clean 4-char form
+    assert "'5.00'" in source, (
+        "upgrade() source does not contain the SET repair value '5.00' — "
+        "the repair SQL target value may be wrong"
+    )
