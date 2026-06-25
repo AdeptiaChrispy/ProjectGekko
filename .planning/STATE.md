@@ -1,34 +1,35 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
+milestone: v2.0
 milestone_name: Safety & Trust
-status: verifying
-last_updated: "2026-06-24T18:58:09Z"
-last_activity: 2026-06-24
+status: phase_complete
+last_updated: "2026-06-25T00:00:00Z"
+last_activity: 2026-06-25
 progress:
-  total_phases: 4
+  total_phases: 5
   completed_phases: 4
   total_plans: 38
   completed_plans: 38
-  percent: 100
+  percent: 80
 ---
 
 # Project State: Project Gekko
 
-**Last updated:** 2026-06-24 (**Plan 04-08 complete (GAP CLOSURE) — session.begin() commit fix in check_cost_ceiling (cost_alert_*_sent_date now persists, eliminating DM alert spam D-06/D-08); real-session regression test test_cost_ceiling_dedup.py added; 30/30 GREEN. COST-04 gap closed. Phase 04 gap-closure complete.**)
+**Last updated:** 2026-06-25 (**Phase 04 FULLY CLOSED — verification 5/5 + human UAT (3 live pass, 2 deferred-with-coverage; 2 live bugs found+fixed during UAT: 04-07 /spend 500 + 04-08 DM dedup) + security verified 32/32 threats CLOSED (04-SECURITY.md, commit 8ab6598). Phase 03 also security-verified (98/98, 03-SECURITY.md). Roadmap advanced: Phase 05 (Trust Ladder) is now next.**)
 
 ## Project Reference
 
 **Core Value:** A trustworthy autonomous agent that turns a plain-English investment thesis into actual, monitored trades on the user's own brokerage account — starting human-in-the-loop with small dollars and graduating to autonomy as trust is earned.
 
-**Current Focus:** Phase 04 — agent-architecture-cost-bounds
+**Current Focus:** Phase 05 — trust-ladder (next; not yet started)
 
 ## Current Position
 
-Phase: 04 (agent-architecture-cost-bounds) — COMPLETE
-Plan: 5 of 5 (ALL COMPLETE)
-Status: Phase complete — ready for verification
-Last activity: 2026-06-24
+Phase: 04 (agent-architecture-cost-bounds) — COMPLETE ✅ (verified + UAT + secured 32/32)
+Plan: 8 of 8 (ALL COMPLETE)
+Status: Phase 04 fully closed — roadmap advanced to Phase 05 (Trust Ladder), not yet started
+Last activity: 2026-06-25
+Next: `/gsd-discuss-phase 5` (or `/gsd-plan-phase 5`)
 
 ## Performance Metrics
 
@@ -374,6 +375,7 @@ After the manual demo passes, the next milestone-level step is either `/gsd-comp
 *Updated: 2026-06-18 after Plan 03-02 complete (HITL-02 dedup gate — claim_action() UNIQUE-INSERT helper + dedup_click audit event + wire into _approve_workflow/_reject_workflow + D-43 ephemeral response + X-Slack-Retry-Num gate + integration race test proving exactly-once execution; 3 commits a7e4cdd/e219523/bb9ef6d)*
 *Updated: 2026-06-18 after Plan 03-06 complete (REPT-01 daily P&L digest — send_daily_pnl_digest + D-59 NYSE gate + APScheduler 16:30 ET cron + severity-tier emoji prefixes ⚠️/❌/🚫 + AST carry-forward gate; 3 commits b3654fa/7d355a2/eeb8c9f)*
 *Updated: 2026-06-18 after Plan 03-07 complete (Phase-3 phase-closure walking skeleton — 4 integration cassette tests + README Phase-3 demo recipe + deferred-items.md; 2 commits e408892/7c14270; all 4 tests green; walk_chain() returns [] across all scenarios; Phase 3 ready for operator demo verification)*
+*Updated: 2026-06-25 — Phase 04 security-verified (32/32 threats CLOSED, 04-SECURITY.md, commit 8ab6598) closing the verify→UAT→secure pipeline; Phase 03 confirmed secured (98/98, 03-SECURITY.md). ROADMAP.md + STATE.md reconciled: Phase 4 progress corrected to 8/8, 04-08 checkbox closed, both phases marked Complete ✅ (secured). Roadmap pointer ADVANCED to Phase 05 (Trust Ladder), not yet started — next: /gsd-discuss-phase 5.*
 
 ### Decisions from Plan 02-06 (added 2026-06-16)
 
@@ -392,21 +394,14 @@ After the manual demo passes, the next milestone-level step is either `/gsd-comp
 
 ## Operator Next Steps
 
-**Phase 3 is complete (all 7 plans executed; 7/7 SUMMARY.md files on disk; ROADMAP.md updated to "Complete").**
+**Phases 3 AND 4 are fully closed** (executed → verified → human UAT → security-verified). Roadmap pointer is now on **Phase 5 (Trust Ladder)**, not yet started.
 
-Before Phase 3 can be declared fully closed, the operator MUST complete the 5 manual-only verifications in `.planning/phases/03-production-hitl-ux-slack-block-kit-dashboard-fallback/deferred-items.md`:
+- **Phase 3** — 15/15 plans; verification 5/5; human UAT closed; security 98/98 threats CLOSED (`03-SECURITY.md`). The 5 manual-only items from `deferred-items.md` were exercised in live UAT.
+- **Phase 4** — 8/8 plans; verification 5/5; human UAT (3 live pass: /spend renders, cost-alert DMs one-per-threshold, hard-halt resume; 2 deferred-with-coverage: tz-midnight reset + prompt-injection event); security 32/32 threats CLOSED (`04-SECURITY.md`, commit `8ab6598`). Two real bugs were caught live during UAT and fixed: 04-07 (`/spend` 500 from over-quoted migration server_default + fragile parse → migration 0006 repair) and 04-08 (cost-alert DM spam from flush-without-commit → `session.begin()` + real-session regression test).
 
-1. **HITL-02** — Real Slack dup-click survives at-least-once delivery (wall-clock test)
-2. **HITL-03** — 60s sweep latency observed on real wall clock (APScheduler cron test)
-3. **HITL-05** — Quiet-hours predicate crosses a real DST boundary (Spring 2027 or manual clock override)
-4. **DASH-04** — Dashboard /approvals end-to-end in browser with real cookie session (stop Slack → navigate → approve)
-5. **REPT-01** — Daily P&L DM fires at 16:30 ET on a real NYSE trading day
+**Next command:** `/gsd-discuss-phase 5` to scope Trust Ladder (per-strategy promotion propose-only → auto-within-caps, portfolio-level caps, capital-scaling rung, anomaly auto-demotion), or `/gsd-plan-phase 5` to go straight to planning. NOTE: the Phase-5 open question "trust ladder statistical promotion criteria (N successful HITL approvals, no cap breaches)" must be resolved with Chris during discuss-phase — see Open Questions Carried Forward.
 
-Run the automated cassette gate first: `uv run pytest tests/integration/test_p3_walking_skeleton.py -x` (all 4 must pass before the manual demo).
-
-See `README.md §"Phase 3 — Production HITL UX demo"` for the full 10-step operator recipe.
-
-**After Phase 3 manual demo passes:** run `/gsd-plan-phase 4` to start Phase 4 (Agent Architecture + Claude SDK hardening + cost ceiling). Phase 3's CONTEXT.md is already committed.
+**Known tracked test-debt (not blocking):** `tests/unit/test_dashboard_edit_size.py` has 4 stale tests asserting `200` that should expect `302` after the 03-15 contract change (route now 302-redirects on non-HX requests). Deselect when gating unrelated work; fix mirrors `test_dashboard_hitl_actions.py::test_edit_size_get_hx_vs_direct_nav`.
 
 - Before placing real-money live trades, the operator MUST: (1) sign up for an Alpaca live account, (2) generate live API key + secret, (3) `uv run gekko credentials add-alpaca-live`, (4) `uv run gekko strategy promote-live <name>` (or click "Promote to Live" in the dashboard with typed-name confirm), (5) flip the strategy's mode to "live" in the dashboard. Once promoted, the FIRST live trade per strategy requires BOTH Slack approve AND dashboard `/live-confirm` (with 5s read timer + 2 ack checkboxes); subsequent live trades on the same strategy use the standard single-channel approve path.
 - The `dashboard_url` Setting defaults to `http://localhost:8000`. Operators running with an ngrok / public-facing tunnel MUST override `DASHBOARD_URL` in `.env` so the HITL-06 dual-channel Slack DM points at the correct host.

@@ -47,9 +47,8 @@ See `milestones/v1.0-ROADMAP.md` for the full archived snapshot (with detailed p
 ### 🚧 v2.0 Safety & Trust (Planned)
 
 - [x] **Phase 2: OrderGuard & Real-Money Alpaca Live (Safety Floor)** — Non-LLM cap-enforcement layer; first real money flows (still HITL). CONTEXT.md captured 2026-06-11 (commit `3ca0b06`); ready for `/gsd-plan-phase 2`. (completed 2026-06-17)
-- [x] **Phase 3: Production HITL UX (Slack Block Kit + Dashboard Fallback)** — Idempotent approval flow, quiet hours, timeout=REJECT, first-live gate. Carry-forward item from v1.0: executor-error → Slack notification. 10/10 plans executed (7 + 3 gap-closure). Automated verification 5/5 must-haves; all 4 BLOCKERs closed. Awaiting 5 human UAT items (03-HUMAN-UAT.md); run `/gsd-verify-work 3` to close. (completed 2026-06-19)
- (completed 2026-06-18)
-- [x] **Phase 4: Agent Architecture & Cost Bounds** — Research/decision separation, prompt-injection defense, two-tier cost ceiling. (completed 2026-06-23)
+- [x] **Phase 3: Production HITL UX (Slack Block Kit + Dashboard Fallback)** — Idempotent approval flow, quiet hours, timeout=REJECT, first-live gate. Carry-forward item from v1.0: executor-error → Slack notification. 15/15 plans executed (10 + 5 gap-closure). Automated verification 5/5 must-haves; all 4 BLOCKERs closed. Human UAT closed (03-HUMAN-UAT.md). Security verified — 98/98 threats closed (03-SECURITY.md). (completed 2026-06-23)
+- [x] **Phase 4: Agent Architecture & Cost Bounds** — Research/decision separation, prompt-injection defense, two-tier cost ceiling. 8/8 plans executed (5 + 3 gap-closure). Verification 5/5; human UAT closed (3 live pass, 2 deferred-with-coverage; 2 live bugs found+fixed: 04-07 /spend, 04-08 DM dedup). Security verified — 32/32 threats closed (04-SECURITY.md). (completed 2026-06-25)
 - [ ] **Phase 5: Trust Ladder (Per-Strategy Promotion & Portfolio Caps)** — Propose-only → auto-within-caps; portfolio-level caps; capital scaling rung; anomaly demotion.
 
 ### 📋 v3.0 Multi-User + Multi-Broker + Deployment (Planned)
@@ -126,7 +125,7 @@ Plans:
   4. At 80% of the configured per-user daily cost ceiling, agent enters graceful-degradation mode (longer cadence, Haiku for triage, shorter context) and Slack-DMs the user; at 100% it hard-halts further LLM calls and Slack-DMs again, resetting at user-configured timezone midnight
   5. Every LLM call is logged to the cost ledger (input tokens, output tokens, USD) and the dashboard shows spend per strategy and per user with the daily ceiling visible
 
-**Plans:** 10 plans (7 executed + 3 gap-closure)
+**Plans:** 8 plans (5 executed + 3 gap-closure)
 Plans:
 **Wave 1** *(Nyquist — test scaffolding)*
 
@@ -158,7 +157,7 @@ Plans:
 
 **Wave 8 (gap closure)**
 
-- [ ] 04-08-PLAN.md — Commit sent-date write in check_cost_ceiling (session.begin()) + real-session regression test for two-call dedup persistence (COST-04)
+- [x] 04-08-PLAN.md — Commit sent-date write in check_cost_ceiling (session.begin()) + real-session regression test for two-call dedup persistence (COST-04)
 
 **UI hint**: yes
 
@@ -261,9 +260,9 @@ Plans:
 |-------|-----------|----------------|--------|-----------|
 | 1. Foundation & Vertical Slice | v1.0 | 9/9 | Complete ✅ | 2026-06-15 |
 | 2. OrderGuard & Real-Money Alpaca Live | v2.0 | 7/7 | Complete   | 2026-06-17 |
-| 3. Production HITL UX | v2.0 | 15/15 | Complete   | 2026-06-23 |
-| 4. Agent Architecture & Cost Bounds | v2.0 | 7/7 | Complete   | 2026-06-24 |
-| 5. Trust Ladder | v2.0 | 0/0 | Not started | - |
+| 3. Production HITL UX | v2.0 | 15/15 | Complete ✅ (secured) | 2026-06-23 |
+| 4. Agent Architecture & Cost Bounds | v2.0 | 8/8 | Complete ✅ (secured) | 2026-06-25 |
+| 5. Trust Ladder | v2.0 | 0/0 | Not started ◀ next | - |
 | 6. Web Dashboard & Multi-User Auth | v3.0 | 0/0 | Not started | - |
 | 7. Operations & Observability | v3.0 | 0/0 | Not started | - |
 | 8. Additional API Brokers (IBKR + Schwab) | v3.0 | 0/0 | Not started | - |
