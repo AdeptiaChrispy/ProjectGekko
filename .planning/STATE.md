@@ -4,17 +4,17 @@ milestone: v2.0
 milestone_name: Safety & Trust
 current_phase: 05
 current_phase_name: trust-ladder-per-strategy-promotion-portfolio-caps
-status: executing
+status: verifying
 stopped_at: Phase 5 UI-SPEC approved
-last_updated: "2026-06-26T16:44:38.662Z"
+last_updated: "2026-06-26T17:04:20.104Z"
 last_activity: 2026-06-26
 last_activity_desc: Phase 05 execution started
 progress:
   total_phases: 5
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 44
-  completed_plans: 43
-  percent: 80
+  completed_plans: 44
+  percent: 100
 ---
 
 # Project State: Project Gekko
@@ -31,7 +31,7 @@ progress:
 
 Phase: 05 (trust-ladder-per-strategy-promotion-portfolio-caps) — EXECUTING
 Plan: 5 of 5
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-06-26 — Phase 05 execution started
 Next: `/gsd-discuss-phase 5` (or `/gsd-plan-phase 5`)
 
@@ -72,6 +72,7 @@ Next: `/gsd-discuss-phase 5` (or `/gsd-plan-phase 5`)
 | Phase 05 P02 | 12min | 3 tasks | 16 files |
 | Phase 05 P03 | 15min | 3 tasks | 14 files |
 | Phase 05 P04 | 18min | 3 tasks | 9 files |
+| Phase 05 P05 | 35min | 3 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -192,7 +193,7 @@ Items acknowledged and proceeded-past at milestone close on 2026-06-15:
 
 ## Session Continuity
 
-**Last session:** 2026-06-26T16:44:30.041Z
+**Last session:** 2026-06-26T17:03:42.921Z
 **Stopped at:** Phase 5 UI-SPEC approved
 **Resume file:** .planning/phases/05-trust-ladder-per-strategy-promotion-portfolio-caps/05-UI-SPEC.md
 
@@ -424,3 +425,4 @@ After the manual demo passes, the next milestone-level step is either `/gsd-comp
 - [Phase ?]: Plan 05-02: trust.py is the AST-locked sole writer of trust_level auto-within-caps; material edit demotes auto strategies and resets the streak (D-T05)
 - [Phase ?]: Portfolio caps aggregate over one get_positions() call (Alpaca nets one position per ticker); capital ceiling attributes deployed capital by strategy.watchlist
 - [Phase ?]: Capital scaling reconciled into trust.py::set_capital_ceiling; never touches trust_level/streak (D-T17); increase requires typed-name confirm via /capital/review modal
+- [Phase ?]: Auto-execution slice (05-05): auto-within-caps strategies auto-approve + execute via the single execute_proposal → OrderGuard path; LIVE+auto stacks the first-live dual-channel gate; trust evaluated once (TOCTOU); auto-exec FYI DM respects quiet hours, anomaly DM bypasses
