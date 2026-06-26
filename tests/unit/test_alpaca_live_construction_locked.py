@@ -34,8 +34,21 @@ import pytest
 
 _SRC_ROOT: Path = Path(__file__).resolve().parents[2] / "src" / "gekko"
 
-#: The single permitted site for ``AlpacaBroker(paper=False, _allow_live=True)``.
+#: Permitted sites for ``AlpacaBroker(paper=False, _allow_live=True)``. Both
+#: live in ``executor.py`` and resolve live credentials from the vault before
+#: constructing the broker:
+#:   * ``_build_broker`` — the HITL / execute path (the original single site).
+#:   * ``_build_broker_for_anomaly`` — Phase-5 post-fill anomaly reflex. It
+#:     builds a RAW (un-OrderGuard-wrapped) broker that only READS positions
+#:     and CANCELS on breach; it gates on ``load_live_credentials`` exactly
+#:     like ``_build_broker``, so it is a deliberate, credential-gated site —
+#:     not an accidental live-broker construction the grep gate guards against.
 _ALLOWED_FILE: Path = _SRC_ROOT / "execution" / "executor.py"
+_ALLOWED_FUNCTIONS: frozenset[str] = frozenset(
+    {"_build_broker", "_build_broker_for_anomaly"}
+)
+#: Back-compat alias: the positive-control test asserts the original site still
+#: carries the live path.
 _ALLOWED_FUNCTION: str = "_build_broker"
 
 
@@ -100,7 +113,7 @@ def test_alpaca_broker_paper_false_locked_to_build_broker() -> None:
             if not _keyword_has_value(node, "paper", False):
                 continue
             enclosing = _enclosing_function(tree, node.lineno)
-            if path == _ALLOWED_FILE and enclosing == _ALLOWED_FUNCTION:
+            if path == _ALLOWED_FILE and enclosing in _ALLOWED_FUNCTIONS:
                 continue
             violations.append(
                 (path, node.lineno, enclosing or "<module>")
@@ -108,8 +121,8 @@ def test_alpaca_broker_paper_false_locked_to_build_broker() -> None:
 
     if violations:
         msg_lines = [
-            "AlpacaBroker(paper=False, ...) outside _build_broker "
-            "(BLOCKER #4 grep gate):"
+            "AlpacaBroker(paper=False, ...) outside the allowed builders "
+            f"{sorted(_ALLOWED_FUNCTIONS)} (BLOCKER #4 grep gate):"
         ]
         for path, line_no, enclosing in violations:
             rel = path.relative_to(_SRC_ROOT.parent.parent)
@@ -137,7 +150,7 @@ def test_alpaca_broker_allow_live_true_locked_to_build_broker() -> None:
             if not _keyword_has_value(node, "_allow_live", True):
                 continue
             enclosing = _enclosing_function(tree, node.lineno)
-            if path == _ALLOWED_FILE and enclosing == _ALLOWED_FUNCTION:
+            if path == _ALLOWED_FILE and enclosing in _ALLOWED_FUNCTIONS:
                 continue
             violations.append(
                 (path, node.lineno, enclosing or "<module>")
@@ -145,8 +158,8 @@ def test_alpaca_broker_allow_live_true_locked_to_build_broker() -> None:
 
     if violations:
         msg_lines = [
-            "AlpacaBroker(_allow_live=True, ...) outside _build_broker "
-            "(BLOCKER #4 grep gate):"
+            "AlpacaBroker(_allow_live=True, ...) outside the allowed builders "
+            f"{sorted(_ALLOWED_FUNCTIONS)} (BLOCKER #4 grep gate):"
         ]
         for path, line_no, enclosing in violations:
             rel = path.relative_to(_SRC_ROOT.parent.parent)

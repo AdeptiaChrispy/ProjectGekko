@@ -500,11 +500,26 @@ async def test_orderguard_place_order_does_not_block_on_wash_sale(
     async def _noop_universe(req: Any, *, strategy: Any) -> None:
         return None
 
+    async def _noop_portfolio_caps(
+        *, req: Any, strategy: Any, broker: Any, user_id: str
+    ) -> None:
+        return None
+
+    async def _noop_capital_ceiling(
+        *, req: Any, strategy: Any, broker: Any, user_id: str
+    ) -> None:
+        return None
+
     monkeypatch.setattr(og_mod, "check_kill_switch", _noop_kill)
     monkeypatch.setattr(og_mod, "check_market_hours", _noop_market)
     monkeypatch.setattr(og_mod, "check_hard_caps", _noop_hard_caps)
     monkeypatch.setattr(og_mod, "check_pdt", _noop_pdt)
     monkeypatch.setattr(og_mod, "check_universe", _noop_universe)
+    # Phase 5: portfolio caps + capital ceiling also touch the vault-backed DB.
+    # No-op them too — this test only proves OrderGuard does not RE-CHECK
+    # wash-sale, not the Phase-5 cap behavior (covered by their own tests).
+    monkeypatch.setattr(og_mod, "check_portfolio_caps", _noop_portfolio_caps)
+    monkeypatch.setattr(og_mod, "check_capital_ceiling", _noop_capital_ceiling)
 
     guard = OrderGuard(
         wrapped,

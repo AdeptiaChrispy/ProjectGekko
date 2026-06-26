@@ -141,15 +141,26 @@ async def _seed_user(sf: Any) -> None:
 def _patch_seams(
     monkeypatch: pytest.MonkeyPatch, *, sf: Any
 ) -> None:
+    from gekko.execution.checks import _capital_ceiling as cc_mod
     from gekko.execution.checks import _hard_caps as hc_mod
     from gekko.execution.checks import _kill_switch as ks_mod
     from gekko.execution.checks import _market_hours as mh_mod
+    from gekko.execution.checks import _portfolio_caps as pc_mod
 
     monkeypatch.setattr(
         ks_mod, "_get_session_factory", lambda _u: (sf, None)
     )
     monkeypatch.setattr(
         hc_mod, "_get_session_factory", lambda _u: (sf, None)
+    )
+    # Phase 5: portfolio caps + capital ceiling build a vault-backed session
+    # eagerly on EVERY place_order. Point them at the same test factory the
+    # kill-switch / hard-caps seams already use (mirrors the existing idiom).
+    monkeypatch.setattr(
+        pc_mod, "_get_session_factory", lambda _u: (sf, None)
+    )
+    monkeypatch.setattr(
+        cc_mod, "_get_session_factory", lambda _u: (sf, None)
     )
     monkeypatch.setattr(mh_mod, "is_market_open", lambda *a, **k: True)
 
