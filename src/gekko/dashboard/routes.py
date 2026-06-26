@@ -1628,6 +1628,31 @@ async def strategy_save(
             detail=f"Invalid strategy fields: {exc}",
         ) from exc
 
+    # Load the prior snapshot (if any) so we can detect a MATERIAL edit
+    # (watchlist or hard_caps changed → new effective behavior) vs a
+    # thesis-only / schedule-only edit (D-T05). Material edits on an
+    # auto-within-caps strategy must reset trust (demote) so the operator
+    # re-earns autonomy under the new configuration.
+    async with make_session_factory(engine)() as session:
+        prior_q = (
+            select(StrategyRow)
+            .where(
+                StrategyRow.user_id == user_id,
+                StrategyRow.strategy_name == name,
+            )
+            .order_by(desc(StrategyRow.version))
+            .limit(1)
+        )
+        prior_row = (await session.execute(prior_q)).scalar_one_or_none()
+
+    is_material_edit = False
+    if prior_row is not None:
+        prior = Strategy.model_validate_json(prior_row.payload_json)
+        is_material_edit = (
+            prior.watchlist != new_strategy.watchlist
+            or prior.hard_caps != new_strategy.hard_caps
+        )
+
     async with make_session_factory(engine)() as session, session.begin():
         v = await next_version(
             session, user_id=user_id, strategy_name=name
@@ -1643,6 +1668,26 @@ async def strategy_save(
                 created_at=versioned.created_at,
             )
         )
+
+    # D-T05: a material edit demotes an auto strategy (resets the streak
+    # window via the trust_demoted boundary). Done AFTER the snapshot commit
+    # and only when the strategy is currently auto-within-caps.
+    if is_material_edit:
+        from gekko.strategy.trust import (
+            TRUST_AUTO,
+            demote_strategy_from_auto,
+            load_trust_level,
+        )
+
+        current_trust = await load_trust_level(
+            user_id=user_id, strategy_name=name
+        )
+        if current_trust == TRUST_AUTO:
+            await demote_strategy_from_auto(
+                user_id=user_id,
+                strategy_name=name,
+                reason="material_edit",
+            )
 
     return RedirectResponse(
         url=f"/strategies/{name}/edit", status_code=303
