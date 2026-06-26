@@ -76,15 +76,27 @@ def test_0005_frozen_vocab_post_adds_phase4_types() -> None:
     )
 
 
-def test_0005_models_event_types_match_frozen_post() -> None:
-    """models.py _EVENT_TYPES matches migration 0005 _FROZEN_EVENT_TYPES_POST."""
-    from gekko.db.models import _EVENT_TYPES
+def test_0005_frozen_post_chains_to_0006() -> None:
+    """0005 _FROZEN_EVENT_TYPES_POST equals 0006's frozen vocabulary (chain).
 
+    Each migration's frozen vocabulary is a HISTORICAL snapshot pinned at that
+    migration's point in the chain — it is NOT the ever-growing live model.
+    0005 was the head when this guard was written; once 0006/0007 extended the
+    vocabulary, asserting ``models._EVENT_TYPES == 0005 POST`` became wrong by
+    design (it would re-fail on every legitimate future extension). The
+    live-model-vs-vocabulary assertion now lives in the LATEST migration's test
+    (``test_migration_0007.test_0007_models_event_types_match_frozen_post``);
+    older migrations assert chain consistency against their immediate successor,
+    mirroring ``test_0006_frozen_vocab_chain``. This keeps the frozen-vocabulary
+    guard intact (it still forces a conscious chain update) without weakening it.
+    """
     mod5 = _load_migration("migrations/versions/0005_p4_cost_ceiling.py")
-    assert set(_EVENT_TYPES) == set(mod5._FROZEN_EVENT_TYPES_POST), (
-        "models.py _EVENT_TYPES does not match 0005 _FROZEN_EVENT_TYPES_POST\n"
-        f"In models but not migration: {set(_EVENT_TYPES) - set(mod5._FROZEN_EVENT_TYPES_POST)}\n"
-        f"In migration but not models: {set(mod5._FROZEN_EVENT_TYPES_POST) - set(_EVENT_TYPES)}"
+    mod6 = _load_migration("migrations/versions/0006_p4_cost_ceiling_repair.py")
+    assert set(mod5._FROZEN_EVENT_TYPES_POST) == set(mod6._FROZEN_EVENT_TYPES), (
+        "0005 _FROZEN_EVENT_TYPES_POST does not match 0006 _FROZEN_EVENT_TYPES — "
+        "frozen vocabulary chain is broken at 0005 -> 0006\n"
+        f"In 0005 POST but not 0006: {set(mod5._FROZEN_EVENT_TYPES_POST) - set(mod6._FROZEN_EVENT_TYPES)}\n"
+        f"In 0006 but not 0005 POST: {set(mod6._FROZEN_EVENT_TYPES) - set(mod5._FROZEN_EVENT_TYPES_POST)}"
     )
 
 
