@@ -66,6 +66,9 @@ from gekko.agent.budget import BudgetTracker
 from gekko.agent.cost_ceiling import CeilingCheck, check_cost_ceiling
 from gekko.agent.decision import DECISION_TOOLS, build_decision_prompt
 from gekko.agent.proposal_writer import write_proposal
+from gekko.approval.proposals import approve_proposal, transition_status
+from gekko.execution.executor import execute_proposal
+from gekko.strategy.trust import TRUST_AUTO, load_trust_level
 from gekko.agent.researcher import RESEARCHER_TOOLS, build_researcher_prompt
 from gekko.agent.tools.alpaca_data import get_quote
 from gekko.agent.tools.context import set_tool_context
@@ -81,6 +84,7 @@ from gekko.core.errors import ProposalRejected
 from gekko.db.engine import get_async_engine
 from gekko.db.models import Guidance as GuidanceRow
 from gekko.db.models import Strategy as StrategyRow
+from gekko.db.models import StrategyMetadata as StrategyMetadataRow
 from gekko.db.session import AsyncSessionLocal, make_session_factory
 from gekko.logging_config import get_logger
 from gekko.schemas.proposal import NoActionProposal, TradeProposal
@@ -899,11 +903,48 @@ async def trigger_strategy_run(
             )
             raise
 
+        # ---- 6. Auto-execution branch (TRUST-02 / SC-2). --------------------
+        #
+        # The deterministic auto-branch sits BELOW the SDK boundary — this is
+        # plain Python, NOT an LLM call. For a strategy promoted to
+        # ``auto-within-caps`` (the SOLE writer is ``trust.py``, AST-locked),
+        # a TradeProposal is auto-approved and executed WITHOUT HITL, routing
+        # through ``approve_proposal`` → ``execute_proposal`` → OrderGuard so
+        # caps are re-checked as the last line (D-T08). There is NO second
+        # order path — the broker is never called directly from this module
+        # (grep gate: no place_order call in runtime.py).
+        #
+        # CRITICAL invariants:
+        #   * Trust is evaluated ONCE here (proposal-build time). It is never
+        #     re-derived at execute time — a demotion takes effect on the NEXT
+        #     cycle (SC-1 / BLOCKER #5 TOCTOU lesson). ``account_mode`` is read
+        #     from the LOCKED proposal row, never from live strategy state.
+        #   * LIVE + auto STILL stacks the Phase-2 first-live dual-channel gate:
+        #     a LIVE proposal whose strategy has ``first_live_trade_confirmed_at
+        #     IS NULL`` routes to AWAITING_2ND_CHANNEL (HITL), NOT direct
+        #     execute (D-T03). live + auto inherits every guard.
+        #   * NoActionProposal never auto-executes — only TradeProposal.
+        auto_outcome = tool_outcome
+        if isinstance(proposal, TradeProposal):
+            trust = await load_trust_level(
+                user_id=user_id,
+                strategy_name=strategy_name,
+                account_mode=proposal.account_mode,
+            )
+            if trust == TRUST_AUTO:
+                auto_outcome = await _run_auto_branch(
+                    proposal=proposal,
+                    user_id=user_id,
+                    strategy_db_id=strategy_db_id,
+                    session_factory=session_factory,
+                )
+
         log.info(
             "agent.run.complete",
             user_id=user_id,
             run_id=run_id,
             outcome=tool_outcome,
+            auto_outcome=auto_outcome,
             budget=budget.to_dict(),
         )
 
@@ -911,6 +952,7 @@ async def trigger_strategy_run(
             "run_id": run_id,
             "decision_id": decision_id,
             "outcome": tool_outcome,
+            "auto_outcome": auto_outcome,
             "proposal": proposal.model_dump(mode="json"),
             "budget": budget.to_dict(),
             "source": source,
@@ -918,6 +960,130 @@ async def trigger_strategy_run(
     finally:
         if own_engine and engine is not None:
             await engine.dispose()
+
+
+async def _run_auto_branch(
+    *,
+    proposal: TradeProposal,
+    user_id: str,
+    strategy_db_id: str,
+    session_factory: AsyncSessionLocal,
+) -> str:
+    """Auto-approve + execute (or stack the live gate) for an auto strategy.
+
+    Called by :func:`trigger_strategy_run` ONLY when the strategy's trust level
+    is ``auto-within-caps`` (evaluated once, above) and the proposal is a
+    :class:`TradeProposal`. Returns the auto-branch outcome string:
+
+      * ``"auto_executed"`` — approved + dispatched through
+        ``execute_proposal`` (OrderGuard re-checks every cap as the last line).
+      * ``"awaiting_2nd_channel"`` — LIVE strategy whose first live trade is
+        not yet confirmed: routed to the Phase-2 dual-channel HITL gate, NOT
+        direct execute (D-T03). live + auto stacks both gates.
+
+    The proposal row's primary key equals the decision_id (1:1 mapping in the
+    Proposal Writer), and the returned :class:`TradeProposal` carries that id
+    as ``decision_id`` — use it as the ``proposal_id`` for the state-machine +
+    executor calls.
+    """
+    proposal_id = proposal.decision_id
+
+    # CRITICAL (D-T03): a LIVE auto strategy STILL passes the first-live
+    # dual-channel gate. Read first_live_trade_confirmed_at from the metadata
+    # row; when it is NULL this is the first live trade for the strategy, so
+    # route to AWAITING_2ND_CHANNEL (HITL) instead of direct execute. The
+    # account_mode is read from the LOCKED proposal row (TOCTOU-safe).
+    if proposal.account_mode == "LIVE":
+        # Read the first-live stamp through the SAME session_factory the run
+        # uses (TOCTOU-safe + matches the injected test seam). Mirrors the
+        # Slack approve handler's StrategyMetadata.get by (user_id, name).
+        async with session_factory() as s:
+            meta = await s.get(
+                StrategyMetadataRow, (user_id, proposal.strategy_name)
+            )
+        is_live_first = (
+            meta is None or meta.first_live_trade_confirmed_at is None
+        )
+        if is_live_first:
+            # Divert PENDING → AWAITING_2ND_CHANNEL exactly as the Slack
+            # approve handler does. Do NOT dispatch the executor; the
+            # dashboard /live-confirm route fires it after the second channel
+            # confirms. The approval audit event records the auto actor +
+            # the live-gate diversion so the chain captures the stacked gate.
+            async with session_factory() as s, s.begin():
+                await transition_status(
+                    s,
+                    proposal_id,
+                    from_status="PENDING",
+                    to_status="AWAITING_2ND_CHANNEL",
+                )
+                await append_event(
+                    s,
+                    user_id=user_id,
+                    strategy_id=strategy_db_id,
+                    event_type="approval",
+                    payload=normalize_decimals(
+                        {
+                            "proposal_id": proposal_id,
+                            "actor": "auto-execute",
+                            "slack_action_id": "approve_proposal",
+                            "execution_path": "auto",
+                            "awaiting_2nd_channel": True,
+                            "strategy_name": proposal.strategy_name,
+                            "account_mode": proposal.account_mode,
+                        }
+                    ),
+                )
+            log.info(
+                "agent.run.auto_live_first_dual_channel",
+                user_id=user_id,
+                strategy_name=proposal.strategy_name,
+                proposal_id=proposal_id,
+            )
+            return "awaiting_2nd_channel"
+
+    # Auto-approve + write the auto_execution audit event, then dispatch
+    # through execute_proposal → OrderGuard (the single enforcement path; caps
+    # are re-checked as the last line, D-T08). A cap breach on this path
+    # raises inside execute_proposal → cap_rejection event + FAILED status —
+    # the auto path is structurally incapable of bypassing OrderGuard.
+    async with session_factory() as s, s.begin():
+        await approve_proposal(
+            s,
+            proposal_id,
+            actor="auto-execute",
+            extra_payload={"execution_path": "auto"},
+        )
+        await append_event(
+            s,
+            user_id=user_id,
+            strategy_id=strategy_db_id,
+            event_type="auto_execution",
+            payload=normalize_decimals(
+                {
+                    "proposal_id": proposal_id,
+                    "strategy_name": proposal.strategy_name,
+                    "account_mode": proposal.account_mode,
+                    "side": str(proposal.side),
+                    "qty": proposal.qty,
+                    "ticker": proposal.ticker,
+                    "rationale_summary": proposal.rationale[:140],
+                }
+            ),
+        )
+
+    # OrderGuard re-checks all caps as the last line (D-T08). The broker is
+    # never invoked directly from this module — execute_proposal owns the
+    # single enforcement path.
+    await execute_proposal(proposal_id, user_id)
+
+    log.info(
+        "agent.run.auto_executed",
+        user_id=user_id,
+        strategy_name=proposal.strategy_name,
+        proposal_id=proposal_id,
+    )
+    return "auto_executed"
 
 
 # ---------------------------------------------------------------------------

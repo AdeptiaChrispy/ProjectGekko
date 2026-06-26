@@ -71,7 +71,49 @@ def test_no_module_outside_trust_assigns_auto_within_caps() -> None:
     reason="auto-branch (load_trust_level) not yet wired into runtime (Plan 05)",
 )
 def test_auto_branch_is_guarded_by_trust_check() -> None:
-    """The auto execute_proposal path is gated by a trust == 'auto-within-caps' check."""
+    """The auto execute_proposal path is gated by a trust == 'auto-within-caps' check.
+
+    Invariant 2 (RESEARCH Validation Architecture): the auto-branch in
+    runtime.py reaches ``execute_proposal`` only after a
+    ``trust == TRUST_AUTO`` guard. We assert structurally that:
+
+      * the auto literal appears (the guard exists), AND
+      * runtime.py never calls ``broker.place_order`` directly (the auto path
+        is the single OrderGuard-protected path — D-T08).
+    """
     runtime_src = (_SRC_ROOT / "agent" / "runtime.py").read_text(encoding="utf-8")
-    # The guard literal must appear in the same module as the auto-branch.
-    assert _AUTO_LITERAL in runtime_src
+    # The trust guard (TRUST_AUTO constant equals the auto literal) is present.
+    assert "TRUST_AUTO" in runtime_src or _AUTO_LITERAL in runtime_src
+    # No direct broker path — the auto trade must traverse execute_proposal.
+    assert "broker.place_order" not in runtime_src, (
+        "runtime.py must not call broker.place_order directly — route through "
+        "execute_proposal so OrderGuard re-checks all caps (D-T08)."
+    )
+    # The auto-branch dispatches through execute_proposal (the single path).
+    assert "execute_proposal" in runtime_src
+
+
+@pytest.mark.skipif(
+    not (_SRC_ROOT / "agent" / "runtime.py").exists()
+    or "_run_auto_branch"
+    not in (_SRC_ROOT / "agent" / "runtime.py").read_text(encoding="utf-8"),
+    reason="auto-branch not yet wired into runtime (Plan 05)",
+)
+def test_auto_branch_stacks_live_first_trade_gate() -> None:
+    """The auto-branch routes LIVE first trades to the dual-channel gate (D-T03).
+
+    AST/source gate: the auto-branch must reference both the first-live stamp
+    column (``first_live_trade_confirmed_at``) and the dual-channel target
+    status (``AWAITING_2ND_CHANNEL``) so a LIVE auto strategy whose first live
+    trade is unconfirmed cannot direct-execute. The behavioral lock is in
+    ``tests/unit/test_auto_execute.py::test_live_first_trade_routes_to_dual_channel_not_execute``.
+    """
+    runtime_src = (_SRC_ROOT / "agent" / "runtime.py").read_text(encoding="utf-8")
+    assert "first_live_trade_confirmed_at" in runtime_src, (
+        "auto-branch must check first_live_trade_confirmed_at so LIVE+auto "
+        "stacks the Phase-2 dual-channel gate (D-T03)."
+    )
+    assert "AWAITING_2ND_CHANNEL" in runtime_src, (
+        "auto-branch must route the first LIVE auto trade to "
+        "AWAITING_2ND_CHANNEL, not direct execute (D-T03)."
+    )
