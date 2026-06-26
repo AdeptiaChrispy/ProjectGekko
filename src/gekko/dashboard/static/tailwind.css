@@ -462,3 +462,137 @@ button:disabled:hover, .btn-disabled:hover {
   line-height: 1.5;
 }
 .empty-state-glyph { font-size: 32px; margin-bottom: 8px; }
+
+/* ---------------------------------------------------------------------------
+ * Phase 5 — Trust Ladder: trust badges, streak meter, portfolio-cap fields,
+ * auto-execution chip. APPENDED below the Phase 3 block — DO NOT modify rules
+ * above. All values reuse existing Phase 1-3 palette hexes.
+ * ---------------------------------------------------------------------------*/
+
+/* Trust badges (parity with chip-live / chip-expired family) */
+.badge-trust-propose {
+  display: inline-block;
+  background-color: #e5e7eb;   /* neutral gray — safe default */
+  color: #4b5563;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.badge-trust-auto {
+  display: inline-block;
+  background-color: #d1fae5;   /* success green — active autonomy */
+  color: #065f46;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Capital ceiling chip (neutral — it's a fact, not a state) */
+.chip-capital {
+  display: inline-block;
+  background-color: #f3f4f6;
+  color: #374151;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+/* Auto-executed chip (blue — system action, no human gate) */
+.chip-auto-executed {
+  display: inline-block;
+  background-color: #dbeafe;
+  color: #1e40af;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* 10-approval streak progress meter */
+.trust-progress-track {
+  height: 8px;
+  background-color: #e5e7eb;
+  border-radius: 4px;
+  overflow: hidden;
+  width: 100%;
+  margin: 8px 0;
+}
+.trust-progress-fill {
+  height: 100%;
+  background-color: #065f46;   /* green = earned progress */
+}
+.trust-progress-caption {
+  font-size: 14px;
+  font-weight: 400;
+  color: #4b5563;
+  line-height: 1.4;
+}
+
+/* Promote-to-auto caution button (caution-yellow — read before acting) */
+.btn-caution {
+  background-color: #fef3c7;
+  color: #92400e;
+  border: 1px solid #f59e0b;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 12px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.btn-caution:hover { background-color: #fde68a; }
+
+/* Blocked-promotion explanation (caution — gate working as designed, NOT error) */
+.promotion-blocked {
+  background-color: #fef3c7;
+  color: #92400e;
+  border-left: 4px solid #f59e0b;
+  padding: 12px 16px;
+  border-radius: 4px;
+  font-size: 16px;
+  line-height: 1.5;
+  margin: 16px 0;
+}
+
+/* Anomaly-demotion notice (red — genuine safety event) */
+.anomaly-notice {
+  background-color: #fee2e2;
+  color: #991b1b;
+  border-left: 4px solid #dc2626;
+  padding: 12px 16px;
+  border-radius: 4px;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.5;
+  margin: 16px 0;
+}
+
+/* Strategy-row layout in the strategies list (trust + capital affordances) */
+.strategy-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background-color: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 16px 24px;
+  margin-bottom: 16px;
+}
+.strategy-row-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.strategy-row-actions { display: flex; align-items: center; gap: 8px; }
+.strategy-row-actions > button,
+.strategy-row-actions > a { min-height: 44px; min-width: 80px; }
+
+/* Portfolio-caps settings fieldset rows */
+.cap-field-row { display: flex; align-items: baseline; gap: 16px; margin-bottom: 16px; }
+.cap-field-row label { flex: 0 0 280px; }
+.cap-field-row input { flex: 0 0 160px; }

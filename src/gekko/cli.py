@@ -786,6 +786,187 @@ def strategy_demote_live(
 
 
 # ---------------------------------------------------------------------------
+# `gekko strategy promote-auto` / `demote-auto` / `trust-status`
+# Phase 5 Plan 02 — TRUST-01 / D-T04 (CLI parity; NO Slack promote command).
+# ---------------------------------------------------------------------------
+
+
+@strategy_app.command("promote-auto")
+def strategy_promote_auto(
+    name: str = typer.Argument(
+        ..., help="Strategy slug to promote to auto-execute."
+    ),
+    mode: str = typer.Option(
+        "PAPER", help="Account mode whose streak to check (PAPER/LIVE)."
+    ),
+) -> None:
+    """Promote a strategy to auto-execute within caps (TRUST-01).
+
+    Mirrors the dashboard ``POST /strategies/{name}/promote-auto`` route:
+    requires a typed-name confirm AND re-checks the clean-approval streak
+    server-side (D-T18b) — an ineligible strategy is NEVER promoted; the CLI
+    explains which criterion failed instead (SC-5).
+    """
+    from gekko.config import get_settings
+    from gekko.db.engine import get_async_engine
+    from gekko.db.session import make_session_factory
+    from gekko.logging_config import configure_logging
+    from gekko.strategy.streak import compute_clean_streak
+    from gekko.strategy.trust import promote_strategy_to_auto
+    from gekko.vault.passphrase import (
+        get_passphrase,
+        prompt_passphrase,
+    )
+
+    configure_logging()
+    settings = get_settings()
+    account_mode = mode.strip().upper()
+
+    typer.echo(
+        f"Promoting strategy {name!r} to auto-execute "
+        f"({account_mode}). It will place trades without asking first, "
+        "within its caps. You can demote any time."
+    )
+    ack = typer.prompt(f"Type the strategy name {name!r} to confirm")
+    if ack.strip() != name:
+        typer.echo("Aborted — typed confirmation did not match.")
+        raise typer.Exit(code=1)
+
+    try:
+        get_passphrase()
+    except RuntimeError:
+        prompt_passphrase()
+
+    async def _run() -> None:
+        engine = get_async_engine(
+            settings.db_path_for(settings.gekko_user_id),
+            get_passphrase(),
+        )
+        try:
+            async with make_session_factory(engine)() as session:
+                streak = await compute_clean_streak(
+                    session=session,
+                    user_id=settings.gekko_user_id,
+                    strategy_name=name,
+                    account_mode=account_mode,
+                )
+        finally:
+            await engine.dispose()
+        if not streak.eligible:
+            typer.echo(
+                f"Not eligible: {streak.block_reason} "
+                f"({streak.clean_count}/{streak.threshold} clean approvals)."
+            )
+            raise typer.Exit(code=1)
+        await promote_strategy_to_auto(
+            user_id=settings.gekko_user_id,
+            strategy_name=name,
+            account_mode=account_mode,
+            clean_count=streak.clean_count,
+        )
+
+    asyncio.run(_run())
+    typer.echo(
+        f"Strategy {name!r} is now auto-within-caps ({account_mode})."
+    )
+
+
+@strategy_app.command("demote-auto")
+def strategy_demote_auto(
+    name: str = typer.Argument(
+        ..., help="Strategy slug to demote from auto-execute."
+    ),
+) -> None:
+    """Demote a strategy back to propose-only (TRUST-01 / D-T04).
+
+    One-step, always-safe (removes autonomy → back to HITL). Takes effect on
+    the next decision cycle.
+    """
+    from gekko.config import get_settings
+    from gekko.logging_config import configure_logging
+    from gekko.strategy.trust import demote_strategy_from_auto
+    from gekko.vault.passphrase import get_passphrase, prompt_passphrase
+
+    configure_logging()
+    settings = get_settings()
+
+    try:
+        get_passphrase()
+    except RuntimeError:
+        prompt_passphrase()
+
+    asyncio.run(
+        demote_strategy_from_auto(
+            user_id=settings.gekko_user_id,
+            strategy_name=name,
+            reason="operator",
+        )
+    )
+    typer.echo(
+        f"Strategy {name!r} demoted to propose-only — "
+        "takes effect on the next decision cycle."
+    )
+
+
+@strategy_app.command("trust-status")
+def strategy_trust_status(
+    name: str = typer.Argument(..., help="Strategy slug to inspect."),
+    mode: str = typer.Option(
+        "PAPER", help="Account mode whose streak to report (PAPER/LIVE)."
+    ),
+) -> None:
+    """Print the clean-approval streak + eligibility for a strategy (TRUST-01)."""
+    from gekko.config import get_settings
+    from gekko.db.engine import get_async_engine
+    from gekko.db.session import make_session_factory
+    from gekko.logging_config import configure_logging
+    from gekko.strategy.streak import compute_clean_streak
+    from gekko.strategy.trust import load_trust_level
+    from gekko.vault.passphrase import get_passphrase, prompt_passphrase
+
+    configure_logging()
+    settings = get_settings()
+    account_mode = mode.strip().upper()
+
+    try:
+        get_passphrase()
+    except RuntimeError:
+        prompt_passphrase()
+
+    async def _run() -> tuple[str, object]:
+        trust = await load_trust_level(
+            user_id=settings.gekko_user_id,
+            strategy_name=name,
+            account_mode=account_mode,
+        )
+        engine = get_async_engine(
+            settings.db_path_for(settings.gekko_user_id),
+            get_passphrase(),
+        )
+        try:
+            async with make_session_factory(engine)() as session:
+                streak = await compute_clean_streak(
+                    session=session,
+                    user_id=settings.gekko_user_id,
+                    strategy_name=name,
+                    account_mode=account_mode,
+                )
+        finally:
+            await engine.dispose()
+        return trust, streak
+
+    trust, streak = asyncio.run(_run())
+    typer.echo(f"Strategy:     {name} ({account_mode})")
+    typer.echo(f"Trust level:  {trust}")
+    typer.echo(
+        f"Clean streak: {streak.clean_count}/{streak.threshold}"
+    )
+    typer.echo(f"Eligible:     {streak.eligible}")
+    if streak.block_reason:
+        typer.echo(f"Blocked by:   {streak.block_reason}")
+
+
+# ---------------------------------------------------------------------------
 # `gekko audit verify` / `dump`
 # ---------------------------------------------------------------------------
 

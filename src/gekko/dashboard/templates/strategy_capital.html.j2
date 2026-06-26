@@ -1,0 +1,37 @@
+{% extends "base.html.j2" %}
+
+{% block title %}Scale capital — {{ name }}{% endblock %}
+
+{% block content %}
+{# Capital-scaling page — Phase 5 TRUST-03 Surface 3. A separate rung from
+   autonomy: changing capital does NOT touch trust level or the streak. #}
+<div class="container" style="margin-top: 32px;">
+  <h1 class="text-2xl font-semibold">Scale capital — {{ name }}</h1>
+  <p class="mt-2 trust-progress-caption">
+    Capital scaling is a separate rung from autonomy. Changing it does <strong>not</strong> affect this
+    strategy's trust level or its clean-approval streak.
+  </p>
+
+  <div class="strategy-row" style="margin-top: 24px;">
+    <div class="strategy-row-meta">
+      <span class="chip-capital">Current ceiling: ${{ current_ceiling_display }}</span>
+      {% if trust_level == "auto-within-caps" %}<span class="badge-trust-auto">AUTO ✓</span>{% else %}<span class="badge-trust-propose">PROPOSE-ONLY</span>{% endif %}
+    </div>
+  </div>
+
+  <form hx-post="/strategies/{{ name }}/capital" hx-target="#capital-result" hx-swap="outerHTML"
+        class="form-stack" style="margin-top: 24px;">
+    <label for="new_ceiling">New capital ceiling (USD)</label>
+    <input type="number" id="new_ceiling" name="new_ceiling" step="0.01" min="0"
+           value="{{ current_ceiling_display }}" aria-describedby="capital-help">
+    <input type="hidden" name="strategy_name_confirm" value="{{ name }}">
+    <p class="form-help" id="capital-help">
+      This caps the strategy's <strong>total deployed capital</strong> (open positions + the next order),
+      enforced in OrderGuard on every trade. Raising it requires a confirmation; lowering it applies
+      immediately.
+    </p>
+    <button type="submit" class="btn-primary">Save ceiling</button>
+  </form>
+  <div id="capital-result"></div>
+</div>
+{% endblock %}

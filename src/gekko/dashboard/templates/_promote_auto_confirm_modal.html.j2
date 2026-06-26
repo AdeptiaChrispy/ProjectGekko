@@ -1,0 +1,44 @@
+{# Promote-to-auto confirmation modal — Phase 5 TRUST-01 Surface 2.
+
+   Only rendered when compute_clean_streak(...).eligible is True (the route
+   re-checks; the blocked path renders _promote_auto_blocked_modal instead).
+   Typed-strategy-name confirm mirrors the Phase-2 promote-to-live precedent.
+
+   Context: name, streak_count, account_mode, capital_ceiling_display,
+   anomaly_threshold_pct. #}
+<div class="modal-backdrop">
+  <div class="modal" role="dialog" aria-labelledby="promote-auto-headline" aria-modal="true">
+    <h2 id="promote-auto-headline" class="modal-headline">Promote to auto-execute</h2>
+    <div class="modal-body">
+      <div class="caution-block" role="note">
+        🚦 After this, <code>{{ name }}</code> will place trades <strong>without asking you first</strong>,
+        within its caps. Every auto-trade is still recorded and sent to you as an FYI — but there is no
+        approve step. You can demote back to propose-only at any time, one click.
+      </div>
+      <p class="mt-4">This strategy qualified: <strong>{{ streak_count }} clean approvals</strong>,
+        zero cap breaches in the window.</p>
+      <ul class="mt-2 trust-progress-caption">
+        <li>Mode: <strong>{{ "LIVE — real money" if account_mode == "LIVE" else "Paper" }}</strong></li>
+        <li>Capital ceiling: <strong>${{ capital_ceiling_display }}</strong> (scale separately)</li>
+        <li>Anomaly auto-demote at: <strong>{{ anomaly_threshold_pct }}% single-day drawdown</strong></li>
+      </ul>
+      {% if account_mode == "LIVE" %}
+      <div class="anomaly-notice" role="alert">
+        ⚠️ This is a LIVE strategy. Auto-execute on live money still places real orders without a per-trade
+        approval. (Your first live trade gate already passed.)
+      </div>
+      {% endif %}
+      <p class="mt-4">Type the strategy name <code>{{ name }}</code> to confirm:</p>
+      <form hx-post="/strategies/{{ name }}/promote-auto"
+            hx-target="#promote-auto-result" hx-swap="outerHTML" class="mt-2">
+        <input type="text" name="strategy_name_confirm" required autocomplete="off"
+               class="w-full mb-3" aria-label="Strategy name confirmation" placeholder="{{ name }}">
+        <div class="modal-actions">
+          <a href="#" hx-get="/modal/close" hx-target="#modal-mount" hx-swap="innerHTML">Cancel</a>
+          <button type="submit" class="btn-caution">Promote to auto-execute</button>
+        </div>
+      </form>
+      <div id="promote-auto-result"></div>
+    </div>
+  </div>
+</div>

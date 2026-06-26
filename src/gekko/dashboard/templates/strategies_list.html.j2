@@ -20,39 +20,7 @@
   </thead>
   <tbody>
     {% for s in strategies %}
-    <tr>
-      <td class="font-medium">
-        {{ s.strategy_name }}
-        {# Plan 02-06 Task 3 — [LIVE] chip per UI-SPEC §"Visuals".
-           Renders only on live-eligible strategies; paper-only rows are
-           visually unchanged from Phase 1. #}
-        {% if s.live_mode_eligible %}
-          <span class="chip-live">LIVE</span>
-        {% endif %}
-      </td>
-      <td>v{{ s.version }}</td>
-      <td class="text-sm text-gray-700">{{ s.watchlist_preview }}</td>
-      <td class="flex gap-2">
-        <a href="/strategies/{{ s.strategy_name }}/edit">Edit</a>
-        <button hx-post="/trigger/{{ s.strategy_name }}"
-                hx-swap="outerHTML">
-          Trigger Run
-        </button>
-        {# UI-SPEC §"Destructive Action Confirmations" — Promote-to-Live
-           button rendered only on paper-only strategies. Opens a modal
-           with the typed-strategy-name confirm form. The dashboard's
-           POST /strategies/{name}/promote-to-live route validates the
-           confirm field. #}
-        {% if not s.live_mode_eligible %}
-          <button hx-get="/strategies/{{ s.strategy_name }}/promote-modal"
-                  hx-target="#modal-mount"
-                  hx-swap="innerHTML"
-                  class="danger">
-            Promote to Live
-          </button>
-        {% endif %}
-      </td>
-    </tr>
+    {% include "_strategy_row.html.j2" %}
     {% endfor %}
   </tbody>
 </table>

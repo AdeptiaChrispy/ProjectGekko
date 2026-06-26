@@ -1,0 +1,65 @@
+{# Single strategies-list row — Phase 5 TRUST-01 Surface 1.
+
+   Renders BOTH orthogonal axes (paper/live + autonomy) and the
+   promote/demote-auto controls. Re-rendered standalone after a promote or
+   demote POST so HTMX can swap the row in place (outerHTML on the closest
+   row, or hx-swap-oob targeting this id).
+
+   Expects ``s`` in context with: strategy_name, version, watchlist_preview,
+   account_mode, live_mode_eligible, trust_level, promotion_eligible,
+   capital_ceiling_display. #}
+<tr id="strategy-row-{{ s.strategy_name }}" class="strategy-row" data-strategy="{{ s.strategy_name }}">
+  <td class="font-medium">
+    {{ s.strategy_name }}
+    {# Paper/live axis (Phase 2). #}
+    {% if s.live_mode_eligible %}
+      <span class="chip-live">LIVE</span>
+    {% endif %}
+    {# Autonomy axis (Phase 5). #}
+    {% if s.trust_level == "auto-within-caps" %}
+      <span class="badge-trust-auto" aria-label="autonomy: auto-execute within caps">AUTO ✓</span>
+    {% else %}
+      <span class="badge-trust-propose" aria-label="autonomy: propose-only, human approval required">PROPOSE-ONLY</span>
+    {% endif %}
+    <span class="chip-capital" aria-label="capital ceiling">💵 ${{ s.capital_ceiling_display }}</span>
+  </td>
+  <td>v{{ s.version }}</td>
+  <td class="text-sm text-gray-700">{{ s.watchlist_preview }}</td>
+  <td class="strategy-row-actions flex gap-2">
+    <a href="/strategies/{{ s.strategy_name }}/edit">Edit</a>
+    <button hx-post="/trigger/{{ s.strategy_name }}" hx-swap="outerHTML">
+      Trigger Run
+    </button>
+    {# Promote-to-Live (Phase 2) — paper-only strategies. #}
+    {% if not s.live_mode_eligible %}
+      <button hx-get="/strategies/{{ s.strategy_name }}/promote-modal"
+              hx-target="#modal-mount" hx-swap="innerHTML" class="danger">
+        Promote to Live
+      </button>
+    {% endif %}
+    {# Autonomy axis controls (Phase 5 TRUST-01). #}
+    {% if s.trust_level == "auto-within-caps" %}
+      <button class="btn-primary"
+              hx-post="/strategies/{{ s.strategy_name }}/demote-auto"
+              hx-target="closest tr" hx-swap="outerHTML"
+              hx-disable-elt="this"
+              aria-label="Demote {{ s.strategy_name }} to propose-only. Takes effect next decision cycle.">
+        Demote to propose-only
+      </button>
+    {% elif s.promotion_eligible %}
+      <button class="btn-caution"
+              hx-get="/strategies/{{ s.strategy_name }}/promote-auto/confirm-modal"
+              hx-target="#modal-mount" hx-swap="innerHTML"
+              aria-label="Promote {{ s.strategy_name }} to auto-execute within caps. Opens confirmation.">
+        Promote to auto-execute
+      </button>
+    {% else %}
+      <button class="btn-disabled"
+              hx-get="/strategies/{{ s.strategy_name }}/promote-auto/blocked-modal"
+              hx-target="#modal-mount" hx-swap="innerHTML"
+              aria-label="Why can't this strategy be promoted yet?">
+        Promote to auto-execute
+      </button>
+    {% endif %}
+  </td>
+</tr>

@@ -1,0 +1,42 @@
+{# Blocked-promotion explanation modal — Phase 5 TRUST-01 / SC-5 Surface 5.
+
+   The SC-5 anti-pattern this prevents: a silent no-op when criteria aren't
+   met. Clicking the (disabled-styled) Promote button — or a forged POST to
+   /promote-auto for an ineligible strategy — renders THIS, explaining which
+   criterion failed and how far the streak is.
+
+   Context: name, streak_count, threshold, block_reason, breach_date,
+   edit_date. #}
+<div class="modal-backdrop">
+  <div class="modal" role="dialog" aria-labelledby="blocked-headline" aria-modal="true">
+    <h2 id="blocked-headline" class="modal-headline">Not ready for auto-execute yet</h2>
+    <div class="modal-body">
+      <div class="promotion-blocked" role="status">
+        🚦 <code>{{ name }}</code> needs <strong>{{ threshold }} clean approvals with zero cap breaches</strong>
+        before it can run on its own.
+      </div>
+
+      {# Streak progress meter #}
+      <div class="trust-progress-track" role="img"
+           aria-label="{{ streak_count }} of {{ threshold }} clean approvals">
+        <div class="trust-progress-fill" style="width: {{ (streak_count / threshold * 100) | round }}%;"></div>
+      </div>
+      <p class="trust-progress-caption">{{ streak_count }} of {{ threshold }} clean approvals.</p>
+
+      {# Specific blocking reason — exactly one is rendered #}
+      {% if block_reason == "insufficient_streak" %}
+        <p class="mt-4">Keep approving its proposals. {{ threshold - streak_count }} to go.</p>
+      {% elif block_reason == "cap_breach" %}
+        <p class="mt-4">A cap breach on <strong>{{ breach_date }}</strong> reset the streak. The count
+          restarts from the next clean approval.</p>
+      {% elif block_reason == "material_edit_reset" %}
+        <p class="mt-4">A material edit (watchlist or caps) on <strong>{{ edit_date }}</strong> reset
+          the streak — trust is earned per configuration.</p>
+      {% endif %}
+
+      <div class="modal-actions mt-4">
+        <a href="#" hx-get="/modal/close" hx-target="#modal-mount" hx-swap="innerHTML" class="btn-primary">Got it</a>
+      </div>
+    </div>
+  </div>
+</div>

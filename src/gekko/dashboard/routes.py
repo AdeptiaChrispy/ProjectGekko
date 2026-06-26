@@ -1483,28 +1483,62 @@ async def strategies_list(
         )
     meta_by_name = {m.strategy_name: m for m in meta_rows}
 
-    for r in rows:
-        try:
-            strategy = Strategy.model_validate_json(r.payload_json)
-            preview = ", ".join(strategy.watchlist[:5])
-            if len(strategy.watchlist) > 5:
-                preview += f", … (+{len(strategy.watchlist) - 5})"
-            mode = strategy.mode
-        except Exception:
-            preview = "(payload not parseable)"
-            mode = "paper"
-        meta = meta_by_name.get(r.strategy_name)
-        enriched.append(
-            {
-                "strategy_name": r.strategy_name,
-                "version": r.version,
-                "watchlist_preview": preview,
-                "mode": mode,
-                "live_mode_eligible": (
-                    meta.live_mode_eligible if meta is not None else False
-                ),
-            }
-        )
+    # Phase 5 / TRUST-01: surface the autonomy axis (trust_level), the
+    # capital ceiling chip, and the per-strategy promotion eligibility so the
+    # template can render the AUTO ✓ / PROPOSE-ONLY badge and the
+    # promote/demote/blocked controls. Eligibility is computed server-side
+    # (the UI is an affordance, not the authority — D-T18b).
+    from gekko.strategy.streak import compute_clean_streak
+
+    async with make_session_factory(engine)() as streak_session:
+        for r in rows:
+            try:
+                strategy = Strategy.model_validate_json(r.payload_json)
+                preview = ", ".join(strategy.watchlist[:5])
+                if len(strategy.watchlist) > 5:
+                    preview += f", … (+{len(strategy.watchlist) - 5})"
+                mode = strategy.mode
+            except Exception:
+                preview = "(payload not parseable)"
+                mode = "paper"
+            meta = meta_by_name.get(r.strategy_name)
+            trust_level = (
+                meta.trust_level
+                if meta is not None and meta.trust_level is not None
+                else "propose-only"
+            )
+            capital_raw = (
+                meta.capital_ceiling_usd
+                if meta is not None and meta.capital_ceiling_usd is not None
+                else "1000.00"
+            )
+            account_mode = "LIVE" if mode == "live" else "PAPER"
+            # Only compute eligibility for non-auto strategies (auto rows show
+            # the Demote control, not Promote).
+            promotion_eligible = False
+            if trust_level != "auto-within-caps":
+                streak = await compute_clean_streak(
+                    session=streak_session,
+                    user_id=user_id,
+                    strategy_name=r.strategy_name,
+                    account_mode=account_mode,
+                )
+                promotion_eligible = streak.eligible
+            enriched.append(
+                {
+                    "strategy_name": r.strategy_name,
+                    "version": r.version,
+                    "watchlist_preview": preview,
+                    "mode": mode,
+                    "account_mode": account_mode,
+                    "live_mode_eligible": (
+                        meta.live_mode_eligible if meta is not None else False
+                    ),
+                    "trust_level": trust_level,
+                    "promotion_eligible": promotion_eligible,
+                    "capital_ceiling_display": capital_raw,
+                }
+            )
 
     return templates.TemplateResponse(
         "strategies_list.html.j2",
@@ -1965,6 +1999,435 @@ async def promote_to_live(
         pass
     return HTMLResponse(
         '<span class="chip-live">LIVE — eligible</span>'
+    )
+
+
+# ---------------------------------------------------------------------------
+# Autonomy-axis trust: promote / demote / blocked + capital scaling
+# Phase 5 Plan 02 — TRUST-01 / TRUST-05 (SC-1 / SC-5). The UI is an
+# affordance; the server is the AUTHORITY: every promote re-checks
+# compute_clean_streak server-side and NEVER silent-fails (D-T18b).
+# ---------------------------------------------------------------------------
+
+
+async def _strategy_account_mode(engine, *, user_id: str, name: str) -> str:
+    """Resolve the latest-snapshot account_mode ('LIVE'/'PAPER') for a strategy."""
+    async with make_session_factory(engine)() as session:
+        q = (
+            select(StrategyRow)
+            .where(
+                StrategyRow.user_id == user_id,
+                StrategyRow.strategy_name == name,
+            )
+            .order_by(desc(StrategyRow.version))
+            .limit(1)
+        )
+        row = (await session.execute(q)).scalar_one_or_none()
+    if row is None:
+        return "PAPER"
+    try:
+        strategy = Strategy.model_validate_json(row.payload_json)
+        return "LIVE" if strategy.mode == "live" else "PAPER"
+    except Exception:  # noqa: BLE001 — default to the safe (paper) axis
+        return "PAPER"
+
+
+async def _enriched_strategy_row_ctx(
+    request: Request, engine, *, user_id: str, name: str
+) -> dict[str, object]:
+    """Build the ``s`` context dict the _strategy_row.html.j2 partial expects."""
+    from gekko.db.models import StrategyMetadata
+    from gekko.strategy.streak import compute_clean_streak
+
+    async with make_session_factory(engine)() as session:
+        q = (
+            select(StrategyRow)
+            .where(
+                StrategyRow.user_id == user_id,
+                StrategyRow.strategy_name == name,
+            )
+            .order_by(desc(StrategyRow.version))
+            .limit(1)
+        )
+        row = (await session.execute(q)).scalar_one_or_none()
+        meta = await session.get(StrategyMetadata, (user_id, name))
+
+    version = row.version if row is not None else 1
+    preview = ""
+    mode = "paper"
+    if row is not None:
+        try:
+            strategy = Strategy.model_validate_json(row.payload_json)
+            preview = ", ".join(strategy.watchlist[:5])
+            if len(strategy.watchlist) > 5:
+                preview += f", … (+{len(strategy.watchlist) - 5})"
+            mode = strategy.mode
+        except Exception:  # noqa: BLE001
+            preview = "(payload not parseable)"
+    account_mode = "LIVE" if mode == "live" else "PAPER"
+    trust_level = (
+        meta.trust_level
+        if meta is not None and meta.trust_level is not None
+        else "propose-only"
+    )
+    capital_display = (
+        meta.capital_ceiling_usd
+        if meta is not None and meta.capital_ceiling_usd is not None
+        else "1000.00"
+    )
+    promotion_eligible = False
+    if trust_level != "auto-within-caps":
+        async with make_session_factory(engine)() as session:
+            streak = await compute_clean_streak(
+                session=session,
+                user_id=user_id,
+                strategy_name=name,
+                account_mode=account_mode,
+            )
+        promotion_eligible = streak.eligible
+    return {
+        "strategy_name": name,
+        "version": version,
+        "watchlist_preview": preview,
+        "mode": mode,
+        "account_mode": account_mode,
+        "live_mode_eligible": (
+            bool(meta.live_mode_eligible) if meta is not None else False
+        ),
+        "trust_level": trust_level,
+        "promotion_eligible": promotion_eligible,
+        "capital_ceiling_display": capital_display,
+    }
+
+
+def _blocked_modal_response(
+    request: Request, *, name: str, streak
+) -> HTMLResponse:
+    """Render the blocked-promotion explanation modal from a StreakResult."""
+    return templates.TemplateResponse(
+        "_promote_auto_blocked_modal.html.j2",
+        {
+            "request": request,
+            "name": name,
+            "streak_count": streak.clean_count,
+            "threshold": streak.threshold,
+            "block_reason": streak.block_reason or "insufficient_streak",
+            "breach_date": streak.last_breach_date,
+            "edit_date": streak.last_reset_date,
+        },
+    )
+
+
+@router.get(
+    "/strategies/{name}/promote-auto/confirm-modal",
+    response_class=HTMLResponse,
+)
+async def promote_auto_confirm_modal(
+    request: Request,
+    name: str,
+    user_id: str = Depends(require_session),
+) -> HTMLResponse:
+    """Render the promote-to-auto confirm modal — ONLY when eligible (SC-5).
+
+    The server re-checks ``compute_clean_streak`` here too; an ineligible
+    strategy gets the blocked-explanation modal, never a confirm form.
+    """
+    from gekko.db.models import StrategyMetadata
+    from gekko.strategy.streak import compute_clean_streak
+
+    engine = request.app.state.engine
+    account_mode = await _strategy_account_mode(
+        engine, user_id=user_id, name=name
+    )
+    async with make_session_factory(engine)() as session:
+        streak = await compute_clean_streak(
+            session=session,
+            user_id=user_id,
+            strategy_name=name,
+            account_mode=account_mode,
+        )
+        meta = await session.get(StrategyMetadata, (user_id, name))
+    if not streak.eligible:
+        return _blocked_modal_response(request, name=name, streak=streak)
+    capital_display = (
+        meta.capital_ceiling_usd
+        if meta is not None and meta.capital_ceiling_usd is not None
+        else "1000.00"
+    )
+    anomaly_pct_raw = (
+        meta.anomaly_threshold_pct
+        if meta is not None and meta.anomaly_threshold_pct is not None
+        else "0.10"
+    )
+    try:
+        anomaly_display = str(int(Decimal(anomaly_pct_raw) * Decimal("100")))
+    except (InvalidOperation, ValueError):
+        anomaly_display = "10"
+    return templates.TemplateResponse(
+        "_promote_auto_confirm_modal.html.j2",
+        {
+            "request": request,
+            "name": name,
+            "streak_count": streak.clean_count,
+            "account_mode": account_mode,
+            "capital_ceiling_display": capital_display,
+            "anomaly_threshold_pct": anomaly_display,
+        },
+    )
+
+
+@router.get(
+    "/strategies/{name}/promote-auto/blocked-modal",
+    response_class=HTMLResponse,
+)
+async def promote_auto_blocked_modal(
+    request: Request,
+    name: str,
+    user_id: str = Depends(require_session),
+) -> HTMLResponse:
+    """Render the blocked-promotion explanation modal (SC-5 — never silent)."""
+    from gekko.strategy.streak import compute_clean_streak
+
+    engine = request.app.state.engine
+    account_mode = await _strategy_account_mode(
+        engine, user_id=user_id, name=name
+    )
+    async with make_session_factory(engine)() as session:
+        streak = await compute_clean_streak(
+            session=session,
+            user_id=user_id,
+            strategy_name=name,
+            account_mode=account_mode,
+        )
+    return _blocked_modal_response(request, name=name, streak=streak)
+
+
+@router.post(
+    "/strategies/{name}/promote-auto", response_class=HTMLResponse
+)
+async def promote_to_auto(
+    request: Request,
+    name: str,
+    strategy_name_confirm: str = Form(...),
+    user_id: str = Depends(require_session),
+) -> HTMLResponse:
+    """Promote a strategy to auto-execute (TRUST-01).
+
+    Defense-in-depth (D-T18b): the typed name must match AND the server
+    re-checks ``compute_clean_streak`` — an ineligible strategy (e.g. a cap
+    breach landed after the modal opened, or a forged POST) returns the
+    blocked-explanation block and is NEVER promoted. On success, returns the
+    confirm-result fragment plus an out-of-band swap of the strategy row so
+    the badge flips green.
+    """
+    from gekko.strategy.streak import compute_clean_streak
+    from gekko.strategy.trust import promote_strategy_to_auto
+
+    engine = request.app.state.engine
+
+    # Typed-name confirm (UI affordance guard).
+    if strategy_name_confirm.strip() != name:
+        return HTMLResponse(
+            '<div id="promote-auto-result" class="login-error" role="alert">'
+            f"That didn't match. Type {name} exactly to confirm.</div>"
+        )
+
+    account_mode = await _strategy_account_mode(
+        engine, user_id=user_id, name=name
+    )
+    # Server-side eligibility re-check — the AUTHORITY (D-T18b).
+    async with make_session_factory(engine)() as session:
+        streak = await compute_clean_streak(
+            session=session,
+            user_id=user_id,
+            strategy_name=name,
+            account_mode=account_mode,
+        )
+    if not streak.eligible:
+        return _blocked_modal_response(request, name=name, streak=streak)
+
+    await promote_strategy_to_auto(
+        user_id=user_id,
+        strategy_name=name,
+        account_mode=account_mode,
+        clean_count=streak.clean_count,
+    )
+
+    # Success fragment + OOB row swap so the badge flips green and the modal
+    # result region announces the change.
+    s_ctx = await _enriched_strategy_row_ctx(
+        request, engine, user_id=user_id, name=name
+    )
+    row_html = templates.get_template("_strategy_row.html.j2").render(
+        {"request": request, "s": s_ctx}
+    )
+    # Tag the OOB row so HTMX swaps the existing list row in place.
+    row_oob = row_html.replace(
+        f'id="strategy-row-{name}"',
+        f'id="strategy-row-{name}" hx-swap-oob="true"',
+        1,
+    )
+    result = (
+        '<div id="promote-auto-result" role="status">'
+        f"✅ Promoted <code>{name}</code> to auto-execute. "
+        "Future proposals execute automatically within caps."
+        "</div>"
+    )
+    return HTMLResponse(result + row_oob)
+
+
+@router.post(
+    "/strategies/{name}/demote-auto", response_class=HTMLResponse
+)
+async def demote_from_auto(
+    request: Request,
+    name: str,
+    user_id: str = Depends(require_session),
+) -> HTMLResponse:
+    """One-click demote to propose-only (TRUST-01 / D-T04 — no confirm).
+
+    Always-safe (removes autonomy → back to HITL). Flips the badge
+    immediately; takes effect on the next decision cycle. Returns the updated
+    row plus a ``role="status"`` line noting the next-cycle timing.
+    """
+    from gekko.strategy.trust import demote_strategy_from_auto
+
+    engine = request.app.state.engine
+    await demote_strategy_from_auto(
+        user_id=user_id, strategy_name=name, reason="operator"
+    )
+    s_ctx = await _enriched_strategy_row_ctx(
+        request, engine, user_id=user_id, name=name
+    )
+    row_html = templates.get_template("_strategy_row.html.j2").render(
+        {"request": request, "s": s_ctx}
+    )
+    status = (
+        '<tr><td colspan="4"><span role="status">'
+        f"⏸ Demoted <code>{name}</code> to propose-only — "
+        "takes effect on the next decision cycle.</span></td></tr>"
+    )
+    return HTMLResponse(row_html + status)
+
+
+@router.get("/strategies/{name}/capital", response_class=HTMLResponse)
+async def strategy_capital(
+    request: Request,
+    name: str,
+    user_id: str = Depends(require_session),
+) -> HTMLResponse:
+    """Capital-scaling page (TRUST-03 Surface 3) — a separate rung from autonomy."""
+    from gekko.db.models import StrategyMetadata
+
+    engine = request.app.state.engine
+    async with make_session_factory(engine)() as session:
+        meta = await session.get(StrategyMetadata, (user_id, name))
+    current = (
+        meta.capital_ceiling_usd
+        if meta is not None and meta.capital_ceiling_usd is not None
+        else "1000.00"
+    )
+    trust_level = (
+        meta.trust_level
+        if meta is not None and meta.trust_level is not None
+        else "propose-only"
+    )
+    return templates.TemplateResponse(
+        "strategy_capital.html.j2",
+        {
+            "request": request,
+            "name": name,
+            "current_ceiling_display": current,
+            "trust_level": trust_level,
+        },
+    )
+
+
+@router.post("/strategies/{name}/capital", response_class=HTMLResponse)
+async def set_capital_ceiling_route(
+    request: Request,
+    name: str,
+    new_ceiling: str = Form(...),
+    strategy_name_confirm: str = Form(""),
+    user_id: str = Depends(require_session),
+) -> HTMLResponse:
+    """Apply a capital-ceiling change (TRUST-03 / D-T14).
+
+    Lowering (de-risk) applies immediately. Raising requires a typed-name
+    confirm. Either way writes a ``capital_scaled`` audit event (old→new) and
+    leaves trust level + streak UNTOUCHED (D-T17). The capital ceiling lives
+    on the ``StrategyMetadata`` row added by migration 0007.
+    """
+    from gekko.audit.canonical import normalize_decimals
+    from gekko.audit.log import append_event
+    from gekko.db.models import StrategyMetadata
+
+    engine = request.app.state.engine
+    try:
+        new_dec = Decimal(new_ceiling)
+    except (InvalidOperation, ValueError):
+        new_dec = Decimal("-1")  # force the non-negative guard below
+    if new_dec < 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Capital ceiling must be a non-negative number.",
+        )
+
+    async with make_session_factory(engine)() as session, session.begin():
+        meta = await session.get(StrategyMetadata, (user_id, name))
+        old_raw = (
+            meta.capital_ceiling_usd
+            if meta is not None and meta.capital_ceiling_usd is not None
+            else "1000.00"
+        )
+        old_dec = Decimal(old_raw)
+        is_increase = new_dec > old_dec
+
+        # Raising requires a matching typed-name confirm (D-T14).
+        if is_increase and strategy_name_confirm.strip() != name:
+            return HTMLResponse(
+                '<div id="capital-result" class="login-error" role="alert">'
+                f"That didn't match. Type {name} exactly to confirm.</div>"
+            )
+
+        new_str = str(new_dec)
+        if meta is None:
+            session.add(
+                StrategyMetadata(
+                    user_id=user_id,
+                    strategy_name=name,
+                    capital_ceiling_usd=new_str,
+                )
+            )
+        else:
+            meta.capital_ceiling_usd = new_str
+        await append_event(
+            session,
+            user_id=user_id,
+            strategy_id=None,
+            event_type="capital_scaled",
+            payload=normalize_decimals(
+                {
+                    "strategy_name": name,
+                    "old_ceiling_usd": str(old_dec),
+                    "new_ceiling_usd": new_str,
+                    "direction": "increase" if is_increase else "decrease",
+                }
+            ),
+        )
+
+    if is_increase:
+        msg = (
+            f"💵 Raised <code>{name}</code> capital ceiling to ${new_dec}. "
+            "Trust level unchanged."
+        )
+    else:
+        msg = (
+            f"Lowered <code>{name}</code> capital ceiling to ${new_dec}. "
+            "Applied immediately."
+        )
+    return HTMLResponse(
+        f'<div id="capital-result" role="status">{msg}</div>'
     )
 
 
