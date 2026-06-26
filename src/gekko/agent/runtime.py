@@ -930,6 +930,7 @@ async def trigger_strategy_run(
                 user_id=user_id,
                 strategy_name=strategy_name,
                 account_mode=proposal.account_mode,
+                session_factory=session_factory,
             )
             if trust == TRUST_AUTO:
                 auto_outcome = await _run_auto_branch(

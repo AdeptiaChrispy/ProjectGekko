@@ -275,6 +275,7 @@ async def load_trust_level(
     user_id: str,
     strategy_name: str,
     account_mode: str = "PAPER",  # noqa: ARG001 - axis kept for caller parity
+    session_factory: AsyncSessionLocal | None = None,
 ) -> str:
     """Return the strategy's ``trust_level`` or ``"propose-only"`` default.
 
@@ -282,8 +283,17 @@ async def load_trust_level(
     auto-branch (which reads trust per proposal mode); the trust level itself
     is stored per-strategy, not per-mode, so the argument is currently
     informational. A missing metadata row defaults to ``"propose-only"``.
+
+    When ``session_factory`` is provided (e.g. from ``trigger_strategy_run``,
+    which already owns a factory and runs inside an injected-session test
+    context), it is used directly and the caller retains ownership — no engine
+    is built or disposed here. When ``None`` (CLI / dashboard standalone
+    callers), a vault-backed factory is built via :func:`_get_session_factory`.
     """
-    sf, engine = _get_session_factory(user_id)
+    if session_factory is None:
+        sf, engine = _get_session_factory(user_id)
+    else:
+        sf, engine = session_factory, None
     try:
         async with sf() as session:
             row = await session.get(
