@@ -36,8 +36,10 @@ credential-kind hardening.
 
 from __future__ import annotations
 
+from gekko.execution.checks._capital_ceiling import check_capital_ceiling
 from gekko.execution.checks._hard_caps import check_hard_caps
 from gekko.execution.checks._kill_switch import check_kill_switch
+from gekko.execution.checks._portfolio_caps import check_portfolio_caps
 from gekko.execution.checks._market_hours import check_market_hours
 from gekko.execution.checks._paper_live import check_paper_live_pairing
 from gekko.execution.checks._pdt import check_pdt
@@ -47,11 +49,13 @@ from gekko.execution.checks._universe import check_universe
 from gekko.execution.checks._wash_sale import flag_wash_sale
 
 __all__: tuple[str, ...] = (
+    "check_capital_ceiling",
     "check_hard_caps",
     "check_kill_switch",
     "check_market_hours",
     "check_paper_live_pairing",
     "check_pdt",
+    "check_portfolio_caps",
     "check_qty_price_sanity",
     "check_t1_settlement",
     "check_universe",
