@@ -619,6 +619,27 @@ async def expired_proposal(
 # ---------------------------------------------------------------------------
 
 
+async def _ensure_user(session: Any, user_id: str) -> None:
+    """Idempotently insert a ``users`` row so the events FK is satisfied.
+
+    ``events.user_id`` carries a FOREIGN KEY to ``users.user_id`` and the
+    SQLCipher test engine enforces it. The seed helpers below write events for
+    an arbitrary ``user_id``; without the parent row the insert fails the FK
+    constraint. This guard creates the minimal user row once (no-op if it
+    already exists).
+    """
+    from datetime import UTC, datetime
+
+    from gekko.db.models import User
+
+    existing = await session.get(User, user_id)
+    if existing is None:
+        session.add(
+            User(user_id=user_id, created_at=datetime.now(UTC).isoformat())
+        )
+        await session.flush()
+
+
 @pytest.fixture
 def seed_approval_events() -> Any:
     """Return an async callable seeding N enriched ``approval`` events.
@@ -649,6 +670,7 @@ def seed_approval_events() -> Any:
         n: int,
         strategy_id: str | None = None,
     ) -> None:
+        await _ensure_user(session, user_id)
         for i in range(n):
             await append_event(
                 session,
@@ -694,6 +716,7 @@ def seed_cap_rejection() -> Any:
         ticker: str = "NVDA",
         proposal_id: str = "prop-cap-001",
     ) -> None:
+        await _ensure_user(session, user_id)
         await append_event(
             session,
             user_id=user_id,
