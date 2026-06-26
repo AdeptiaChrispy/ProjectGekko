@@ -373,3 +373,174 @@ async def test_market_closed_day_skips_digest(pnl_engine: Any) -> None:
 
     assert result is False
     mock_dm.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Plan 05-05 Task 3 — auto_execution + anomaly_demotion digest surfacing
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_auto_execution_aggregation_and_digest_annotation(
+    pnl_engine: Any,
+) -> None:
+    """auto_execution events → aggregate count + per-strategy 🤖 annotation."""
+    from datetime import date as date_type
+
+    from gekko.audit.log import append_event
+    from gekko.reporter.daily_pnl import _aggregate_today_events, _build_digest_blocks
+
+    sf = make_session_factory(pnl_engine)
+    ts_today = "2026-06-17T16:00:00+00:00"
+
+    async with sf() as session, session.begin():
+        await _seed_user_strategies(session)
+
+    async with sf() as session, session.begin():
+        # strat-alpha auto-executed once and produced one fill.
+        await append_event(
+            session,
+            user_id=_USER_ID,
+            strategy_id=_STRATEGY_ID_A,
+            event_type="auto_execution",
+            payload={
+                "proposal_id": "p-auto-1",
+                "strategy_name": "strat-alpha",
+                "account_mode": "PAPER",
+                "side": "buy",
+                "qty": "10",
+                "ticker": "NVDA",
+                "rationale_summary": "Bullish",
+            },
+            ts=ts_today,
+        )
+        await append_event(
+            session,
+            user_id=_USER_ID,
+            strategy_id=_STRATEGY_ID_A,
+            event_type="fill",
+            payload={
+                "event_kind": "fill",
+                "ticker": "NVDA",
+                "filled_qty": "10",
+                "filled_avg_price": "100.00",
+                "side": "buy",
+                "strategy_name": "strat-alpha",
+            },
+            ts=ts_today,
+        )
+        # strat-beta produced a plain HITL fill (no auto-exec).
+        await append_event(
+            session,
+            user_id=_USER_ID,
+            strategy_id=_STRATEGY_ID_B,
+            event_type="fill",
+            payload={
+                "event_kind": "fill",
+                "ticker": "AMD",
+                "filled_qty": "5",
+                "filled_avg_price": "200.00",
+                "side": "buy",
+                "strategy_name": "strat-beta",
+            },
+            ts=ts_today,
+        )
+
+    today_et = date_type(2026, 6, 17)
+    async with sf() as session:
+        data = await _aggregate_today_events(session, _USER_ID, today_et)
+
+    assert data.auto_exec_count == 1
+    assert data.auto_exec_strategies == {"strat-alpha"}
+
+    blocks = _build_digest_blocks(data, "2026-06-17")
+    full_text = "\n".join(
+        b.get("text", {}).get("text", "") for b in blocks if b.get("type") == "section"
+    )
+    # Aggregate auto-exec line present.
+    assert "Auto-executed today:" in full_text
+    assert "1 trade across 1 strategy" in full_text
+    # Per-strategy breakdown: strat-alpha annotated 🤖, strat-beta NOT.
+    per_strat = blocks[2]["text"]["text"]
+    assert "strat-alpha" in per_strat
+    # The alpha line carries the 🤖 marker; the beta line does not.
+    alpha_line = next(
+        ln for ln in per_strat.splitlines() if "strat-alpha" in ln
+    )
+    beta_line = next(ln for ln in per_strat.splitlines() if "strat-beta" in ln)
+    assert "🤖" in alpha_line
+    assert "🤖" not in beta_line
+
+
+@pytest.mark.asyncio
+async def test_anomaly_demotion_digest_summary_line(pnl_engine: Any) -> None:
+    """anomaly_demotion event today → digest renders the summary line."""
+    from datetime import date as date_type
+
+    from gekko.audit.log import append_event
+    from gekko.reporter.daily_pnl import _aggregate_today_events, _build_digest_blocks
+
+    sf = make_session_factory(pnl_engine)
+    ts_today = "2026-06-17T16:00:00+00:00"
+
+    async with sf() as session, session.begin():
+        await _seed_user_strategies(session)
+
+    async with sf() as session, session.begin():
+        await append_event(
+            session,
+            user_id=_USER_ID,
+            strategy_id=None,
+            event_type="anomaly_demotion",
+            payload={
+                "strategy_name": "strat-alpha",
+                "drawdown_pct": "0.12",
+                "threshold_pct": "0.10",
+                "cancelled_count": 2,
+            },
+            ts=ts_today,
+        )
+
+    today_et = date_type(2026, 6, 17)
+    async with sf() as session:
+        data = await _aggregate_today_events(session, _USER_ID, today_et)
+
+    assert len(data.anomaly_demotions) == 1
+    assert data.anomaly_demotions[0]["strategy_name"] == "strat-alpha"
+
+    blocks = _build_digest_blocks(data, "2026-06-17")
+    full_text = "\n".join(
+        b.get("text", {}).get("text", "") for b in blocks if b.get("type") == "section"
+    )
+    assert "Anomaly demotions today:" in full_text
+    assert "strat-alpha" in full_text
+    assert "−12%" in full_text  # fraction 0.12 → whole percent
+
+
+@pytest.mark.asyncio
+async def test_digest_omits_new_lines_when_absent(pnl_engine: Any) -> None:
+    """No auto-exec / anomaly events → those digest lines are NOT rendered (additive)."""
+    from datetime import date as date_type
+
+    from gekko.reporter.daily_pnl import _aggregate_today_events, _build_digest_blocks
+
+    sf = make_session_factory(pnl_engine)
+    async with sf() as session, session.begin():
+        await _seed_user_strategies(session)
+
+    today_et = date_type(2026, 6, 17)
+    async with sf() as session:
+        data = await _aggregate_today_events(session, _USER_ID, today_et)
+
+    assert data.auto_exec_count == 0
+    assert data.anomaly_demotions == []
+
+    blocks = _build_digest_blocks(data, "2026-06-17")
+    full_text = "\n".join(
+        b.get("text", {}).get("text", "") for b in blocks if b.get("type") == "section"
+    )
+    assert "Auto-executed today:" not in full_text
+    assert "Anomaly demotions today:" not in full_text
+    # Existing structural indices preserved (gross at [1], per-strategy at [2]).
+    assert "Gross P&L" in blocks[1]["text"]["text"]
+    assert "Per-strategy P&L" in blocks[2]["text"]["text"]

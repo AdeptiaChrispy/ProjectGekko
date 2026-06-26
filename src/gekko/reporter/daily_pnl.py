@@ -95,6 +95,17 @@ class DigestData:
     errors_count: int
     cap_rejections_count: int
     open_positions_count: int
+    # Plan 05-05 Task 3 (SC-2 / D-T18): auto-execution review surface.
+    #: Total ``auto_execution`` events today (aggregate count).
+    auto_exec_count: int = 0
+    #: Set of strategy_names that auto-executed at least once today. Used to
+    #: annotate per-strategy breakdown lines with 🤖 and to render the
+    #: aggregate "across {M} strategies" count.
+    auto_exec_strategies: set[str] = field(default_factory=set)
+    # Plan 05-05 Task 3 (SC-2 / TRUST-04): anomaly-demotion summary.
+    #: List of {"strategy_name", "drawdown_pct"} for today's anomaly demotions
+    #: (latest-wins per strategy), rendered as the digest anomaly summary line.
+    anomaly_demotions: list[dict[str, str]] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +163,12 @@ async def _aggregate_today_events(
     cap_rejections_count = 0
     gross_pnl_usd = Decimal("0")
     per_strategy: dict[str, dict[str, Any]] = {}
+    # Plan 05-05 Task 3: auto-execution + anomaly-demotion accumulation.
+    auto_exec_count = 0
+    auto_exec_strategies: set[str] = set()
+    # Latest-wins per strategy: a strategy demoted then (somehow) re-demoted
+    # today renders once; the dict preserves the most recent drawdown_pct.
+    anomaly_by_strategy: dict[str, str] = {}
 
     for row in rows:
         try:
@@ -193,6 +210,19 @@ async def _aggregate_today_events(
             errors_count += 1
         elif row.event_type == "cap_rejection":
             cap_rejections_count += 1
+        elif row.event_type == "auto_execution":
+            # Plan 05-05 Task 3 (SC-2): count auto-executed decisions and
+            # attribute them per-strategy so the digest can mark auto fills
+            # with 🤖 and render the aggregate "{N} across {M} strategies".
+            auto_exec_count += 1
+            auto_name = payload.get("strategy_name")
+            if auto_name:
+                auto_exec_strategies.add(auto_name)
+        elif row.event_type == "anomaly_demotion":
+            # Plan 05-05 Task 3 (TRUST-04): collect the strategy + drawdown so
+            # the digest folds in an anomaly-demotion summary line.
+            anom_name = payload.get("strategy_name", "_unknown_")
+            anomaly_by_strategy[anom_name] = str(payload.get("drawdown_pct", ""))
 
     # Rough open-positions count: distinct tickers in FILLED proposals for this user.
     filled_rows = (
@@ -216,6 +246,11 @@ async def _aggregate_today_events(
         except Exception:  # noqa: BLE001
             pass
 
+    anomaly_demotions = [
+        {"strategy_name": name, "drawdown_pct": dd}
+        for name, dd in anomaly_by_strategy.items()
+    ]
+
     return DigestData(
         fills_count=fills_count,
         gross_pnl_usd=gross_pnl_usd,
@@ -223,6 +258,9 @@ async def _aggregate_today_events(
         errors_count=errors_count,
         cap_rejections_count=cap_rejections_count,
         open_positions_count=len(open_tickers),
+        auto_exec_count=auto_exec_count,
+        auto_exec_strategies=auto_exec_strategies,
+        anomaly_demotions=anomaly_demotions,
     )
 
 
@@ -247,15 +285,46 @@ def _build_digest_blocks(data: DigestData, today_iso: str) -> list[dict[str, Any
         f"`${float(data.gross_pnl_usd):+,.2f}` across {data.fills_count} fills"
     )
 
-    # Per-strategy breakdown.
+    # Per-strategy breakdown. Plan 05-05 Task 3 (SC-2): append ` 🤖` to lines
+    # whose strategy auto-executed at least once today.
     if data.per_strategy:
         strategy_lines = "\n".join(
-            f"• `{name}` — `${float(info['pnl_usd']):+,.2f}` ({info['fills_count']} fills)"
+            (
+                f"• `{name}` — `${float(info['pnl_usd']):+,.2f}` "
+                f"({info['fills_count']} fills)"
+                + (" 🤖" if name in data.auto_exec_strategies else "")
+            )
             for name, info in data.per_strategy.items()
         )
         per_strat_text = f"*Per-strategy P&L:*\n{strategy_lines}"
     else:
         per_strat_text = "*Per-strategy P&L:* _no fills today_"
+
+    # Plan 05-05 Task 3 (SC-2 / D-T18): aggregate auto-execution line — the
+    # digest is the SC-2 review surface for auto-executed decisions.
+    auto_exec_text: str | None = None
+    if data.auto_exec_count > 0:
+        n_strategies = len(data.auto_exec_strategies)
+        auto_exec_text = (
+            f"🤖 *Auto-executed today:* {data.auto_exec_count} "
+            f"trade{'s' if data.auto_exec_count != 1 else ''} across "
+            f"{n_strategies} strateg{'ies' if n_strategies != 1 else 'y'}"
+        )
+
+    # Plan 05-05 Task 3 (TRUST-04): anomaly-demotion summary line.
+    anomaly_text: str | None = None
+    if data.anomaly_demotions:
+        parts: list[str] = []
+        for d in data.anomaly_demotions:
+            dd = d.get("drawdown_pct", "")
+            # drawdown_pct is a fraction-string ("0.12") — render as a whole
+            # percent ("−12%") to match the UI-SPEC §6c deterministic copy.
+            try:
+                pct_whole = f"{Decimal(str(dd)) * Decimal('100'):.0f}"
+            except Exception:  # noqa: BLE001
+                pct_whole = str(dd)
+            parts.append(f"{d.get('strategy_name', '?')} (−{pct_whole}% single-day)")
+        anomaly_text = "🛑 *Anomaly demotions today:* " + ", ".join(parts)
 
     # Counts context line.
     counts_text = (
@@ -264,7 +333,7 @@ def _build_digest_blocks(data: DigestData, today_iso: str) -> list[dict[str, Any
         f"❌ *Errors today:* {data.errors_count}"
     )
 
-    return [
+    blocks: list[dict[str, Any]] = [
         # 0. Header — UI-SPEC §Surface 6 header block.
         {
             "type": "header",
@@ -290,28 +359,52 @@ def _build_digest_blocks(data: DigestData, today_iso: str) -> list[dict[str, Any
                 "text": per_strat_text,
             },
         },
-        # 3. Counts context block.
-        {
-            "type": "context",
-            "elements": [
-                {
-                    "type": "mrkdwn",
-                    "text": counts_text,
-                }
-            ],
-        },
-        # 4. Actions footer with dashboard URL button.
-        {
-            "type": "actions",
-            "elements": [
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "Open dashboard"},
-                    "url": f"{settings.dashboard_url}/approvals",
-                }
-            ],
-        },
     ]
+
+    # 2b. Auto-execution aggregate line (Surface 4c) — only when present.
+    if auto_exec_text is not None:
+        blocks.append(
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": auto_exec_text},
+            }
+        )
+
+    # 2c. Anomaly-demotion summary line (Surface 6c) — only when present.
+    if anomaly_text is not None:
+        blocks.append(
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": anomaly_text},
+            }
+        )
+
+    blocks.extend(
+        [
+            # 3. Counts context block.
+            {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": counts_text,
+                    }
+                ],
+            },
+            # 4. Actions footer with dashboard URL button.
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "Open dashboard"},
+                        "url": f"{settings.dashboard_url}/approvals",
+                    }
+                ],
+            },
+        ]
+    )
+    return blocks
 
 
 # ---------------------------------------------------------------------------
