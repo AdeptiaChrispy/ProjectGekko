@@ -766,3 +766,161 @@ def test_broker_not_configured_string_absent_from_executor_source() -> None:
     assert "broker not configured" not in routes_src, (
         "routes.py must not contain 'broker not configured' — same reason."
     )
+
+
+# ---------------------------------------------------------------------------
+# Plan 05-04 Task 2 — anomaly bypass category + post-fill hook
+# ---------------------------------------------------------------------------
+
+
+def test_anomaly_demotion_is_a_bypass_category() -> None:
+    """``anomaly_demotion`` is in executor._BYPASS_CATEGORIES (D-T13 grep gate)."""
+    import gekko.execution.executor as _exec_mod
+
+    src = open(_exec_mod.__file__, encoding="utf-8").read()
+    assert "anomaly_demotion" in src, (
+        "executor.py must reference 'anomaly_demotion' (the bypass category)."
+    )
+
+
+@pytest.mark.asyncio
+async def test_anomaly_demotion_dm_bypasses_quiet_hours() -> None:
+    """anomaly_demotion category fires even when quiet-hours predicate is True."""
+    from unittest.mock import patch
+
+    sent: list[str] = []
+
+    async def fake_send_dm(user_id: str, text: str) -> None:
+        sent.append(text)
+
+    async def fake_in_window(user_id: str, now: object, **kwargs: object) -> bool:
+        return True  # quiet hours active
+
+    with (
+        patch(
+            "gekko.execution.executor._send_slack_dm",
+            side_effect=fake_send_dm,
+        ),
+        patch(
+            "gekko.approval.quiet_hours._resolve_quiet_hours",
+            side_effect=fake_in_window,
+        ),
+    ):
+        from gekko.execution.executor import (
+            _send_slack_dm_respecting_quiet_hours,
+        )
+
+        await _send_slack_dm_respecting_quiet_hours(
+            "u1", "Anomaly demotion!", category="anomaly_demotion"
+        )
+
+    assert sent == ["Anomaly demotion!"], f"Expected DM to fire, got: {sent}"
+
+
+@pytest.mark.asyncio
+async def test_on_fill_event_invokes_anomaly_hook(
+    temp_sqlcipher_db: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fill triggers a post-fill anomaly evaluation for the strategy."""
+    from gekko.execution import executor
+
+    sf = make_session_factory(temp_sqlcipher_db)
+    proposal_id, _, tp = await _seed(sf, status="APPROVED")
+    async with sf() as session, session.begin():
+        row = (
+            await session.execute(
+                select(ProposalRow).where(
+                    ProposalRow.proposal_id == proposal_id
+                )
+            )
+        ).scalar_one()
+        row.status = "EXECUTING"
+
+    monkeypatch.setattr(
+        executor, "_get_session_factory", lambda _u: (sf, None)
+    )
+
+    async def fake_send_dm(user_id: str, msg: str) -> None:
+        return None
+
+    monkeypatch.setattr(executor, "_send_slack_dm", fake_send_dm)
+
+    calls: list[dict[str, Any]] = []
+
+    async def fake_eval(*, user_id: str, strategy_name: str, broker: Any) -> bool:
+        calls.append({"user_id": user_id, "strategy_name": strategy_name})
+        return False
+
+    monkeypatch.setattr(executor, "evaluate_drawdown", fake_eval)
+
+    payload = {
+        "client_order_id": tp.client_order_id,
+        "broker_order_id": "broker-fill-002",
+        "filled_qty": "5",
+        "filled_avg_price": "1234.50",
+        "ticker": "NVDA",
+        "user_id": "test-user",
+        "event": "fill",
+    }
+    await executor.on_fill_event(payload, user_id="test-user")
+
+    assert len(calls) == 1, "post-fill anomaly hook must run exactly once"
+    assert calls[0]["user_id"] == "test-user"
+    assert calls[0]["strategy_name"] == tp.strategy_name
+
+
+@pytest.mark.asyncio
+async def test_on_fill_event_swallows_anomaly_hook_exception(
+    temp_sqlcipher_db: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An exception in the anomaly hook never aborts the fill transition."""
+    from gekko.execution import executor
+
+    sf = make_session_factory(temp_sqlcipher_db)
+    proposal_id, _, tp = await _seed(sf, status="APPROVED")
+    async with sf() as session, session.begin():
+        row = (
+            await session.execute(
+                select(ProposalRow).where(
+                    ProposalRow.proposal_id == proposal_id
+                )
+            )
+        ).scalar_one()
+        row.status = "EXECUTING"
+
+    monkeypatch.setattr(
+        executor, "_get_session_factory", lambda _u: (sf, None)
+    )
+
+    async def fake_send_dm(user_id: str, msg: str) -> None:
+        return None
+
+    monkeypatch.setattr(executor, "_send_slack_dm", fake_send_dm)
+
+    async def boom(*, user_id: str, strategy_name: str, broker: Any) -> bool:
+        raise RuntimeError("anomaly eval blew up")
+
+    monkeypatch.setattr(executor, "evaluate_drawdown", boom)
+
+    payload = {
+        "client_order_id": tp.client_order_id,
+        "broker_order_id": "broker-fill-003",
+        "filled_qty": "5",
+        "filled_avg_price": "1234.50",
+        "ticker": "NVDA",
+        "user_id": "test-user",
+        "event": "fill",
+    }
+    # Must NOT raise.
+    await executor.on_fill_event(payload, user_id="test-user")
+
+    # Fill transition still committed despite the hook exception.
+    async with sf() as session:
+        row = (
+            await session.execute(
+                select(ProposalRow).where(
+                    ProposalRow.proposal_id == proposal_id
+                )
+            )
+        ).scalar_one()
+        assert row.status == "FILLED"

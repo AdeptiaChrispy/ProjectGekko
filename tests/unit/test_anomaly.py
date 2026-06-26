@@ -411,6 +411,72 @@ async def test_compute_drawdown_guards_zero_denominator(
     assert dd == Decimal("0")
 
 
+def test_strategies_list_renders_anomaly_notice() -> None:
+    """Surface 6b: a demoted-today strategy renders the red role=alert notice."""
+    from pathlib import Path
+
+    from jinja2 import Environment, FileSystemLoader, select_autoescape
+
+    templates_dir = (
+        Path(__file__).resolve().parents[1]
+        / ".."
+        / "src"
+        / "gekko"
+        / "dashboard"
+        / "templates"
+    ).resolve()
+    env = Environment(
+        loader=FileSystemLoader(str(templates_dir)),
+        autoescape=select_autoescape(["html", "j2"]),
+    )
+    tpl = env.get_template("strategies_list.html.j2")
+    out = tpl.render(
+        request=None,
+        user_id="u1",
+        strategies=[],
+        anomaly_notices=[
+            {
+                "strategy_name": "momentum",
+                "drawdown_pct": "12.0",
+                "threshold_pct": "10.0",
+                "cancelled_count": "3",
+            }
+        ],
+    )
+    assert 'class="anomaly-notice"' in out
+    assert 'role="alert"' in out
+    assert 'aria-live="assertive"' in out
+    assert "momentum" in out
+    assert "12.0%" in out
+    assert "10.0%" in out
+    assert "3 pending auto-order(s) cancelled" in out
+
+
+def test_strategies_list_omits_notice_when_none() -> None:
+    """No demotion today → no anomaly-notice block."""
+    from pathlib import Path
+
+    from jinja2 import Environment, FileSystemLoader, select_autoescape
+
+    templates_dir = (
+        Path(__file__).resolve().parents[1]
+        / ".."
+        / "src"
+        / "gekko"
+        / "dashboard"
+        / "templates"
+    ).resolve()
+    env = Environment(
+        loader=FileSystemLoader(str(templates_dir)),
+        autoescape=select_autoescape(["html", "j2"]),
+    )
+    tpl = env.get_template("strategies_list.html.j2")
+    out = tpl.render(
+        request=None, user_id="u1", strategies=[], anomaly_notices=[]
+    )
+    assert 'class="anomaly-notice"' not in out
+
+
 @pytest.mark.asyncio
 async def test_compute_drawdown_is_decimal_exact(
     monkeypatch: pytest.MonkeyPatch,

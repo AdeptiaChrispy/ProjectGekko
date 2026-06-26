@@ -8,6 +8,18 @@
   Owner: <span class="font-medium">{{ user_id }}</span>
 </p>
 
+{# Phase 5 / TRUST-04 Surface 6b: anomaly auto-demotion notice(s). Red,
+   role="alert" aria-live="assertive" — interrupts to announce the safety
+   event. Rendered for any strategy auto-demoted today; clears on the next
+   clean-day page load (the PROPOSE-ONLY badge persists the result). #}
+{% for n in anomaly_notices %}
+<div class="anomaly-notice" role="alert" aria-live="assertive">
+  🛑 <code>{{ n.strategy_name }}</code> auto-demoted to propose-only —
+  single-day drawdown {{ n.drawdown_pct }}% (threshold {{ n.threshold_pct }}%).
+  {{ n.cancelled_count }} pending auto-order(s) cancelled.
+</div>
+{% endfor %}
+
 {% if strategies %}
 <table class="bg-white shadow-sm rounded-md">
   <thead>

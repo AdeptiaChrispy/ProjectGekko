@@ -1701,14 +1701,92 @@ async def strategies_list(
                 }
             )
 
+    # Phase 5 / TRUST-04 Surface 6b: surface today's anomaly auto-demotions as
+    # a red in-app notice above the affected rows. The notice is reactive (a
+    # past event whose result — the PROPOSE-ONLY badge — persists); it clears
+    # on the next page load after a clean day. Read the first-class
+    # ``anomaly_demotion`` events written today by the evaluator.
+    anomaly_notices = await _load_today_anomaly_notices(engine, user_id)
+
     return templates.TemplateResponse(
         "strategies_list.html.j2",
         {
             "request": request,
             "strategies": enriched,
             "user_id": user_id,
+            "anomaly_notices": anomaly_notices,
         },
     )
+
+
+async def _load_today_anomaly_notices(
+    engine: object, user_id: str
+) -> list[dict[str, str]]:
+    """Return today's anomaly-demotion notice rows for the strategies list.
+
+    Each entry carries the deterministic Surface-6b copy fields:
+    ``strategy_name``, ``drawdown_pct`` (whole-percent display), ``threshold_pct``
+    (whole-percent display), and ``cancelled_count``. One entry per most-recent
+    demotion event per strategy today (a strategy re-demoted twice in one day
+    shows the latest). Best-effort: a malformed payload is skipped.
+    """
+    import json as _json
+    from datetime import UTC as _UTC, datetime as _dt
+
+    from gekko.db.models import Event as _Event
+
+    now = _dt.now(_UTC)
+    start_iso = now.replace(
+        hour=0, minute=0, second=0, microsecond=0
+    ).isoformat()
+    end_iso = now.isoformat()
+
+    async with make_session_factory(engine)() as session:  # type: ignore[arg-type]
+        rows = (
+            await session.execute(
+                select(_Event)
+                .where(
+                    _Event.user_id == user_id,
+                    _Event.event_type == "anomaly_demotion",
+                    _Event.ts >= start_iso,
+                    _Event.ts <= end_iso,
+                )
+                .order_by(_Event.id.desc())
+            )
+        ).scalars().all()
+
+    seen: set[str] = set()
+    notices: list[dict[str, str]] = []
+    for row in rows:
+        try:
+            outer = _json.loads(row.payload_json)
+        except (ValueError, TypeError):
+            continue
+        payload = outer.get("payload", outer)
+        name = payload.get("strategy_name")
+        if not name or name in seen:
+            continue
+        seen.add(name)
+
+        def _pct_display(raw: object) -> str:
+            try:
+                return str(
+                    (Decimal(str(raw)) * Decimal("100")).quantize(
+                        Decimal("0.1")
+                    )
+                )
+            except Exception:  # noqa: BLE001
+                return "?"
+
+        notices.append(
+            {
+                "strategy_name": name,
+                "drawdown_pct": _pct_display(payload.get("drawdown_pct")),
+                "threshold_pct": _pct_display(payload.get("threshold_pct")),
+                "cancelled_count": str(payload.get("cancelled_count", 0)),
+            }
+        )
+    return notices
 
 
 @router.get(

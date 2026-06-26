@@ -61,6 +61,7 @@ from typing import Any
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from gekko.anomaly.evaluator import evaluate_drawdown
 from gekko.approval.proposals import transition_status
 from gekko.audit.canonical import normalize_decimals
 from gekko.audit.log import append_event
@@ -70,7 +71,8 @@ from gekko.config import get_settings
 from gekko.core.errors import BrokerOrderError, OrderGuardRejected
 from gekko.core.types import OrderSide, OrderType, TimeInForce
 from gekko.db.engine import get_async_engine
-from gekko.db.models import Proposal as ProposalRow, Strategy as StrategyRow
+from gekko.db.models import Proposal as ProposalRow
+from gekko.db.models import Strategy as StrategyRow
 from gekko.db.session import AsyncSessionLocal, make_session_factory
 from gekko.execution.market_hours import is_market_open
 from gekko.execution.orderguard import OrderGuard
@@ -228,6 +230,10 @@ async def _send_slack_dm_respecting_quiet_hours(
       * ``"kill_active"``  — kill-state changes (operator safety)
       * ``"executor_error"`` — BrokerOrderError, MarketClosed, cap_rejection
       * ``"first_live_fill"`` — first live-money fill (trust-building signal)
+      * ``"cost_alert"`` — cost-halt DMs (operator safety information)
+      * ``"anomaly_demotion"`` — single-day-drawdown auto-demotion (D-T13;
+        operator-safety tier — autonomy was revoked, must reach the operator
+        regardless of quiet hours)
 
     **Routine categories** (suppressed when :func:`_resolve_quiet_hours` is True):
       * ``"routine_fill"`` — paper-trade or subsequent paper fill confirmations
@@ -252,6 +258,12 @@ async def _send_slack_dm_respecting_quiet_hours(
         "first_live_fill",
         "cost_alert",   # Phase-4 / Plan 04-03: cost-halt DMs bypass quiet hours
         # (operator safety information — D-07/D-08; RESEARCH open question 3)
+        "anomaly_demotion",  # Phase-5 / Plan 05-04: single-day-drawdown auto-
+        # demotion DM bypasses quiet hours (D-T13). Same operator-safety tier as
+        # kill_active / cap-rejection / first_live_fill — autonomy was revoked,
+        # so the operator MUST be told regardless of their quiet window. The
+        # inverse (auto-exec FYI DM in Plan 05) is ROUTINE and respects quiet
+        # hours; inverting these two is the documented anti-pattern.
     })
 
     if category in _BYPASS_CATEGORIES:
@@ -355,8 +367,9 @@ def _load_strategy_for_executor(
     prevent. We refuse to substitute permissive caps for real money;
     the LIVE branch raises so OrderGuard never sees synthetic caps.
     """
+    from datetime import UTC as _UTC
+    from datetime import datetime as _dt
     from decimal import Decimal as _D
-    from datetime import UTC as _UTC, datetime as _dt
 
     from gekko.schemas.strategy import HardCaps as _HardCaps
 
@@ -828,6 +841,11 @@ async def on_fill_event(payload: dict[str, Any], *, user_id: str) -> None:
         client_order_id = payload.get("client_order_id", "")
         live_strategy_name_to_stamp: str | None = None
         fill_ts: str | None = None
+        # Plan 05-04 Task 2: capture the strategy + account_mode so the
+        # post-fill anomaly hook can evaluate single-day drawdown for THIS
+        # strategy after the fill is recorded.
+        anomaly_strategy_name: str | None = None
+        anomaly_account_mode: str = "PAPER"
         async with sf() as session, session.begin():
             row = (
                 await session.execute(
@@ -917,6 +935,12 @@ async def on_fill_event(payload: dict[str, Any], *, user_id: str) -> None:
                     live_strategy_name_to_stamp = None
                 fill_ts = payload.get("ts") or datetime.now(UTC).isoformat()
 
+            # Plan 05-04 Task 2: stash the strategy + account_mode for the
+            # post-fill anomaly hook (runs after the DM, outside this txn).
+            if tp_persisted is not None:
+                anomaly_strategy_name = tp_persisted.strategy_name
+            anomaly_account_mode = row.account_mode or "PAPER"
+
         # ---- First-live-trade stamp (outside the fill transaction). -----
         # Plan 02-06 Task 2 — opens its own transaction. Set-once on
         # `strategy_metadata.first_live_trade_confirmed_at`. Subsequent
@@ -982,9 +1006,80 @@ async def on_fill_event(payload: dict[str, Any], *, user_id: str) -> None:
             else "routine_fill"
         )
         await _send_slack_dm_respecting_quiet_hours(user_id, msg, category=_fill_category)
+
+        # ---- Post-fill anomaly hook (Plan 05-04 Task 2 / SC-4). ----------
+        # A sudden realized loss on this fill may push the strategy's single-
+        # day drawdown past the anomaly threshold; evaluate immediately so the
+        # auto-demotion reflex fires without waiting for the scheduler tick.
+        # The scheduler tick (Task 3) is the fallback partner that catches
+        # UNREALIZED drift when no fill is occurring. The eval is best-effort:
+        # any eval/DM exception is swallowed so it never aborts the (already-
+        # committed) fill transition — mirrors the first-live-stamp swallow.
+        if anomaly_strategy_name:
+            try:
+                anomaly_broker = await _build_broker_for_anomaly(
+                    user_id=user_id,
+                    strategy_name=anomaly_strategy_name,
+                    account_mode=anomaly_account_mode,
+                )
+                await evaluate_drawdown(
+                    user_id=user_id,
+                    strategy_name=anomaly_strategy_name,
+                    broker=anomaly_broker,
+                )
+            except Exception:  # noqa: BLE001 — never abort the fill
+                log.exception(
+                    "executor.post_fill_anomaly_eval_failed",
+                    proposal_id=proposal_id,
+                    strategy_name=anomaly_strategy_name,
+                )
     finally:
         if engine is not None:
             await engine.dispose()
+
+
+async def _build_broker_for_anomaly(
+    *, user_id: str, strategy_name: str, account_mode: str
+) -> Brokerage:
+    """Construct a RAW (un-OrderGuard-wrapped) broker for the anomaly read.
+
+    The anomaly evaluator only READS positions/open-orders and CANCELS on
+    breach via the broker's ``cancel_order`` passthrough — it never places an
+    order, so it does not need the OrderGuard pipeline (which would require a
+    full Strategy + HardCaps to construct). We build the bare per-user
+    :class:`AlpacaBroker` directly, mirroring the credential resolution in
+    :func:`_build_broker`. The watchlist attribution happens inside the
+    evaluator (read from the DB), not from a Strategy here.
+
+    Tests monkeypatch ``evaluate_drawdown`` so this builder is only exercised
+    on the production path.
+    """
+    from gekko.vault.credentials import load_live_credentials
+
+    settings = get_settings()
+    if account_mode == "LIVE":
+        creds = await load_live_credentials(user_id)
+        if creds is None:
+            raise OrderGuardRejected(
+                "paper_live_mismatch_credential",
+                (
+                    f"Strategy {strategy_name} is live but no alpaca_live "
+                    "credentials in vault."
+                ),
+                extra={"strategy_name": strategy_name, "user_id": user_id},
+            )
+        api_key, secret_key = creds
+        return AlpacaBroker(
+            api_key=api_key,
+            secret_key=secret_key,
+            paper=False,
+            _allow_live=True,
+        )
+    return AlpacaBroker(
+        api_key=settings.alpaca_paper_api_key.get_secret_value(),
+        secret_key=settings.alpaca_paper_secret_key.get_secret_value(),
+        paper=True,
+    )
 
 
 __all__: tuple[str, ...] = ("execute_proposal", "on_fill_event")
