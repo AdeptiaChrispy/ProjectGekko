@@ -106,10 +106,21 @@ def _install_common_seams(
             }
         )
 
+    async def fake_write_event(
+        *,
+        user_id: str,
+        strategy_name: str,
+        drawdown_pct: Decimal,
+        threshold: Decimal,
+        cancelled_count: int,
+    ) -> None:
+        return None
+
     monkeypatch.setattr(ev, "load_strategy_metadata", fake_load_meta)
     monkeypatch.setattr(ev, "_compute_single_day_drawdown_pct", fake_compute_dd)
     monkeypatch.setattr(ev, "_cancel_pending_auto_orders", fake_cancel)
     monkeypatch.setattr(ev, "demote_strategy_from_auto", fake_demote)
+    monkeypatch.setattr(ev, "_write_anomaly_demotion_event", fake_write_event)
     monkeypatch.setattr(ev, "_send_anomaly_dm", fake_dm)
 
 
