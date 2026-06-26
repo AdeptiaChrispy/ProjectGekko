@@ -176,7 +176,28 @@ Plans:
   4. When a strategy's drawdown exceeds the per-strategy anomaly threshold, the strategy auto-demotes to `propose-only`, cancels pending auto-orders, and Slack-DMs the user with the trigger details — without manual intervention
   5. User attempting to enable auto-execute on a strategy that hasn't met the placeholder promotion criteria (e.g., N successful HITL approvals, no cap breaches) sees the action blocked with a clear explanation, not a silent failure
 
-**Plans**: TBD
+**Plans:** 5 plans
+Plans:
+**Wave 1**
+
+- [ ] 05-01-PLAN.md — Foundation: Alembic 0007 (StrategyMetadata trust/capital/anomaly cols + User portfolio-cap cols + events CHECK +5 types) + ORM mirror + approval/cap_rejection payload enrichment + all Wave-0 test stubs (TRUST-01..06)
+
+**Wave 2** *(blocked on Wave 1)*
+
+- [ ] 05-02-PLAN.md — Slice A: trust.py promote/demote + streak.py clean-streak scanner + dashboard/CLI promote-confirm/one-click-demote + SC-5 blocked-explanation + material-edit reset + AST safety gate (TRUST-01, TRUST-05, TRUST-06)
+
+**Wave 3** *(blocked on Wave 2)*
+
+- [ ] 05-03-PLAN.md — Slice C: check_portfolio_caps + check_capital_ceiling OrderGuard checks (stacked in place_order) + Settings portfolio-caps fieldset + capital-scaling rung page/route/CLI (TRUST-02, TRUST-03)
+
+**Wave 4** *(blocked on Wave 2)*
+
+- [ ] 05-04-PLAN.md — Slice D: anomaly evaluator (single-day drawdown) + demote+cancel+urgent-bypass-DM + post-fill hook + NYSE-gated scheduler tick + start-of-day snapshot + in-app notice (TRUST-04)
+
+**Wave 5** *(blocked on Waves 2-4)*
+
+- [ ] 05-05-PLAN.md — Slice B: auto-execute branch in trigger_strategy_run (live+auto dual-channel gate) + auto_execution event + informational FYI DM (respects quiet hours) + daily-digest + AUTO-EXECUTED card chip (TRUST-02, TRUST-06)
+
 **UI hint**: yes
 
 ### Phase 6: Web Dashboard & Multi-User Auth
@@ -262,7 +283,7 @@ Plans:
 | 2. OrderGuard & Real-Money Alpaca Live | v2.0 | 7/7 | Complete   | 2026-06-17 |
 | 3. Production HITL UX | v2.0 | 15/15 | Complete ✅ (secured) | 2026-06-23 |
 | 4. Agent Architecture & Cost Bounds | v2.0 | 8/8 | Complete ✅ (secured) | 2026-06-25 |
-| 5. Trust Ladder | v2.0 | 0/0 | Not started ◀ next | - |
+| 5. Trust Ladder | v2.0 | 0/5 | Planned ◀ next | - |
 | 6. Web Dashboard & Multi-User Auth | v3.0 | 0/0 | Not started | - |
 | 7. Operations & Observability | v3.0 | 0/0 | Not started | - |
 | 8. Additional API Brokers (IBKR + Schwab) | v3.0 | 0/0 | Not started | - |
