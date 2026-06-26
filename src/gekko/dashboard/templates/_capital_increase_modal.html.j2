@@ -1,0 +1,27 @@
+{# Capital-increase confirm modal — Phase 5 TRUST-03 Surface 3 (D-T14).
+   Loaded by GET /strategies/{name}/capital/review when the reviewed value is
+   higher than the current ceiling. Typed-name confirm gates the increase;
+   caution-yellow styling. POSTs /capital with the typed name. #}
+<div class="modal-backdrop">
+  <div class="modal" role="dialog" aria-labelledby="capital-headline" aria-modal="true">
+    <h2 id="capital-headline" class="modal-headline">Increase capital ceiling</h2>
+    <div class="modal-body">
+      <div class="caution-block" role="note">
+        💵 You're raising <code>{{ name }}</code> from <strong>${{ current_ceiling_display }}</strong>
+        to <strong>${{ new_ceiling_display }}</strong>. This lets the strategy deploy more real capital.
+        Trust level is unchanged.
+      </div>
+      <p class="mt-4">Type the strategy name <code>{{ name }}</code> to confirm:</p>
+      <form hx-post="/strategies/{{ name }}/capital" hx-target="#capital-result" hx-swap="outerHTML" class="mt-2">
+        <input type="hidden" name="new_ceiling" value="{{ new_ceiling_raw }}">
+        <input type="text" name="strategy_name_confirm" required autocomplete="off"
+               class="w-full mb-3" aria-label="Strategy name confirmation" placeholder="{{ name }}">
+        <div class="modal-actions">
+          <a href="#" hx-get="/modal/close" hx-target="#modal-mount" hx-swap="innerHTML">Cancel</a>
+          <button type="submit" class="btn-caution">Raise ceiling to ${{ new_ceiling_display }}</button>
+        </div>
+      </form>
+      <div id="capital-result"></div>
+    </div>
+  </div>
+</div>

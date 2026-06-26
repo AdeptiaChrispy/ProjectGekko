@@ -28,6 +28,7 @@ path; LLM bytes never reach them.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -192,6 +193,83 @@ async def demote_strategy_from_auto(
             await engine.dispose()
 
 
+#: Default capital ceiling read when the StrategyMetadata row is missing or the
+#: column is NULL (D-T16). Mirrors _capital_ceiling.DEFAULT_CAPITAL_CEILING_USD.
+DEFAULT_CAPITAL_CEILING_USD = "1000.00"
+
+
+async def set_capital_ceiling(
+    *,
+    user_id: str,
+    strategy_name: str,
+    new_ceiling_usd: str,
+) -> tuple[str, str]:
+    """Set a strategy's capital ceiling (TRUST-03 / D-T14 / D-T17).
+
+    UPSERTs ``StrategyMetadata.capital_ceiling_usd`` (Decimal-as-TEXT) and appends
+    a ``capital_scaled`` audit event with ``{strategy_name, old_ceiling_usd,
+    new_ceiling_usd, direction}`` in the payload.
+
+    Capital scaling is a SEPARATE rung from autonomy: this helper MUST NOT touch
+    ``trust_level`` or write any trust event (D-T17). The caller (route / CLI)
+    owns the confirm-on-increase gate; this helper just records the change.
+
+    Returns ``(old_ceiling_str, new_ceiling_str)`` for the caller's success copy.
+    """
+    new_dec = Decimal(str(new_ceiling_usd))
+    new_str = str(new_dec)
+    sf, engine = _get_session_factory(user_id)
+    try:
+        async with sf() as session, session.begin():
+            existing = await session.get(
+                StrategyMetadata, (user_id, strategy_name)
+            )
+            old_raw = (
+                existing.capital_ceiling_usd
+                if existing is not None
+                and existing.capital_ceiling_usd is not None
+                else DEFAULT_CAPITAL_CEILING_USD
+            )
+            old_dec = Decimal(str(old_raw))
+            old_str = str(old_dec)
+            if existing is None:
+                session.add(
+                    StrategyMetadata(
+                        user_id=user_id,
+                        strategy_name=strategy_name,
+                        capital_ceiling_usd=new_str,
+                    )
+                )
+            else:
+                existing.capital_ceiling_usd = new_str
+            direction = "increase" if new_dec > old_dec else "decrease"
+            await append_event(
+                session,
+                user_id=user_id,
+                strategy_id=None,
+                event_type="capital_scaled",
+                payload=normalize_decimals(
+                    {
+                        "strategy_name": strategy_name,
+                        "old_ceiling_usd": old_str,
+                        "new_ceiling_usd": new_str,
+                        "direction": direction,
+                    }
+                ),
+            )
+        log.info(
+            "strategy.capital_scaled",
+            user_id=user_id,
+            strategy_name=strategy_name,
+            old_ceiling_usd=old_str,
+            new_ceiling_usd=new_str,
+        )
+    finally:
+        if engine is not None:
+            await engine.dispose()
+    return old_str, new_str
+
+
 async def load_trust_level(
     *,
     user_id: str,
@@ -220,9 +298,11 @@ async def load_trust_level(
 
 
 __all__: tuple[str, ...] = (
+    "DEFAULT_CAPITAL_CEILING_USD",
     "TRUST_AUTO",
     "TRUST_PROPOSE_ONLY",
     "demote_strategy_from_auto",
     "load_trust_level",
     "promote_strategy_to_auto",
+    "set_capital_ceiling",
 )

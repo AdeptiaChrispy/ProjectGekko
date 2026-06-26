@@ -966,6 +966,97 @@ def strategy_trust_status(
         typer.echo(f"Blocked by:   {streak.block_reason}")
 
 
+@strategy_app.command("scale-capital")
+def strategy_scale_capital(
+    name: str = typer.Argument(
+        ..., help="Strategy slug whose capital ceiling to set."
+    ),
+    amount: str = typer.Argument(
+        ..., help="New capital ceiling in USD (e.g. 2500.00)."
+    ),
+) -> None:
+    """Set a strategy's capital ceiling (TRUST-03 / D-T14, CLI parity).
+
+    A separate rung from autonomy — never touches trust level or the streak
+    (D-T17). Raising the ceiling requires a typed-name confirm (parity with the
+    dashboard increase modal); lowering applies immediately. Writes a
+    ``capital_scaled`` audit event either way.
+    """
+    from decimal import Decimal, InvalidOperation
+
+    from gekko.config import get_settings
+    from gekko.db.engine import get_async_engine
+    from gekko.db.models import StrategyMetadata
+    from gekko.db.session import make_session_factory
+    from gekko.logging_config import configure_logging
+    from gekko.strategy.trust import (
+        DEFAULT_CAPITAL_CEILING_USD,
+        set_capital_ceiling,
+    )
+    from gekko.vault.passphrase import get_passphrase, prompt_passphrase
+
+    configure_logging()
+    settings = get_settings()
+
+    try:
+        new_dec = Decimal(amount)
+    except (InvalidOperation, ValueError):
+        typer.echo("Aborted — amount must be a number like 2500.00.")
+        raise typer.Exit(code=1) from None
+    if new_dec < 0:
+        typer.echo("Aborted — capital ceiling must be non-negative.")
+        raise typer.Exit(code=1)
+
+    try:
+        get_passphrase()
+    except RuntimeError:
+        prompt_passphrase()
+
+    async def _current_ceiling() -> Decimal:
+        engine = get_async_engine(
+            settings.db_path_for(settings.gekko_user_id),
+            get_passphrase(),
+        )
+        try:
+            async with make_session_factory(engine)() as session:
+                meta = await session.get(
+                    StrategyMetadata, (settings.gekko_user_id, name)
+                )
+        finally:
+            await engine.dispose()
+        raw = (
+            meta.capital_ceiling_usd
+            if meta is not None and meta.capital_ceiling_usd is not None
+            else DEFAULT_CAPITAL_CEILING_USD
+        )
+        return Decimal(str(raw))
+
+    old_dec = asyncio.run(_current_ceiling())
+    if new_dec > old_dec:
+        typer.echo(
+            f"Raising {name!r} capital ceiling from ${old_dec} to ${new_dec}. "
+            "This lets the strategy deploy more real capital. "
+            "Trust level is unchanged."
+        )
+        ack = typer.prompt(f"Type the strategy name {name!r} to confirm")
+        if ack.strip() != name:
+            typer.echo("Aborted — typed confirmation did not match.")
+            raise typer.Exit(code=1)
+
+    old_str, new_str = asyncio.run(
+        set_capital_ceiling(
+            user_id=settings.gekko_user_id,
+            strategy_name=name,
+            new_ceiling_usd=str(new_dec),
+        )
+    )
+    verb = "Raised" if Decimal(new_str) > Decimal(old_str) else "Lowered"
+    typer.echo(
+        f"{verb} {name!r} capital ceiling: ${old_str} -> ${new_str}. "
+        "Trust level + streak unchanged."
+    )
+
+
 # ---------------------------------------------------------------------------
 # `gekko audit verify` / `dump`
 # ---------------------------------------------------------------------------

@@ -1071,6 +1071,63 @@ async def edit_size_submit(
 # ---------------------------------------------------------------------------
 
 
+def _pct_fraction_to_display(raw: str | None) -> str:
+    """Convert a stored percent FRACTION string ("0.50") to a whole-number
+    display string ("50") for the Settings form. Blank/NULL → "" (disabled)."""
+    if raw is None:
+        return ""
+    cleaned = str(raw).strip().strip("'\"")
+    if not cleaned:
+        return ""
+    try:
+        as_pct = Decimal(cleaned) * Decimal("100")
+    except Exception:  # noqa: BLE001 - show blank on bad data
+        return ""
+    return str(as_pct.normalize() if as_pct == as_pct.to_integral() else as_pct)
+
+
+def _usd_to_display(raw: str | None) -> str:
+    """Convert a stored USD TEXT value to a display string; blank/NULL → ""."""
+    if raw is None:
+        return ""
+    cleaned = str(raw).strip().strip("'\"")
+    if not cleaned:
+        return ""
+    try:
+        return str(Decimal(cleaned))
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _caps_display(user: Any) -> dict[str, str]:
+    """Build the portfolio-caps display dict for settings.html.j2.
+
+    Percentages are stored as FRACTION strings ("0.50") and shown as whole
+    percents ("50"); USD shown as-is. NULL/blank → "" (cap disabled).
+    """
+    if user is None:
+        return {
+            "max_total_exposure_pct": "",
+            "max_sector_concentration_pct": "",
+            "max_correlated_ticker_pct": "",
+            "max_total_daily_loss_usd": "",
+        }
+    return {
+        "max_total_exposure_pct": _pct_fraction_to_display(
+            getattr(user, "max_total_exposure_pct", None)
+        ),
+        "max_sector_concentration_pct": _pct_fraction_to_display(
+            getattr(user, "max_sector_concentration_pct", None)
+        ),
+        "max_correlated_ticker_pct": _pct_fraction_to_display(
+            getattr(user, "max_correlated_ticker_pct", None)
+        ),
+        "max_total_daily_loss_usd": _usd_to_display(
+            getattr(user, "max_total_daily_loss_usd", None)
+        ),
+    }
+
+
 @router.get("/settings", response_class=HTMLResponse)
 async def settings_get(
     request: Request,
@@ -1111,10 +1168,48 @@ async def settings_get(
             "user": user,
             "iana_timezones": iana_timezones,
             "ceiling_value": ceiling_value,
+            "caps": _caps_display(user),
             "success": False,
             "error": None,
         },
     )
+
+
+def _validate_pct_cap(
+    raw: str, *, label: str
+) -> tuple[str | None, str | None]:
+    """Validate a percent cap form value (TRUST-02 / T-05-12).
+
+    Blank → ``(None, None)`` (cap disabled). A number in [0, 100] → stored as a
+    FRACTION string (``"50"`` → ``"0.50"``). Out of range / non-numeric →
+    ``(None, "<label> must be between 0 and 100.")``.
+    """
+    cleaned = raw.strip()
+    if not cleaned:
+        return None, None
+    try:
+        pct = Decimal(cleaned)
+    except (InvalidOperation, ValueError):
+        return None, f"{label} must be between 0 and 100."
+    if pct < Decimal("0") or pct > Decimal("100"):
+        return None, f"{label} must be between 0 and 100."
+    return str(pct / Decimal("100")), None
+
+
+def _validate_usd_cap(
+    raw: str, *, label: str
+) -> tuple[str | None, str | None]:
+    """Validate a non-negative USD cap form value. Blank → disabled (None)."""
+    cleaned = raw.strip()
+    if not cleaned:
+        return None, None
+    try:
+        usd = Decimal(cleaned)
+    except (InvalidOperation, ValueError):
+        return None, f"{label} must be a non-negative number."
+    if usd < Decimal("0"):
+        return None, f"{label} must be a non-negative number."
+    return str(usd), None
 
 
 @router.post("/settings", response_class=HTMLResponse)
@@ -1124,14 +1219,20 @@ async def settings_post(
     quiet_hours_start: str = Form(""),
     quiet_hours_end: str = Form(""),
     daily_cost_ceiling_usd: str = Form("5.00"),
+    max_total_exposure_pct: str = Form(""),
+    max_sector_concentration_pct: str = Form(""),
+    max_correlated_ticker_pct: str = Form(""),
+    max_total_daily_loss_usd: str = Form(""),
     user_id: str = Depends(require_session),
 ) -> HTMLResponse:
-    """POST /settings — validate + save quiet hours + cost ceiling (UI-SPEC §Surface 5, COST-03).
+    """POST /settings — validate + save quiet hours + cost ceiling + portfolio caps.
 
     Validation:
     - timezone must be in zoneinfo.available_timezones()
     - quiet_hours_start and quiet_hours_end must both be blank OR both set
     - daily_cost_ceiling_usd must be a valid Decimal > 0 (T-04-15)
+    - the four portfolio caps: percents in [0, 100] (stored as fractions), USD
+      non-negative; blank disables that cap (TRUST-02 / T-05-12)
     """
     import zoneinfo
     from gekko.db.models import User as UserRow
@@ -1158,6 +1259,43 @@ async def settings_post(
         elif bool(quiet_hours_start) != bool(quiet_hours_end):
             error = "Quiet hours start and end must both be set, or both be blank."
 
+    # Validate the four portfolio caps (TRUST-02 / T-05-12). Each is stored as
+    # a FRACTION (percent) or USD TEXT; blank disables the cap.
+    caps_to_store: dict[str, str | None] = {}
+    if error is None:
+        for field, raw, label, is_pct in (
+            (
+                "max_total_exposure_pct",
+                max_total_exposure_pct,
+                "Max total exposure",
+                True,
+            ),
+            (
+                "max_sector_concentration_pct",
+                max_sector_concentration_pct,
+                "Max sector concentration",
+                True,
+            ),
+            (
+                "max_correlated_ticker_pct",
+                max_correlated_ticker_pct,
+                "Max same-ticker exposure",
+                True,
+            ),
+            (
+                "max_total_daily_loss_usd",
+                max_total_daily_loss_usd,
+                "Max total daily loss",
+                False,
+            ),
+        ):
+            validate = _validate_pct_cap if is_pct else _validate_usd_cap
+            stored, cap_error = validate(raw, label=label)
+            if cap_error is not None:
+                error = cap_error
+                break
+            caps_to_store[field] = stored
+
     if error:
         sf, engine = _get_session_factory(user_id)
         try:
@@ -1180,6 +1318,14 @@ async def settings_post(
                 ceiling_value = str(_DCC_USD)
         else:
             ceiling_value = str(_DCC_USD)
+        # On a cap-validation error preserve what the operator typed so the
+        # offending field is not silently reset (caps come from the form, not DB).
+        caps_ctx = {
+            "max_total_exposure_pct": max_total_exposure_pct,
+            "max_sector_concentration_pct": max_sector_concentration_pct,
+            "max_correlated_ticker_pct": max_correlated_ticker_pct,
+            "max_total_daily_loss_usd": max_total_daily_loss_usd,
+        }
         return templates.TemplateResponse(
             request,
             "settings.html.j2",
@@ -1187,6 +1333,7 @@ async def settings_post(
                 "user": user,
                 "iana_timezones": iana_timezones,
                 "ceiling_value": ceiling_value,
+                "caps": caps_ctx,
                 "success": False,
                 "error": error,
             },
@@ -1211,6 +1358,19 @@ async def settings_post(
                 user.quiet_hours_start = quiet_hours_start or None
                 user.quiet_hours_end = quiet_hours_end or None
                 user.daily_cost_ceiling_usd = normalized_ceiling
+                # Portfolio caps (TRUST-02): blank=None disables the cap.
+                user.max_total_exposure_pct = caps_to_store.get(
+                    "max_total_exposure_pct"
+                )
+                user.max_sector_concentration_pct = caps_to_store.get(
+                    "max_sector_concentration_pct"
+                )
+                user.max_correlated_ticker_pct = caps_to_store.get(
+                    "max_correlated_ticker_pct"
+                )
+                user.max_total_daily_loss_usd = caps_to_store.get(
+                    "max_total_daily_loss_usd"
+                )
             await session.flush()
     finally:
         if engine is not None:
@@ -1246,6 +1406,7 @@ async def settings_post(
             "user": user,
             "iana_timezones": iana_timezones,
             "ceiling_value": ceiling_value,
+            "caps": _caps_display(user),
             "success": True,
             "error": None,
         },
@@ -2310,30 +2471,46 @@ async def demote_from_auto(
     return HTMLResponse(row_html + status)
 
 
-@router.get("/strategies/{name}/capital", response_class=HTMLResponse)
-async def strategy_capital(
-    request: Request,
-    name: str,
-    user_id: str = Depends(require_session),
-) -> HTMLResponse:
-    """Capital-scaling page (TRUST-03 Surface 3) — a separate rung from autonomy."""
+async def _load_capital_context(
+    engine: Any, *, user_id: str, name: str
+) -> tuple[str, str]:
+    """Return ``(current_ceiling_display, trust_level)`` for the capital page."""
     from gekko.db.models import StrategyMetadata
+    from gekko.strategy.trust import DEFAULT_CAPITAL_CEILING_USD
 
-    engine = request.app.state.engine
     async with make_session_factory(engine)() as session:
         meta = await session.get(StrategyMetadata, (user_id, name))
     current = (
         meta.capital_ceiling_usd
         if meta is not None and meta.capital_ceiling_usd is not None
-        else "1000.00"
+        else DEFAULT_CAPITAL_CEILING_USD
     )
     trust_level = (
         meta.trust_level
         if meta is not None and meta.trust_level is not None
         else "propose-only"
     )
+    return str(current), str(trust_level)
+
+
+@router.get("/strategies/{name}/capital", response_class=HTMLResponse)
+async def strategy_capital(
+    request: Request,
+    name: str,
+    user_id: str = Depends(require_session),
+) -> HTMLResponse:
+    """Capital-scaling page (TRUST-03 Surface 3) — a separate rung from autonomy.
+
+    Renders the dedicated page with the current ceiling + a numeric input whose
+    form GETs ``/capital/review`` (the server decides whether a confirm step is
+    required by direction — D-T14).
+    """
+    engine = request.app.state.engine
+    current, trust_level = await _load_capital_context(
+        engine, user_id=user_id, name=name
+    )
     return templates.TemplateResponse(
-        "strategy_capital.html.j2",
+        "capital_scale.html.j2",
         {
             "request": request,
             "name": name,
@@ -2343,87 +2520,121 @@ async def strategy_capital(
     )
 
 
+@router.get("/strategies/{name}/capital/review", response_class=HTMLResponse)
+async def strategy_capital_review(
+    request: Request,
+    name: str,
+    new_ceiling: str = "",
+    user_id: str = Depends(require_session),
+) -> HTMLResponse:
+    """Review a proposed ceiling change (TRUST-03 / D-T14).
+
+    Compares the requested value against the current ceiling. An INCREASE renders
+    the typed-name confirm modal (caution-yellow); a DECREASE / unchanged value
+    applies immediately via :func:`set_capital_ceiling` and returns the success
+    fragment. The server — not the page — is the authority on whether a confirm
+    step is required.
+    """
+    from gekko.strategy.trust import set_capital_ceiling
+
+    new_raw = (request.query_params.get("new_ceiling") or new_ceiling or "").strip()
+    engine = request.app.state.engine
+    current, trust_level = await _load_capital_context(
+        engine, user_id=user_id, name=name
+    )
+    try:
+        new_dec = Decimal(new_raw)
+    except (InvalidOperation, ValueError):
+        new_dec = Decimal("-1")
+    if new_dec < 0:
+        return HTMLResponse(
+            '<div id="capital-result" class="login-error" role="alert">'
+            "Capital ceiling must be a non-negative number.</div>"
+        )
+
+    current_dec = Decimal(current)
+    if new_dec > current_dec:
+        # Increase → typed-name confirm modal (Surface 3 increase modal).
+        return templates.TemplateResponse(
+            "_capital_increase_modal.html.j2",
+            {
+                "request": request,
+                "name": name,
+                "current_ceiling_display": current,
+                "new_ceiling_display": str(new_dec),
+                "new_ceiling_raw": str(new_dec),
+            },
+        )
+
+    # Decrease / unchanged → apply immediately + audit (D-T14).
+    old_str, new_str = await set_capital_ceiling(
+        user_id=user_id, strategy_name=name, new_ceiling_usd=str(new_dec)
+    )
+    msg = (
+        f"Lowered <code>{name}</code> capital ceiling to ${new_str}. "
+        "Applied immediately."
+    )
+    return HTMLResponse(
+        f'<div id="capital-result" role="status">{msg}</div>'
+    )
+
+
 @router.post("/strategies/{name}/capital", response_class=HTMLResponse)
 async def set_capital_ceiling_route(
-    request: Request,
+    request: Request,  # noqa: ARG001 - router signature parity
     name: str,
     new_ceiling: str = Form(...),
     strategy_name_confirm: str = Form(""),
     user_id: str = Depends(require_session),
 ) -> HTMLResponse:
-    """Apply a capital-ceiling change (TRUST-03 / D-T14).
+    """Apply a capital-ceiling change (TRUST-03 / D-T14 / D-T17).
 
-    Lowering (de-risk) applies immediately. Raising requires a typed-name
-    confirm. Either way writes a ``capital_scaled`` audit event (old→new) and
-    leaves trust level + streak UNTOUCHED (D-T17). The capital ceiling lives
-    on the ``StrategyMetadata`` row added by migration 0007.
+    Lowering (de-risk) applies immediately. Raising requires a matching typed
+    strategy-name confirm. Either way delegates to
+    :func:`gekko.strategy.trust.set_capital_ceiling`, which writes the
+    ``capital_scaled`` audit event (old→new) and leaves trust level + streak
+    UNTOUCHED.
     """
-    from gekko.audit.canonical import normalize_decimals
-    from gekko.audit.log import append_event
-    from gekko.db.models import StrategyMetadata
+    from gekko.strategy.trust import (
+        DEFAULT_CAPITAL_CEILING_USD,
+        set_capital_ceiling,
+    )
 
-    engine = request.app.state.engine
     try:
         new_dec = Decimal(new_ceiling)
     except (InvalidOperation, ValueError):
-        new_dec = Decimal("-1")  # force the non-negative guard below
+        new_dec = Decimal("-1")
     if new_dec < 0:
         raise HTTPException(
             status_code=400,
             detail="Capital ceiling must be a non-negative number.",
         )
 
-    async with make_session_factory(engine)() as session, session.begin():
-        meta = await session.get(StrategyMetadata, (user_id, name))
-        old_raw = (
-            meta.capital_ceiling_usd
-            if meta is not None and meta.capital_ceiling_usd is not None
-            else "1000.00"
-        )
-        old_dec = Decimal(old_raw)
-        is_increase = new_dec > old_dec
+    current, _trust = await _load_capital_context(
+        request.app.state.engine, user_id=user_id, name=name
+    )
+    old_dec = Decimal(current or DEFAULT_CAPITAL_CEILING_USD)
+    is_increase = new_dec > old_dec
 
-        # Raising requires a matching typed-name confirm (D-T14).
-        if is_increase and strategy_name_confirm.strip() != name:
-            return HTMLResponse(
-                '<div id="capital-result" class="login-error" role="alert">'
-                f"That didn't match. Type {name} exactly to confirm.</div>"
-            )
-
-        new_str = str(new_dec)
-        if meta is None:
-            session.add(
-                StrategyMetadata(
-                    user_id=user_id,
-                    strategy_name=name,
-                    capital_ceiling_usd=new_str,
-                )
-            )
-        else:
-            meta.capital_ceiling_usd = new_str
-        await append_event(
-            session,
-            user_id=user_id,
-            strategy_id=None,
-            event_type="capital_scaled",
-            payload=normalize_decimals(
-                {
-                    "strategy_name": name,
-                    "old_ceiling_usd": str(old_dec),
-                    "new_ceiling_usd": new_str,
-                    "direction": "increase" if is_increase else "decrease",
-                }
-            ),
+    # Raising requires a matching typed-name confirm (D-T14).
+    if is_increase and strategy_name_confirm.strip() != name:
+        return HTMLResponse(
+            '<div id="capital-result" class="login-error" role="alert">'
+            f"That didn't match. Type {name} exactly to confirm.</div>"
         )
+
+    _old, new_str = await set_capital_ceiling(
+        user_id=user_id, strategy_name=name, new_ceiling_usd=str(new_dec)
+    )
 
     if is_increase:
         msg = (
-            f"💵 Raised <code>{name}</code> capital ceiling to ${new_dec}. "
+            f"💵 Raised <code>{name}</code> capital ceiling to ${new_str}. "
             "Trust level unchanged."
         )
     else:
         msg = (
-            f"Lowered <code>{name}</code> capital ceiling to ${new_dec}. "
+            f"Lowered <code>{name}</code> capital ceiling to ${new_str}. "
             "Applied immediately."
         )
     return HTMLResponse(

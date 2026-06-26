@@ -82,6 +82,40 @@
       <p class="form-help">Default: $5.00/day.</p>
     </fieldset>
 
+    <fieldset>
+      <legend>Portfolio Caps</legend>
+      <p class="form-help">
+        These limits stack on top of each strategy's own hard caps and apply to <strong>every</strong> order —
+        auto-executed and human-approved alike. OrderGuard rejects any order that would breach them.
+      </p>
+
+      <div class="cap-field-row">
+        <label for="max_total_exposure_pct">Max total exposure (% of account equity)</label>
+        <input type="number" id="max_total_exposure_pct" name="max_total_exposure_pct"
+               step="1" min="0" max="100" value="{{ caps.max_total_exposure_pct }}">
+      </div>
+      <div class="cap-field-row">
+        <label for="max_sector_concentration_pct">Max sector concentration (% across all strategies)</label>
+        <input type="number" id="max_sector_concentration_pct" name="max_sector_concentration_pct"
+               step="1" min="0" max="100" value="{{ caps.max_sector_concentration_pct }}">
+      </div>
+      <div class="cap-field-row">
+        <label for="max_correlated_ticker_pct">Max same-ticker exposure across strategies (% equity)</label>
+        <input type="number" id="max_correlated_ticker_pct" name="max_correlated_ticker_pct"
+               step="1" min="0" max="100" value="{{ caps.max_correlated_ticker_pct }}">
+      </div>
+      <div class="cap-field-row">
+        <label for="max_total_daily_loss_usd">Max total daily loss (USD, portfolio-wide)</label>
+        <input type="number" id="max_total_daily_loss_usd" name="max_total_daily_loss_usd"
+               step="0.01" min="0" value="{{ caps.max_total_daily_loss_usd }}">
+      </div>
+
+      <p class="form-help">
+        "Same-ticker exposure" caps the combined position when multiple strategies hold the same ticker
+        (our pragmatic stand-in for correlation). Leave a field blank to disable that cap.
+      </p>
+    </fieldset>
+
     <button type="submit" class="btn-primary">Save settings</button>
   </form>
 </div>
