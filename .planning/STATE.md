@@ -5,9 +5,10 @@ milestone_name: Safety & Trust
 current_phase: 04
 current_phase_name: agent-architecture-cost-bounds
 status: phase_complete
-stopped_at: Phase 5 context gathered
-last_updated: "2026-06-26T12:41:23.075Z"
-last_activity: 2026-06-25
+stopped_at: Phase 5 UI-SPEC approved
+last_updated: "2026-06-26T15:22:27.505Z"
+last_activity: 2026-06-26
+last_activity_desc: Phase 05 planning complete
 progress:
   total_phases: 5
   completed_phases: 4
@@ -31,7 +32,7 @@ progress:
 Phase: 04 (agent-architecture-cost-bounds) — COMPLETE ✅ (verified + UAT + secured 32/32)
 Plan: 8 of 8 (ALL COMPLETE)
 Status: Phase 04 fully closed — roadmap advanced to Phase 05 (Trust Ladder), not yet started
-Last activity: 2026-06-25
+Last activity: 2026-06-26 — Phase 05 planning complete
 Next: `/gsd-discuss-phase 5` (or `/gsd-plan-phase 5`)
 
 ## Performance Metrics
@@ -187,9 +188,9 @@ Items acknowledged and proceeded-past at milestone close on 2026-06-15:
 
 ## Session Continuity
 
-**Last session:** 2026-06-26T12:41:23.062Z
-**Stopped at:** Phase 5 context gathered
-**Resume file:** .planning/phases/05-trust-ladder-per-strategy-promotion-portfolio-caps/05-CONTEXT.md
+**Last session:** 2026-06-26T12:55:44.606Z
+**Stopped at:** Phase 5 UI-SPEC approved
+**Resume file:** .planning/phases/05-trust-ladder-per-strategy-promotion-portfolio-caps/05-UI-SPEC.md
 
 **Next action:** Phase 1 is fully closed and all demo-discovery follow-ups have landed. Run `/gsd-complete-milestone` to archive Phase 1 + open the Phase 2 SPEC (OrderGuard + Real-Money Alpaca Live), or `/gsd-new-milestone v2.0` to scope a v2 explicitly. Phase 2's CONTEXT.md was already captured on 2026-06-11 (commit `3ca0b06`), so `/gsd-plan-phase 2` can run immediately. The one outstanding Phase-3 backlog item — executor-error → Slack surfacing on MarketClosed/BrokerOrderError — is tracked in [.planning/quick/260612-dix-raise-rationale-cap-to-5000-slack-render/deferred-items.md] for now (will be re-routed into Phase 3 planning when it spins up).
 

@@ -478,31 +478,36 @@ async def evaluate_drawdown(*, user_id, strategy_name, broker) -> bool:
 | A6 | Default portfolio-cap numbers (50/30/15/$200) from 05-UI-SPEC are the right conservative defaults | Validation / migration | Low — UI-SPEC already prescribes these; runtime-editable |
 | A7 | The streak should partition per-mode (paper vs live separately) per D-T03 | Pattern 4 | Low — explicitly locked in D-T03 |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **TRUST-05 and TRUST-06 requirement intent.**
    - What we know: ROADMAP lists TRUST-01..06 as Phase 5 requirements but spells out only SC-1..SC-5; REQUIREMENTS.md has no TRUST-* rows.
    - What's unclear: which concrete behaviors TRUST-05/06 denote (likely: the safety-invariant gate, and audit-trail completeness for auto-execution).
    - Recommendation: planner confirms the mapping during PLAN; treat the AST safety gate (RQ-6) and the five new audit event types as covering TRUST-05/06 until told otherwise.
+   - **RESOLVED (Plan 02):** TRUST-05/06 map to the AST/behavioral safety-invariant gate plus audit-trail completeness for auto-execution. The promotion/trust helpers and the safety-invariant tests (`test_trust_safety_invariants.py`) carry these; the five new audit event types cover the trail. Locked as the working interpretation across the plan set.
 
 2. **Who posts the HITL Slack card for `propose-only` after `trigger_strategy_run`?**
    - What we know: `trigger_strategy_run` returns the PENDING proposal dict; the Slack/CLI/dashboard surfaces post the card (the orchestrator doesn't). The auto-branch, by contrast, must execute *inside* the run (no caller round-trip).
    - What's unclear: whether the auto-branch belongs inside `trigger_strategy_run` (so scheduled cycles auto-execute) or in each calling surface.
    - Recommendation: put the auto-branch **inside** `trigger_strategy_run` (scheduled cycles are the primary auto trigger; a caller-side branch would miss them). Return `outcome="auto_executed"` in the run summary so surfaces render the right thing.
+   - **RESOLVED (Plan 05):** the auto-branch sits **inside** `trigger_strategy_run` after `write_proposal`, below the SDK boundary; the run summary carries `outcome` (`auto_executed` / `awaiting_2nd_channel` / `proposed`). propose-only still returns the PENDING proposal for the calling surface to post the HITL card.
 
 3. **Start-of-day value source for single-day drawdown (D-T10).**
    - What we know: `get_positions()` exposes `market_value` + `cost_basis`; `get_account()` exposes `equity`. Realized P&L today is derivable from fill events (daily_pnl.py already does this).
    - What's unclear: whether to snapshot per-strategy open value once at market open vs compute live each tick; and whether "value" is per-strategy cost-basis or account equity attributed to the strategy.
    - Recommendation: persist a per-strategy open snapshot via a market-open scheduler job; flag to discuss-phase as the load-bearing anomaly design choice.
+   - **RESOLVED (Plan 04, operator-reviewable assumption):** persist a per-strategy start-of-day snapshot via a market-open scheduler job; all intraday evaluations read this STABLE denominator (avoids the moving-denominator oscillation in Pitfall 3). This remains surfaced for operator confirmation as the single biggest anomaly design choice — the resolution records the chosen default, not a final operator sign-off.
 
 4. **"Combined per-ticker exposure across strategies" (D-T07) given Alpaca position netting.**
    - What we know: a single Alpaca account holds one net position per ticker.
    - What's unclear: whether D-T07 intends to cap the account's single position in a ticker (against `max_correlated_ticker_pct`) — the only thing actually measurable — or some notional attribution across strategies.
    - Recommendation: implement the measurable interpretation (cap the account's single per-ticker position) and confirm with the operator in discuss-phase.
+   - **RESOLVED (Plan 03, operator-reviewable assumption):** implement the measurable interpretation — cap the account's single net per-ticker position against `max_correlated_ticker_pct` (Alpaca holds one net position per ticker). Surfaced for operator confirmation; the resolution records the chosen default, not a final operator sign-off.
 
 5. **Anomaly cancellation state for PENDING auto-proposals.**
    - What we know: `PENDING→REJECTED` and `PENDING→EXPIRED` edges exist; no "cancelled-by-anomaly" edge.
    - Recommendation: reuse `REJECTED` + `anomaly_demotion` event, or add a state if semantics matter. Planner decides; document in PLAN.
+   - **RESOLVED (Plan 04):** reuse the existing `PENDING→REJECTED` edge plus a distinguishing `anomaly_demotion` audit event (lower-risk than adding a new state — RESEARCH A3). No new state machine edge added.
 
 ## Environment Availability
 
