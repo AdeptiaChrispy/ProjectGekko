@@ -1011,30 +1011,43 @@ async def _run_auto_branch(
             # dashboard /live-confirm route fires it after the second channel
             # confirms. The approval audit event records the auto actor +
             # the live-gate diversion so the chain captures the stacked gate.
-            async with session_factory() as s, s.begin():
-                await transition_status(
-                    s,
-                    proposal_id,
-                    from_status="PENDING",
-                    to_status="AWAITING_2ND_CHANNEL",
-                )
-                await append_event(
-                    s,
+            try:
+                async with session_factory() as s, s.begin():
+                    await transition_status(
+                        s,
+                        proposal_id,
+                        from_status="PENDING",
+                        to_status="AWAITING_2ND_CHANNEL",
+                    )
+                    await append_event(
+                        s,
+                        user_id=user_id,
+                        strategy_id=strategy_db_id,
+                        event_type="approval",
+                        payload=normalize_decimals(
+                            {
+                                "proposal_id": proposal_id,
+                                "actor": "auto-execute",
+                                "slack_action_id": "approve_proposal",
+                                "execution_path": "auto",
+                                "awaiting_2nd_channel": True,
+                                "strategy_name": proposal.strategy_name,
+                                "account_mode": proposal.account_mode,
+                            }
+                        ),
+                    )
+            except ValueError:
+                # Pitfall 9 caller-gate: transition_status raises ValueError when
+                # the state-machine CHECK fails — here a sweep-vs-click race where
+                # a concurrent writer already moved the row out of PENDING. First-
+                # write-wins (D-53): do NOT dispatch; the other writer owns the row.
+                log.info(
+                    "agent.run.auto_live_first_already_resolved",
                     user_id=user_id,
-                    strategy_id=strategy_db_id,
-                    event_type="approval",
-                    payload=normalize_decimals(
-                        {
-                            "proposal_id": proposal_id,
-                            "actor": "auto-execute",
-                            "slack_action_id": "approve_proposal",
-                            "execution_path": "auto",
-                            "awaiting_2nd_channel": True,
-                            "strategy_name": proposal.strategy_name,
-                            "account_mode": proposal.account_mode,
-                        }
-                    ),
+                    strategy_name=proposal.strategy_name,
+                    proposal_id=proposal_id,
                 )
+                return "awaiting_2nd_channel"
             log.info(
                 "agent.run.auto_live_first_dual_channel",
                 user_id=user_id,
