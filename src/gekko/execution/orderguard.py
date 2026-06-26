@@ -51,11 +51,13 @@ from typing import Any, Literal
 
 from gekko.brokers.base import Brokerage, OrderRequest, OrderResult
 from gekko.execution.checks import (
+    check_capital_ceiling,
     check_hard_caps,
     check_kill_switch,
     check_market_hours,
     check_paper_live_pairing,
     check_pdt,
+    check_portfolio_caps,
     check_qty_price_sanity,
     check_t1_settlement,
     check_universe,
@@ -188,6 +190,8 @@ class OrderGuard(Brokerage):
           2. ``check_paper_live_pairing`` — pure in-memory invariant
           3. ``check_universe`` — pure in-memory invariant
           4. ``check_hard_caps`` — broker GETs + audit-log walk
+          4b. ``check_portfolio_caps`` — account-wide aggregate caps (Phase 5)
+          4c. ``check_capital_ceiling`` — per-strategy deployed-capital ceiling
           5. ``check_qty_price_sanity`` — broker GET for MARKET orders
           6. ``check_pdt`` — broker get_account + local 5-day round-trip walk
           7. ``check_t1_settlement`` — broker get_account + ref_price math
@@ -216,6 +220,25 @@ class OrderGuard(Brokerage):
         await check_universe(req, strategy=self._strategy)
 
         await check_hard_caps(
+            req=req,
+            strategy=self._strategy,
+            broker=self._wrapped,
+            user_id=self._user_id,
+        )
+
+        # Phase 5 (D-T08 / SC-2 / SC-3): stack account-wide portfolio caps and
+        # the per-strategy capital ceiling on top of the per-strategy hard
+        # caps. These run on EVERY order — HITL and auto alike — because the
+        # auto path (Plan 05) reaches the broker only through this single
+        # pipeline. Two strategies each within their own caps but breaching an
+        # aggregate cap are hard-rejected here; the LLM cannot reason past it.
+        await check_portfolio_caps(
+            req=req,
+            strategy=self._strategy,
+            broker=self._wrapped,
+            user_id=self._user_id,
+        )
+        await check_capital_ceiling(
             req=req,
             strategy=self._strategy,
             broker=self._wrapped,

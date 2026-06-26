@@ -789,16 +789,16 @@ async def test_orderguard_place_order_delegates_when_all_checks_pass(
     sf = make_session_factory(temp_sqlcipher_db)
     await _seed_user(sf, kill_active=False)
 
+    from gekko.execution.checks import _capital_ceiling as cc_mod
     from gekko.execution.checks import _hard_caps as hc_mod
     from gekko.execution.checks import _kill_switch as ks_mod
     from gekko.execution.checks import _market_hours as mh_mod
+    from gekko.execution.checks import _portfolio_caps as pc_mod
 
-    monkeypatch.setattr(
-        ks_mod, "_get_session_factory", lambda _u: (sf, None)
-    )
-    monkeypatch.setattr(
-        hc_mod, "_get_session_factory", lambda _u: (sf, None)
-    )
+    for _mod in (ks_mod, hc_mod, pc_mod, cc_mod):
+        monkeypatch.setattr(
+            _mod, "_get_session_factory", lambda _u: (sf, None)
+        )
     monkeypatch.setattr(mh_mod, "is_market_open", lambda *a, **k: True)
 
     strategy = _make_strategy(watchlist=["NVDA"])
@@ -815,6 +815,84 @@ async def test_orderguard_place_order_delegates_when_all_checks_pass(
     result = await guard.place_order(req)
     assert result.broker_order_id == "broker-x"
     broker.place_order.assert_awaited_once_with(req)
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 (D-T08 / SC-2) — portfolio caps run inside the single place_order
+# pipeline on EVERY order. A per-strategy-OK order that breaches an aggregate
+# cap is hard-rejected here; the LLM cannot reason past it.
+# ---------------------------------------------------------------------------
+
+
+async def _seed_user_with_portfolio_caps(
+    sf: Any,
+    *,
+    max_total_exposure_pct: str | None = None,
+) -> None:
+    async with sf() as session, session.begin():
+        session.add(
+            User(
+                user_id="test-user",
+                created_at=datetime.now(UTC).isoformat(),
+                kill_active=False,
+                max_total_exposure_pct=max_total_exposure_pct,
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_place_order_rejects_on_aggregate_portfolio_breach(
+    temp_sqlcipher_db: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A per-strategy-compliant order still rejects on the AGGREGATE cap (SC-2).
+
+    The strategy's own hard caps (50% position, 100% sector) pass, but the
+    account already holds $40k and this order adds $20k → 60% > the 50% portfolio
+    total-exposure cap. The breach surfaces at place_order time with a
+    ``portfolio_*`` reject_code, proving the stack ordering and that the single
+    OrderGuard pipeline enforces aggregate caps on every order.
+    """
+    sf = make_session_factory(temp_sqlcipher_db)
+    await _seed_user_with_portfolio_caps(sf, max_total_exposure_pct="0.50")
+
+    from gekko.execution.checks import _capital_ceiling as cc_mod
+    from gekko.execution.checks import _hard_caps as hc_mod
+    from gekko.execution.checks import _kill_switch as ks_mod
+    from gekko.execution.checks import _market_hours as mh_mod
+    from gekko.execution.checks import _portfolio_caps as pc_mod
+
+    for mod in (ks_mod, hc_mod, pc_mod, cc_mod):
+        monkeypatch.setattr(
+            mod, "_get_session_factory", lambda _u: (sf, None)
+        )
+    monkeypatch.setattr(mh_mod, "is_market_open", lambda *a, **k: True)
+
+    # Strategy stays within its OWN caps: 20% position ceiling, 100% sector.
+    strategy = _make_strategy(
+        watchlist=["NVDA"],
+        max_position_pct=Decimal("0.20"),
+        max_sector_exposure_pct=Decimal("1"),
+    )
+    # Account already holds $40k (MSFT) and equity is $100k.
+    broker = _mock_broker(
+        equity="100000",
+        positions=[{"symbol": "MSFT", "market_value": "40000"}],
+    )
+    guard = OrderGuard(
+        broker,
+        strategy=strategy,
+        account_mode="PAPER",
+        user_id="test-user",
+    )
+    # 199 × $100 = $19,900 → ($40k + $19.9k)/$100k = 59.9% > 50% portfolio cap,
+    # but $19.9k / $100k = 19.9% < the 20% per-strategy position cap.
+    req = _make_order_request(qty=Decimal("199"), limit_price=Decimal("100"))
+
+    with pytest.raises(OrderGuardRejected) as exc_info:
+        await guard.place_order(req)
+    assert exc_info.value.reject_code == "portfolio_total_exposure"
+    # The breach short-circuits BEFORE broker submission.
+    broker.place_order.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
