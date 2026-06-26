@@ -176,7 +176,7 @@ Plans:
   4. When a strategy's drawdown exceeds the per-strategy anomaly threshold, the strategy auto-demotes to `propose-only`, cancels pending auto-orders, and Slack-DMs the user with the trigger details — without manual intervention
   5. User attempting to enable auto-execute on a strategy that hasn't met the placeholder promotion criteria (e.g., N successful HITL approvals, no cap breaches) sees the action blocked with a clear explanation, not a silent failure
 
-**Plans:** 2/5 plans executed
+**Plans:** 3/5 plans executed
 Plans:
 **Wave 1**
 
@@ -188,7 +188,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2)*
 
-- [ ] 05-03-PLAN.md — Slice C: check_portfolio_caps + check_capital_ceiling OrderGuard checks (stacked in place_order) + Settings portfolio-caps fieldset + capital-scaling rung page/route/CLI (TRUST-02, TRUST-03)
+- [x] 05-03-PLAN.md — Slice C: check_portfolio_caps + check_capital_ceiling OrderGuard checks (stacked in place_order) + Settings portfolio-caps fieldset + capital-scaling rung page/route/CLI (TRUST-02, TRUST-03)
 
 **Wave 4** *(blocked on Wave 2)*
 
@@ -284,7 +284,7 @@ Plans:
 | 2. OrderGuard & Real-Money Alpaca Live | v2.0 | 7/7 | Complete   | 2026-06-17 |
 | 3. Production HITL UX | v2.0 | 15/15 | Complete ✅ (secured) | 2026-06-23 |
 | 4. Agent Architecture & Cost Bounds | v2.0 | 8/8 | Complete ✅ (secured) | 2026-06-25 |
-| 5. Trust Ladder | v2.0 | 2/5 | In Progress|  |
+| 5. Trust Ladder | v2.0 | 3/5 | In Progress|  |
 | 6. Web Dashboard & Multi-User Auth | v3.0 | 0/0 | Not started | - |
 | 7. Operations & Observability | v3.0 | 0/0 | Not started | - |
 | 8. Additional API Brokers (IBKR + Schwab) | v3.0 | 0/0 | Not started | - |

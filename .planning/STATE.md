@@ -6,14 +6,14 @@ current_phase: 05
 current_phase_name: trust-ladder-per-strategy-promotion-portfolio-caps
 status: executing
 stopped_at: Phase 5 UI-SPEC approved
-last_updated: "2026-06-26T16:00:46.175Z"
+last_updated: "2026-06-26T16:22:20.909Z"
 last_activity: 2026-06-26
 last_activity_desc: Phase 05 execution started
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 44
-  completed_plans: 41
+  completed_plans: 42
   percent: 80
 ---
 
@@ -30,7 +30,7 @@ progress:
 ## Current Position
 
 Phase: 05 (trust-ladder-per-strategy-promotion-portfolio-caps) — EXECUTING
-Plan: 3 of 5
+Plan: 4 of 5
 Status: Ready to execute
 Last activity: 2026-06-26 — Phase 05 execution started
 Next: `/gsd-discuss-phase 5` (or `/gsd-plan-phase 5`)
@@ -70,6 +70,7 @@ Next: `/gsd-discuss-phase 5` (or `/gsd-plan-phase 5`)
 | Phase 04-agent-architecture-cost-bounds P08 | 8min | 2 tasks | 3 files |
 | Phase 05 P01 | 10min | 3 tasks | 14 files |
 | Phase 05 P02 | 12min | 3 tasks | 16 files |
+| Phase 05 P03 | 15min | 3 tasks | 14 files |
 
 ## Accumulated Context
 
@@ -190,7 +191,7 @@ Items acknowledged and proceeded-past at milestone close on 2026-06-15:
 
 ## Session Continuity
 
-**Last session:** 2026-06-26T16:00:16.396Z
+**Last session:** 2026-06-26T16:21:48.217Z
 **Stopped at:** Phase 5 UI-SPEC approved
 **Resume file:** .planning/phases/05-trust-ladder-per-strategy-promotion-portfolio-caps/05-UI-SPEC.md
 
@@ -420,3 +421,5 @@ After the manual demo passes, the next milestone-level step is either `/gsd-comp
 
 - [Phase ?]: Plan 05-02: eligibility computed by backward scan of the append-only audit log (compute_clean_streak), never a counter column; server re-checks on promote per D-T18b
 - [Phase ?]: Plan 05-02: trust.py is the AST-locked sole writer of trust_level auto-within-caps; material edit demotes auto strategies and resets the streak (D-T05)
+- [Phase ?]: Portfolio caps aggregate over one get_positions() call (Alpaca nets one position per ticker); capital ceiling attributes deployed capital by strategy.watchlist
+- [Phase ?]: Capital scaling reconciled into trust.py::set_capital_ceiling; never touches trust_level/streak (D-T17); increase requires typed-name confirm via /capital/review modal
