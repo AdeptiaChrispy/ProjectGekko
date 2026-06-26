@@ -176,11 +176,11 @@ Plans:
   4. When a strategy's drawdown exceeds the per-strategy anomaly threshold, the strategy auto-demotes to `propose-only`, cancels pending auto-orders, and Slack-DMs the user with the trigger details — without manual intervention
   5. User attempting to enable auto-execute on a strategy that hasn't met the placeholder promotion criteria (e.g., N successful HITL approvals, no cap breaches) sees the action blocked with a clear explanation, not a silent failure
 
-**Plans:** 5 plans
+**Plans:** 1/5 plans executed
 Plans:
 **Wave 1**
 
-- [ ] 05-01-PLAN.md — Foundation: Alembic 0007 (StrategyMetadata trust/capital/anomaly cols + User portfolio-cap cols + events CHECK +5 types) + ORM mirror + approval/cap_rejection payload enrichment + all Wave-0 test stubs (TRUST-01..06)
+- [x] 05-01-PLAN.md — Foundation: Alembic 0007 (StrategyMetadata trust/capital/anomaly cols + User portfolio-cap cols + events CHECK +5 types) + ORM mirror + approval/cap_rejection payload enrichment + all Wave-0 test stubs (TRUST-01..06)
 
 **Wave 2** *(blocked on Wave 1)*
 
@@ -218,6 +218,7 @@ Plans:
 **Plans**: TBD
 **UI hint**: yes
 **Carried-in enhancements** (from Phase 3 live UAT, 2026-06-22 — deferred here per operator):
+
   - Segment /approvals proposals by state — expired trades in their own section, separate from pending/complete; consider tabs (Pending / Completed / Expired).
   - Add/improve a persistent site-wide nav toolbar so moving between dashboard pages (approvals, strategies, kill-switch, portfolio, audit) is easy.
   - OrderGuard preflight + modify-and-resubmit on edit/approve: run OrderGuard checks before committing; on would-reject, re-show the edit slider with the plain-language reason and let the operator adjust + resubmit (proposal stays PENDING, no FAILED dead-end). Covers all reject reasons beyond the position-size cap the slider already clamps. Approach locked in 03-CONTEXT.md (D-62 follow-up).
@@ -283,7 +284,7 @@ Plans:
 | 2. OrderGuard & Real-Money Alpaca Live | v2.0 | 7/7 | Complete   | 2026-06-17 |
 | 3. Production HITL UX | v2.0 | 15/15 | Complete ✅ (secured) | 2026-06-23 |
 | 4. Agent Architecture & Cost Bounds | v2.0 | 8/8 | Complete ✅ (secured) | 2026-06-25 |
-| 5. Trust Ladder | v2.0 | 0/5 | Planned ◀ next | - |
+| 5. Trust Ladder | v2.0 | 1/5 | In Progress|  |
 | 6. Web Dashboard & Multi-User Auth | v3.0 | 0/0 | Not started | - |
 | 7. Operations & Observability | v3.0 | 0/0 | Not started | - |
 | 8. Additional API Brokers (IBKR + Schwab) | v3.0 | 0/0 | Not started | - |
