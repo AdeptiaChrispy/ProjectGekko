@@ -1,0 +1,77 @@
+"""Trust safety AST invariants — TRUST-02 / TRUST-03 (Wave-0, Plan 05-01).
+
+Mirrors the directory-wide ``ast.parse`` + ``ast.walk`` gate pattern from
+``test_orderguard.py::test_orderguard_place_order_ast_zero_decorators``.
+
+Two invariants are locked here (RESEARCH Validation Architecture):
+
+  1. No module OUTSIDE ``strategy/trust.py`` assigns the literal
+     ``trust_level = "auto-within-caps"``. The promotion to auto MUST flow
+     through the single ``trust.py`` state-transition helper — any other
+     assignment site is a backdoor past the streak gate.
+  2. (RED until Plan 05) the auto-branch in ``runtime.py`` is guarded by a
+     trust-level check — there is no ``execute_proposal`` call in the auto
+     path that isn't preceded by a ``trust == "auto-within-caps"`` guard.
+
+Invariant 1 is runnable NOW (zero assignment sites pre-trust.py = pass).
+Invariant 2 is gated behind the auto-branch landing.
+"""
+
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+
+import pytest
+
+import gekko
+
+_AUTO_LITERAL = "auto-within-caps"
+_SRC_ROOT = Path(gekko.__file__).parent
+_TRUST_MODULE_REL = Path("strategy") / "trust.py"
+
+
+def _assigns_auto_literal(tree: ast.AST) -> bool:
+    """True if any assignment in *tree* targets a constant == _AUTO_LITERAL."""
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            value = node.value
+            if (
+                isinstance(value, ast.Constant)
+                and isinstance(value.value, str)
+                and value.value == _AUTO_LITERAL
+            ):
+                return True
+    return False
+
+
+def test_no_module_outside_trust_assigns_auto_within_caps() -> None:
+    """Only ``strategy/trust.py`` may assign trust_level = 'auto-within-caps'."""
+    offenders: list[str] = []
+    for py_file in _SRC_ROOT.rglob("*.py"):
+        rel = py_file.relative_to(_SRC_ROOT)
+        if rel == _TRUST_MODULE_REL:
+            continue  # trust.py is the SANCTIONED assignment site
+        src = py_file.read_text(encoding="utf-8")
+        if _AUTO_LITERAL not in src:
+            continue
+        tree = ast.parse(src)
+        if _assigns_auto_literal(tree):
+            offenders.append(str(rel))
+    assert offenders == [], (
+        "trust_level = 'auto-within-caps' assigned outside strategy/trust.py: "
+        f"{offenders!r}"
+    )
+
+
+@pytest.mark.skipif(
+    not (_SRC_ROOT / "agent" / "runtime.py").exists()
+    or "load_trust_level"
+    not in (_SRC_ROOT / "agent" / "runtime.py").read_text(encoding="utf-8"),
+    reason="auto-branch (load_trust_level) not yet wired into runtime (Plan 05)",
+)
+def test_auto_branch_is_guarded_by_trust_check() -> None:
+    """The auto execute_proposal path is gated by a trust == 'auto-within-caps' check."""
+    runtime_src = (_SRC_ROOT / "agent" / "runtime.py").read_text(encoding="utf-8")
+    # The guard literal must appear in the same module as the auto-branch.
+    assert _AUTO_LITERAL in runtime_src

@@ -606,6 +606,111 @@ async def expired_proposal(
     yield temp_sqlcipher_db
 
 
+# ---------------------------------------------------------------------------
+# Phase 5 fixtures — Plan 05-01 Task 1 (VALIDATION.md §Per-Task Verification Map)
+#
+# Two seed helpers the clean-streak tests (Plan 02) depend on. They write
+# ENRICHED audit events (carrying strategy_name + account_mode per D-T01/D-T02)
+# so the streak scanner can partition approvals by (strategy_name, account_mode)
+# and zero the streak on a cap_rejection (RESEARCH Pattern 4 / Pitfall 1).
+#
+# Both are function-scoped and opt-in (no autouse). They return async callables
+# the test awaits inside its own session/transaction.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def seed_approval_events() -> Any:
+    """Return an async callable seeding N enriched ``approval`` events.
+
+    Usage::
+
+        async def test_streak(temp_sqlcipher_db, seed_approval_events):
+            async with AsyncSession(temp_sqlcipher_db) as s, s.begin():
+                await seed_approval_events(
+                    s, user_id="u1", strategy_name="alpha",
+                    account_mode="PAPER", n=10,
+                )
+
+    Each event carries the Plan-05-01 enriched ``approval`` payload shape:
+    ``{proposal_id, actor, slack_action_id, strategy_name, account_mode}``.
+    The streak scanner (Plan 02 ``compute_clean_streak``) reads
+    ``strategy_name`` + ``account_mode`` from the inner payload to attribute
+    each approval to a (strategy, mode) partition.
+    """
+    from gekko.audit.log import append_event
+
+    async def _seed(
+        session: Any,
+        *,
+        user_id: str,
+        strategy_name: str,
+        account_mode: str,
+        n: int,
+        strategy_id: str | None = None,
+    ) -> None:
+        for i in range(n):
+            await append_event(
+                session,
+                user_id=user_id,
+                strategy_id=strategy_id,
+                event_type="approval",
+                payload={
+                    "proposal_id": f"prop-{strategy_name}-{account_mode}-{i}",
+                    "actor": "test-actor",
+                    "slack_action_id": "approve_proposal",
+                    "strategy_name": strategy_name,
+                    "account_mode": account_mode,
+                },
+            )
+
+    return _seed
+
+
+@pytest.fixture
+def seed_cap_rejection() -> Any:
+    """Return an async callable seeding one enriched ``cap_rejection`` event.
+
+    A cap_rejection mid-window zeroes the clean streak (D-T02). The enriched
+    payload carries ``strategy_name`` so the scanner attributes the reset to
+    the right (strategy, mode) partition.
+
+    Usage::
+
+        await seed_cap_rejection(
+            s, user_id="u1", strategy_name="alpha",
+            reject_code="hard_cap_position_pct",
+        )
+    """
+    from gekko.audit.log import append_event
+
+    async def _seed(
+        session: Any,
+        *,
+        user_id: str,
+        strategy_name: str,
+        reject_code: str = "hard_cap_position_pct",
+        strategy_id: str | None = None,
+        ticker: str = "NVDA",
+        proposal_id: str = "prop-cap-001",
+    ) -> None:
+        await append_event(
+            session,
+            user_id=user_id,
+            strategy_id=strategy_id,
+            event_type="cap_rejection",
+            payload={
+                "reject_code": reject_code,
+                "reject_reason": "seeded cap rejection",
+                "ticker": ticker,
+                "proposal_id": proposal_id,
+                "strategy_name": strategy_name,
+            },
+        )
+
+    return _seed
+
+
 @pytest.fixture
 def dedup_row_factory() -> Any:
     """Return a callable that builds SlackActionDedup row kwargs.
