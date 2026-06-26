@@ -66,7 +66,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from gekko.audit.log import append_event
-from gekko.db.models import Proposal as ProposalRow
+from gekko.db.models import Proposal as ProposalRow, Strategy as StrategyRow
 
 # ---------------------------------------------------------------------------
 # Lifecycle table
@@ -195,10 +195,25 @@ async def approve_proposal(
         from_status="PENDING",
         to_status="APPROVED",
     )
+    # Plan 05-01 Task 3: enrich the approval payload with strategy_name +
+    # account_mode so the clean-streak scanner (Plan 02) can partition
+    # approvals by (strategy_name, account_mode) per D-T01/D-T02. Source BOTH
+    # from the LOCKED rows (Proposal.account_mode + the Strategy row keyed by
+    # Proposal.strategy_id) so the values are TOCTOU-safe and never re-derived
+    # from live strategy state (mirrors BLOCKER #5 — read from the locked row).
+    strategy_row = (
+        await session.execute(
+            select(StrategyRow).where(StrategyRow.strategy_id == row.strategy_id)
+        )
+    ).scalar_one_or_none()
     payload: dict[str, Any] = {
         "proposal_id": proposal_id,
         "actor": actor,
         "slack_action_id": "approve_proposal",
+        "strategy_name": (
+            strategy_row.strategy_name if strategy_row is not None else None
+        ),
+        "account_mode": row.account_mode,
     }
     if extra_payload:
         payload.update(extra_payload)

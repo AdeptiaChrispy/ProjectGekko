@@ -595,6 +595,11 @@ async def execute_proposal(proposal_id: str, user_id: str) -> None:
                     "reject_reason": exc.reject_reason,
                     "ticker": tp.ticker,
                     "proposal_id": proposal_id,
+                    # Plan 05-01 Task 3: strategy_name attribution for the
+                    # clean-streak scanner (Plan 02) — a cap_rejection mid-
+                    # window zeroes the streak per D-T02. Sourced from the
+                    # locked proposal (tp.strategy_name), already in scope.
+                    "strategy_name": tp.strategy_name,
                 }
                 for k, v in exc.extra.items():
                     cap_payload.setdefault(k, v)
@@ -658,6 +663,11 @@ async def execute_proposal(proposal_id: str, user_id: str) -> None:
                     "reject_reason": exc.reject_reason,
                     "ticker": tp.ticker,
                     "proposal_id": proposal_id,
+                    # Plan 05-01 Task 3: strategy_name attribution for the
+                    # clean-streak scanner (Plan 02) — a cap_rejection mid-
+                    # window zeroes the streak per D-T02. Sourced from the
+                    # locked proposal (tp.strategy_name), already in scope.
+                    "strategy_name": tp.strategy_name,
                 }
                 # Merge per-check extras; do NOT overwrite the canonical
                 # keys above on key-collision.
