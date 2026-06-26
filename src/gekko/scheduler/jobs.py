@@ -250,6 +250,242 @@ def register_daily_pnl_cron(
     return job_id
 
 
+def register_anomaly_evaluator(
+    scheduler: AsyncIOScheduler,
+    *,
+    user_id: str,
+    interval_minutes: int = 5,
+) -> str:
+    """Register (or replace) the NYSE-gated anomaly-evaluator tick — Plan 05-04 Task 3.
+
+    An APScheduler **3.x** :class:`IntervalTrigger` job that runs
+    :func:`run_anomaly_evaluator_tick` every ``interval_minutes`` to catch
+    UNREALIZED single-day drawdown drift when no fill is occurring (TRUST-04 /
+    SC-4). It is the fallback partner to the post-fill anomaly hook (Plan 05-04
+    Task 2): together they cover realized AND unrealized losses. The handler
+    itself applies the NYSE schedule gate and returns early when the market is
+    closed (weekend / holiday / half-day after close).
+
+    :returns: The deterministic job id ``f"anomaly-eval-{user_id}"``.
+
+    **Restart-safe knobs** (mirror the expiry sweep / digest jobs):
+      * ``coalesce=True`` — piled-up missed fires collapse to one catch-up run.
+      * ``max_instances=1`` — never overlap with self (a slow broker read must
+        not stack ticks).
+
+    The handler is referenced via the ``module:fn`` string so the
+    ``SQLAlchemyJobStore`` can pickle it across ``gekko serve`` restarts.
+    """
+    job_id = f"anomaly-eval-{user_id}"
+    scheduler.add_job(
+        "gekko.scheduler.jobs:run_anomaly_evaluator_tick",
+        IntervalTrigger(minutes=interval_minutes),
+        kwargs={"user_id": user_id},
+        id=job_id,
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    log.info(
+        "scheduler.anomaly_evaluator_registered",
+        job_id=job_id,
+        user_id=user_id,
+        interval_minutes=interval_minutes,
+    )
+    return job_id
+
+
+def register_market_open_snapshot(
+    scheduler: AsyncIOScheduler,
+    *,
+    user_id: str,
+) -> str:
+    """Register (or replace) the NYSE-open start-of-day snapshot job — Plan 05-04 Task 3.
+
+    An APScheduler **3.x** :class:`CronTrigger` job that fires once near NYSE
+    open (09:30 America/New_York) and runs :func:`run_market_open_snapshot`,
+    establishing the STABLE per-strategy start-of-day value denominator that
+    :func:`gekko.anomaly.evaluator.evaluate_drawdown` divides by all day (OQ#3 —
+    a moving live-equity denominator would make the drawdown % oscillate,
+    RESEARCH Pitfall 3). The handler applies the NYSE schedule gate and skips
+    closed days.
+
+    :returns: The deterministic job id ``f"sod-snapshot-{user_id}"``.
+
+    **Restart-safe knobs**: ``coalesce=True`` + ``max_instances=1`` (mirror the
+    daily-P&L cron). The handler is referenced by ``module:fn`` string for
+    safe pickling across restarts.
+    """
+    job_id = f"sod-snapshot-{user_id}"
+    scheduler.add_job(
+        "gekko.scheduler.jobs:run_market_open_snapshot",
+        CronTrigger(
+            hour=9, minute=30, timezone=ZoneInfo("America/New_York")
+        ),
+        kwargs={"user_id": user_id},
+        id=job_id,
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    log.info(
+        "scheduler.market_open_snapshot_registered",
+        job_id=job_id,
+        user_id=user_id,
+    )
+    return job_id
+
+
+def _nyse_is_open_today() -> bool:
+    """NYSE schedule gate (D-59) — True when today is a trading day.
+
+    Mirrors the daily-P&L handler's gate: a weekend / holiday returns an empty
+    schedule. Imported lazily so the scheduler module stays import-light and
+    test-collection does not require ``pandas_market_calendars``.
+    """
+    import pandas_market_calendars as mcal
+
+    et = ZoneInfo("America/New_York")
+    from datetime import datetime as _dt
+
+    today_et = _dt.now(et).date()
+    nyse = mcal.get_calendar("NYSE")
+    schedule = nyse.schedule(start_date=today_et, end_date=today_et)
+    return not schedule.empty
+
+
+async def _iter_auto_strategies(user_id: str) -> list[tuple[str, str]]:
+    """Return ``(strategy_name, account_mode)`` for each auto-within-caps strategy.
+
+    Reads the per-user :class:`StrategyMetadata` rows where
+    ``trust_level == 'auto-within-caps'``. The account mode is derived from the
+    latest Strategy snapshot's ``mode`` (live → LIVE, else PAPER) so the handler
+    builds the matching broker.
+    """
+    from sqlalchemy import select as _select
+
+    from gekko.config import get_settings
+    from gekko.db.engine import get_async_engine
+    from gekko.db.models import Strategy as _StrategyRow
+    from gekko.db.models import StrategyMetadata
+    from gekko.db.session import make_session_factory as _msf
+    from gekko.schemas.strategy import Strategy as _Strategy
+    from gekko.vault.passphrase import get_passphrase as _gp
+
+    settings = get_settings()
+    engine = get_async_engine(settings.db_path_for(user_id), _gp())
+    out: list[tuple[str, str]] = []
+    try:
+        async with _msf(engine)() as session:
+            metas = (
+                await session.execute(
+                    _select(StrategyMetadata).where(
+                        StrategyMetadata.user_id == user_id,
+                        StrategyMetadata.trust_level == "auto-within-caps",
+                    )
+                )
+            ).scalars().all()
+            for meta in metas:
+                account_mode = "PAPER"
+                row = (
+                    await session.execute(
+                        _select(_StrategyRow)
+                        .where(
+                            _StrategyRow.user_id == user_id,
+                            _StrategyRow.strategy_name == meta.strategy_name,
+                        )
+                        .order_by(_StrategyRow.version.desc())
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+                if row is not None and row.payload_json:
+                    try:
+                        strat = _Strategy.model_validate_json(row.payload_json)
+                        account_mode = (
+                            "LIVE" if strat.mode == "live" else "PAPER"
+                        )
+                    except Exception:  # noqa: BLE001
+                        account_mode = "PAPER"
+                out.append((meta.strategy_name, account_mode))
+    finally:
+        await engine.dispose()
+    return out
+
+
+async def run_anomaly_evaluator_tick(*, user_id: str) -> bool:
+    """Scheduler handler: evaluate single-day drawdown for each auto strategy.
+
+    NYSE-gated (returns False on closed days). For each auto-within-caps
+    strategy, builds a read-only broker and calls
+    :func:`gekko.anomaly.evaluator.evaluate_drawdown` — catching UNREALIZED
+    drift between fills. Per-strategy errors are logged and skipped so one bad
+    broker read never blocks the others (surgical isolation).
+
+    :returns: ``True`` if the tick ran (market open), ``False`` if gated.
+    """
+    if not _nyse_is_open_today():
+        log.info("scheduler.anomaly_tick_market_closed_skip", user_id=user_id)
+        return False
+
+    from gekko.anomaly.evaluator import evaluate_drawdown
+    from gekko.execution.executor import _build_broker_for_anomaly
+
+    for strategy_name, account_mode in await _iter_auto_strategies(user_id):
+        try:
+            broker = await _build_broker_for_anomaly(
+                user_id=user_id,
+                strategy_name=strategy_name,
+                account_mode=account_mode,
+            )
+            await evaluate_drawdown(
+                user_id=user_id, strategy_name=strategy_name, broker=broker
+            )
+        except Exception:  # noqa: BLE001 - one strategy's failure is surgical
+            log.exception(
+                "scheduler.anomaly_tick_strategy_failed",
+                user_id=user_id,
+                strategy_name=strategy_name,
+            )
+    return True
+
+
+async def run_market_open_snapshot(*, user_id: str) -> bool:
+    """Scheduler handler: snapshot each auto strategy's start-of-day value.
+
+    NYSE-gated (returns False on closed days). For each auto-within-caps
+    strategy, builds a read-only broker and calls
+    :func:`gekko.anomaly.evaluator.snapshot_start_of_day_value`, persisting the
+    STABLE drawdown denominator the evaluator reads all day (OQ#3). Per-strategy
+    errors are logged and skipped.
+
+    :returns: ``True`` if the snapshot ran (market open), ``False`` if gated.
+    """
+    if not _nyse_is_open_today():
+        log.info("scheduler.sod_snapshot_market_closed_skip", user_id=user_id)
+        return False
+
+    from gekko.anomaly.evaluator import snapshot_start_of_day_value
+    from gekko.execution.executor import _build_broker_for_anomaly
+
+    for strategy_name, account_mode in await _iter_auto_strategies(user_id):
+        try:
+            broker = await _build_broker_for_anomaly(
+                user_id=user_id,
+                strategy_name=strategy_name,
+                account_mode=account_mode,
+            )
+            await snapshot_start_of_day_value(
+                user_id=user_id, strategy_name=strategy_name, broker=broker
+            )
+        except Exception:  # noqa: BLE001 - surgical isolation
+            log.exception(
+                "scheduler.sod_snapshot_strategy_failed",
+                user_id=user_id,
+                strategy_name=strategy_name,
+            )
+    return True
+
+
 def reschedule_strategy_degraded(
     scheduler: AsyncIOScheduler,
     *,
@@ -356,10 +592,14 @@ def unschedule_strategy(
 
 __all__: tuple[str, ...] = (
     "build_scheduler",
+    "register_anomaly_evaluator",
     "register_daily_pnl_cron",
     "register_expire_stale_sweep",
+    "register_market_open_snapshot",
     "reschedule_strategy_degraded",
     "restore_strategy_normal_cadence",
+    "run_anomaly_evaluator_tick",
+    "run_market_open_snapshot",
     "schedule_strategy_daily",
     "unschedule_strategy",
 )

@@ -18,6 +18,7 @@ job ids.
 
 from __future__ import annotations
 
+import pytest
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
@@ -53,7 +54,8 @@ def test_anomaly_evaluator_registers_interval_trigger() -> None:
     assert job.kwargs["user_id"] == "alice"
 
 
-def test_anomaly_evaluator_replaces_existing() -> None:
+@pytest.mark.asyncio
+async def test_anomaly_evaluator_replaces_existing() -> None:
     """Re-registering the same user updates rather than duplicates the job."""
     sched = _sched()
     sched.start(paused=True)
@@ -85,7 +87,8 @@ def test_market_open_snapshot_registers_cron_trigger() -> None:
     assert str(job.trigger.timezone) == "America/New_York"
 
 
-def test_market_open_snapshot_replaces_existing() -> None:
+@pytest.mark.asyncio
+async def test_market_open_snapshot_replaces_existing() -> None:
     sched = _sched()
     sched.start(paused=True)
     try:
@@ -118,9 +121,10 @@ def test_no_apscheduler_4x_apis_in_jobs_source() -> None:
     from pathlib import Path
 
     src = Path(jobs.__file__).read_text(encoding="utf-8")
-    assert "AsyncScheduler" not in src, (
-        "scheduler/jobs.py must use APScheduler 3.x (AsyncIOScheduler), not the "
-        "4.x AsyncScheduler API."
-    )
+    # No 4.x AsyncScheduler import or instantiation (docstrings may *mention*
+    # it as a negative example — the existing reschedule helper does — so we
+    # gate on real usage, not the bare substring).
+    assert "import AsyncScheduler" not in src
+    assert "AsyncScheduler(" not in src
     assert "apscheduler.triggers.interval" in src
     assert "apscheduler.triggers.cron" in src
