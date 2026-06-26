@@ -2,14 +2,17 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Safety & Trust
+current_phase: 04
+current_phase_name: agent-architecture-cost-bounds
 status: phase_complete
-last_updated: "2026-06-25T00:00:00Z"
+stopped_at: Phase 5 context gathered
+last_updated: "2026-06-26T12:41:23.075Z"
 last_activity: 2026-06-25
 progress:
   total_phases: 5
   completed_phases: 4
-  total_plans: 38
-  completed_plans: 38
+  total_plans: 39
+  completed_plans: 39
   percent: 80
 ---
 
@@ -183,6 +186,10 @@ Items acknowledged and proceeded-past at milestone close on 2026-06-15:
 | 260612-nlv | _send_slack_dm identity-split: translate gekko_user_id → slack_user_id (6th 01-09 demo finding; channel_not_found fix) | 2026-06-12 | d7b26c8 | [260612-nlv-fix-send-slack-dm-identity-split-transla](./quick/260612-nlv-fix-send-slack-dm-identity-split-transla/) |
 
 ## Session Continuity
+
+**Last session:** 2026-06-26T12:41:23.062Z
+**Stopped at:** Phase 5 context gathered
+**Resume file:** .planning/phases/05-trust-ladder-per-strategy-promotion-portfolio-caps/05-CONTEXT.md
 
 **Next action:** Phase 1 is fully closed and all demo-discovery follow-ups have landed. Run `/gsd-complete-milestone` to archive Phase 1 + open the Phase 2 SPEC (OrderGuard + Real-Money Alpaca Live), or `/gsd-new-milestone v2.0` to scope a v2 explicitly. Phase 2's CONTEXT.md was already captured on 2026-06-11 (commit `3ca0b06`), so `/gsd-plan-phase 2` can run immediately. The one outstanding Phase-3 backlog item — executor-error → Slack surfacing on MarketClosed/BrokerOrderError — is tracked in [.planning/quick/260612-dix-raise-rationale-cap-to-5000-slack-render/deferred-items.md] for now (will be re-routed into Phase 3 planning when it spins up).
 
