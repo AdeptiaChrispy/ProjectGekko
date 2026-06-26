@@ -176,7 +176,7 @@ Plans:
   4. When a strategy's drawdown exceeds the per-strategy anomaly threshold, the strategy auto-demotes to `propose-only`, cancels pending auto-orders, and Slack-DMs the user with the trigger details — without manual intervention
   5. User attempting to enable auto-execute on a strategy that hasn't met the placeholder promotion criteria (e.g., N successful HITL approvals, no cap breaches) sees the action blocked with a clear explanation, not a silent failure
 
-**Plans:** 1/5 plans executed
+**Plans:** 2/5 plans executed
 Plans:
 **Wave 1**
 
@@ -184,7 +184,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1)*
 
-- [ ] 05-02-PLAN.md — Slice A: trust.py promote/demote + streak.py clean-streak scanner + dashboard/CLI promote-confirm/one-click-demote + SC-5 blocked-explanation + material-edit reset + AST safety gate (TRUST-01, TRUST-05, TRUST-06)
+- [x] 05-02-PLAN.md — Slice A: trust.py promote/demote + streak.py clean-streak scanner + dashboard/CLI promote-confirm/one-click-demote + SC-5 blocked-explanation + material-edit reset + AST safety gate (TRUST-01, TRUST-05, TRUST-06)
 
 **Wave 3** *(blocked on Wave 2)*
 
@@ -284,7 +284,7 @@ Plans:
 | 2. OrderGuard & Real-Money Alpaca Live | v2.0 | 7/7 | Complete   | 2026-06-17 |
 | 3. Production HITL UX | v2.0 | 15/15 | Complete ✅ (secured) | 2026-06-23 |
 | 4. Agent Architecture & Cost Bounds | v2.0 | 8/8 | Complete ✅ (secured) | 2026-06-25 |
-| 5. Trust Ladder | v2.0 | 1/5 | In Progress|  |
+| 5. Trust Ladder | v2.0 | 2/5 | In Progress|  |
 | 6. Web Dashboard & Multi-User Auth | v3.0 | 0/0 | Not started | - |
 | 7. Operations & Observability | v3.0 | 0/0 | Not started | - |
 | 8. Additional API Brokers (IBKR + Schwab) | v3.0 | 0/0 | Not started | - |
