@@ -98,6 +98,18 @@ _BROKER_CREDENTIAL_KINDS: tuple[str, ...] = ("alpaca_paper", "alpaca_live")
 #:                              input_tokens, output_tokens, cost_usd (Decimal)
 #:   - ``suspicious_content`` — SC-2 gap: prompt-injection pattern detected in
 #:                              EvidenceSnippet.quote_text at brief-parse time
+#:
+#: Phase-5 additions (plan 05-01 Task 2): five new event types for the trust
+#: ladder / portfolio caps / anomaly reflex (TRUST-01..06). Like the BL-01 fix
+#: above, these are FIRST-CLASS event types — never ``event_type="error"`` with
+#: a ``context`` discriminator (BL-01 anti-pattern). Trust events key on
+#: ``strategy_name`` in the payload with ``strategy_id=None`` (mirrors
+#: ``live_mode_promoted`` in promotion.py):
+#:   - ``trust_promoted``   — strategy promoted to auto-within-caps (TRUST-01)
+#:   - ``trust_demoted``    — strategy demoted to propose-only (TRUST-01)
+#:   - ``anomaly_demotion`` — drawdown reflex demoted + cancelled (TRUST-03)
+#:   - ``capital_scaled``   — per-strategy capital_ceiling_usd changed (TRUST-05)
+#:   - ``auto_execution``   — auto-within-caps proposal executed (TRUST-02)
 _EVENT_TYPES: tuple[str, ...] = (
     "decision",
     "proposal",
@@ -119,6 +131,12 @@ _EVENT_TYPES: tuple[str, ...] = (
     # Phase-4 additions:
     "llm_cost",
     "suspicious_content",
+    # Phase-5 additions (plan 05-01 Task 2 / TRUST-01..06):
+    "trust_promoted",
+    "trust_demoted",
+    "anomaly_demotion",
+    "capital_scaled",
+    "auto_execution",
 )
 
 
@@ -212,6 +230,25 @@ class User(Base):
     daily_cost_ceiling_usd: Mapped[str | None] = mapped_column(String, nullable=True)
     cost_alert_80_sent_date: Mapped[str | None] = mapped_column(String, nullable=True)
     cost_alert_100_sent_date: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Phase-5 / TRUST-04 account-wide portfolio caps (plan 05-01 Task 2).
+    #
+    # All four are stored as TEXT (money-as-TEXT / percent-as-fraction-TEXT
+    # convention). Percentages are FRACTION strings ("0.50" == 50%); USD is a
+    # plain decimal string ("200.00"). NULL/blank = the cap is DISABLED (the
+    # check returns early). server_defaults supply conservative starting caps
+    # from 05-UI-SPEC; existing rows backfill via migration 0007.
+    #   - max_total_exposure_pct        — aggregate deployed-equity ceiling (50%)
+    #   - max_sector_concentration_pct  — single-sector ceiling (30%)
+    #   - max_correlated_ticker_pct     — single net per-ticker ceiling (15%)
+    #   - max_total_daily_loss_usd      — account-wide realized-loss halt ($200)
+    max_total_exposure_pct: Mapped[str | None] = mapped_column(String, nullable=True)
+    max_sector_concentration_pct: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )
+    max_correlated_ticker_pct: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )
+    max_total_daily_loss_usd: Mapped[str | None] = mapped_column(String, nullable=True)
 
     def __repr__(self) -> str:
         return (
@@ -304,12 +341,39 @@ class StrategyMetadata(Base):
     first_live_trade_confirmed_at: Mapped[str | None] = mapped_column(
         String, nullable=True
     )
+    # Phase-5 / TRUST-01..05 trust-ladder + capital + anomaly columns
+    # (plan 05-01 Task 2). Money/percent stored as TEXT (money-as-TEXT /
+    # percent-as-fraction-TEXT convention).
+    #
+    # ``trust_level`` is the per-strategy ladder rung (D-T16). The only two
+    # values in v1 are ``'propose-only'`` (default — every proposal goes to
+    # HITL) and ``'auto-within-caps'`` (auto-executes within OrderGuard caps,
+    # set ONLY by strategy/trust.py per the AST safety gate). NOT NULL with a
+    # server_default so existing rows backfill to the safe rung.
+    # ``trust_promoted_at`` is the ISO timestamp of the last promotion.
+    # ``capital_ceiling_usd`` caps total deployed capital for the strategy
+    # (server_default '1000.00' per D-T16); NULL is read at the default.
+    # ``anomaly_threshold_pct`` is the single-day drawdown fraction that trips
+    # the anomaly demotion reflex (server_default '0.10' == 10% per D-T11).
+    trust_level: Mapped[str] = mapped_column(
+        String, nullable=False, server_default=text("'propose-only'")
+    )
+    trust_promoted_at: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )
+    capital_ceiling_usd: Mapped[str | None] = mapped_column(
+        String, nullable=True, server_default=text("'1000.00'")
+    )
+    anomaly_threshold_pct: Mapped[str | None] = mapped_column(
+        String, nullable=True, server_default=text("'0.10'")
+    )
 
     def __repr__(self) -> str:
         return (
             f"StrategyMetadata(user_id={self.user_id!r}, "
             f"strategy_name={self.strategy_name!r}, "
-            f"live_mode_eligible={self.live_mode_eligible!r})"
+            f"live_mode_eligible={self.live_mode_eligible!r}, "
+            f"trust_level={self.trust_level!r})"
         )
 
 
