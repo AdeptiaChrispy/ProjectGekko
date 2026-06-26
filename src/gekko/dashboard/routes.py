@@ -36,6 +36,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from markupsafe import escape
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -2468,7 +2469,7 @@ async def promote_to_auto(
     if strategy_name_confirm.strip() != name:
         return HTMLResponse(
             '<div id="promote-auto-result" class="login-error" role="alert">'
-            f"That didn't match. Type {name} exactly to confirm.</div>"
+            f"That didn't match. Type {escape(name)} exactly to confirm.</div>"
         )
 
     account_mode = await _strategy_account_mode(
@@ -2508,7 +2509,7 @@ async def promote_to_auto(
     )
     result = (
         '<div id="promote-auto-result" role="status">'
-        f"✅ Promoted <code>{name}</code> to auto-execute. "
+        f"✅ Promoted <code>{escape(name)}</code> to auto-execute. "
         "Future proposals execute automatically within caps."
         "</div>"
     )
@@ -2543,7 +2544,7 @@ async def demote_from_auto(
     )
     status = (
         '<tr><td colspan="4"><span role="status">'
-        f"⏸ Demoted <code>{name}</code> to propose-only — "
+        f"⏸ Demoted <code>{escape(name)}</code> to propose-only — "
         "takes effect on the next decision cycle.</span></td></tr>"
     )
     return HTMLResponse(row_html + status)
@@ -2649,7 +2650,7 @@ async def strategy_capital_review(
         user_id=user_id, strategy_name=name, new_ceiling_usd=str(new_dec)
     )
     msg = (
-        f"Lowered <code>{name}</code> capital ceiling to ${new_str}. "
+        f"Lowered <code>{escape(name)}</code> capital ceiling to ${new_str}. "
         "Applied immediately."
     )
     return HTMLResponse(
@@ -2698,7 +2699,7 @@ async def set_capital_ceiling_route(
     if is_increase and strategy_name_confirm.strip() != name:
         return HTMLResponse(
             '<div id="capital-result" class="login-error" role="alert">'
-            f"That didn't match. Type {name} exactly to confirm.</div>"
+            f"That didn't match. Type {escape(name)} exactly to confirm.</div>"
         )
 
     _old, new_str = await set_capital_ceiling(
@@ -2707,12 +2708,12 @@ async def set_capital_ceiling_route(
 
     if is_increase:
         msg = (
-            f"💵 Raised <code>{name}</code> capital ceiling to ${new_str}. "
+            f"💵 Raised <code>{escape(name)}</code> capital ceiling to ${new_str}. "
             "Trust level unchanged."
         )
     else:
         msg = (
-            f"Lowered <code>{name}</code> capital ceiling to ${new_str}. "
+            f"Lowered <code>{escape(name)}</code> capital ceiling to ${new_str}. "
             "Applied immediately."
         )
     return HTMLResponse(
