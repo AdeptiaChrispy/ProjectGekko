@@ -924,3 +924,230 @@ async def test_on_fill_event_swallows_anomaly_hook_exception(
             )
         ).scalar_one()
         assert row.status == "FILLED"
+
+
+# ---------------------------------------------------------------------------
+# Plan 05-05 Task 2 — auto-execution informational DM (respects quiet hours)
+# ---------------------------------------------------------------------------
+
+
+async def _seed_auto_approval(sf: Any, *, user_id: str, strategy_id: str, proposal_id: str) -> None:
+    """Write the approval event the auto-branch emits (execution_path=auto)."""
+    from gekko.audit.log import append_event
+
+    async with sf() as session, session.begin():
+        await append_event(
+            session,
+            user_id=user_id,
+            strategy_id=strategy_id,
+            event_type="approval",
+            payload={
+                "proposal_id": proposal_id,
+                "actor": "auto-execute",
+                "slack_action_id": "approve_proposal",
+                "execution_path": "auto",
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_auto_exec_dm_respects_quiet_hours_category(
+    temp_sqlcipher_db: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An auto-executed fill sends the informational DM with a NON-bypass
+    category (it is suppressed during quiet hours, D-T18)."""
+    from gekko.execution import executor
+
+    sf = make_session_factory(temp_sqlcipher_db)
+    proposal_id, strategy_id, tp = await _seed(sf, status="APPROVED")
+    await _seed_auto_approval(
+        sf, user_id="test-user", strategy_id=strategy_id, proposal_id=proposal_id
+    )
+    async with sf() as session, session.begin():
+        row = (
+            await session.execute(
+                select(ProposalRow).where(ProposalRow.proposal_id == proposal_id)
+            )
+        ).scalar_one()
+        row.status = "EXECUTING"
+
+    monkeypatch.setattr(executor, "_get_session_factory", lambda _u: (sf, None))
+
+    async def fake_send_dm(user_id: str, msg: str) -> None:
+        return None
+
+    monkeypatch.setattr(executor, "_send_slack_dm", fake_send_dm)
+    monkeypatch.setattr(executor, "evaluate_drawdown", AsyncMock(return_value=False))
+
+    # Capture the auto-exec block DM and the category it used.
+    blocks_calls: list[dict[str, Any]] = []
+
+    async def fake_blocks_qh(user_id: str, *, blocks: Any, category: str, fallback: str = "") -> None:
+        blocks_calls.append({"category": category, "blocks": blocks})
+
+    monkeypatch.setattr(
+        executor, "_send_slack_dm_blocks_respecting_quiet_hours", fake_blocks_qh
+    )
+
+    payload = {
+        "client_order_id": tp.client_order_id,
+        "broker_order_id": "broker-auto-001",
+        "filled_qty": "5",
+        "filled_avg_price": "1234.56",
+        "ticker": "NVDA",
+        "user_id": "test-user",
+        "event": "fill",
+    }
+    await executor.on_fill_event(payload, user_id="test-user")
+
+    assert len(blocks_calls) == 1, "auto-exec informational DM must fire once"
+    # The category must NOT be a bypass category — it respects quiet hours.
+    bypass = {
+        "kill_active",
+        "executor_error",
+        "first_live_fill",
+        "cost_alert",
+        "anomaly_demotion",
+    }
+    assert blocks_calls[0]["category"] not in bypass, (
+        "auto-exec DM category must respect quiet hours (not in bypass set)."
+    )
+    # The block payload carries no actions block (informational only).
+    block_types = {b.get("type") for b in blocks_calls[0]["blocks"]}
+    assert "actions" not in block_types
+
+
+@pytest.mark.asyncio
+async def test_auto_exec_dm_failure_does_not_abort_fill(
+    temp_sqlcipher_db: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A DM-send failure on the auto-exec FYI never aborts the fill transition."""
+    from gekko.execution import executor
+
+    sf = make_session_factory(temp_sqlcipher_db)
+    proposal_id, strategy_id, tp = await _seed(sf, status="APPROVED")
+    await _seed_auto_approval(
+        sf, user_id="test-user", strategy_id=strategy_id, proposal_id=proposal_id
+    )
+    async with sf() as session, session.begin():
+        row = (
+            await session.execute(
+                select(ProposalRow).where(ProposalRow.proposal_id == proposal_id)
+            )
+        ).scalar_one()
+        row.status = "EXECUTING"
+
+    monkeypatch.setattr(executor, "_get_session_factory", lambda _u: (sf, None))
+    monkeypatch.setattr(executor, "_send_slack_dm", AsyncMock())
+    monkeypatch.setattr(executor, "evaluate_drawdown", AsyncMock(return_value=False))
+
+    async def boom(*a: Any, **k: Any) -> None:
+        raise RuntimeError("slack down")
+
+    monkeypatch.setattr(
+        executor, "_send_slack_dm_blocks_respecting_quiet_hours", boom
+    )
+
+    payload = {
+        "client_order_id": tp.client_order_id,
+        "broker_order_id": "broker-auto-002",
+        "filled_qty": "5",
+        "filled_avg_price": "1234.56",
+        "ticker": "NVDA",
+        "user_id": "test-user",
+        "event": "fill",
+    }
+    # Must NOT raise.
+    await executor.on_fill_event(payload, user_id="test-user")
+
+    async with sf() as session:
+        row = (
+            await session.execute(
+                select(ProposalRow).where(ProposalRow.proposal_id == proposal_id)
+            )
+        ).scalar_one()
+        assert row.status == "FILLED"
+
+
+@pytest.mark.asyncio
+async def test_non_auto_fill_does_not_send_auto_exec_dm(
+    temp_sqlcipher_db: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A normal HITL fill (no auto approval event) sends NO auto-exec DM."""
+    from gekko.execution import executor
+
+    sf = make_session_factory(temp_sqlcipher_db)
+    proposal_id, _, tp = await _seed(sf, status="APPROVED")
+    async with sf() as session, session.begin():
+        row = (
+            await session.execute(
+                select(ProposalRow).where(ProposalRow.proposal_id == proposal_id)
+            )
+        ).scalar_one()
+        row.status = "EXECUTING"
+
+    monkeypatch.setattr(executor, "_get_session_factory", lambda _u: (sf, None))
+    monkeypatch.setattr(executor, "_send_slack_dm", AsyncMock())
+    monkeypatch.setattr(executor, "evaluate_drawdown", AsyncMock(return_value=False))
+
+    blocks_calls: list[Any] = []
+
+    async def fake_blocks_qh(user_id: str, *, blocks: Any, category: str, fallback: str = "") -> None:
+        blocks_calls.append(category)
+
+    monkeypatch.setattr(
+        executor, "_send_slack_dm_blocks_respecting_quiet_hours", fake_blocks_qh
+    )
+
+    payload = {
+        "client_order_id": tp.client_order_id,
+        "broker_order_id": "broker-hitl-001",
+        "filled_qty": "5",
+        "filled_avg_price": "1234.56",
+        "ticker": "NVDA",
+        "user_id": "test-user",
+        "event": "fill",
+    }
+    await executor.on_fill_event(payload, user_id="test-user")
+    assert blocks_calls == [], "HITL fills must not send the auto-exec FYI DM"
+
+
+def test_auto_exec_dm_category_not_inverted_with_anomaly() -> None:
+    """The auto-exec DM category respects quiet hours; anomaly bypasses — not inverted."""
+    from gekko.execution.executor import (
+        _send_slack_dm_blocks_respecting_quiet_hours,  # noqa: F401
+    )
+
+    # anomaly_demotion is a bypass category (Plan 04); auto_execution is not.
+    src = open(
+        __import__("gekko.execution.executor", fromlist=["__file__"]).__file__,
+        encoding="utf-8",
+    ).read()
+    # The auto path must NOT add auto_execution to the bypass set.
+    assert '"anomaly_demotion"' in src  # bypass tier (D-T13)
+    # Defensive: the auto-exec DM must be dispatched with category="auto_execution".
+    assert 'category="auto_execution"' in src
+
+
+@pytest.mark.asyncio
+async def test_auto_exec_dm_block_kit_no_actions_block() -> None:
+    """build_auto_execution_dm has no actions block + escapes rationale."""
+    from gekko.reporter.slack import build_auto_execution_dm
+
+    blocks = build_auto_execution_dm(
+        strategy_name="momentum-tech",
+        side="buy",
+        qty="5",
+        ticker="NVDA",
+        ref_price="1234.5",
+        rationale="Bullish *injection* attempt _here_ " + ("x" * 200),
+    )
+    block_types = [b["type"] for b in blocks]
+    assert "actions" not in block_types
+    # Headline carries the deterministic copy.
+    assert "Auto-executed" in blocks[0]["text"]["text"]
+    assert "1,234.50" in blocks[0]["text"]["text"]  # thousands + 2dp format
+    # Rationale truncated to ~140 chars and mrkdwn-escaped.
+    rationale_text = blocks[1]["text"]["text"]
+    assert "\\*" in rationale_text or "*injection*" not in rationale_text
+    assert len(rationale_text) < 220  # truncated + escape expansion

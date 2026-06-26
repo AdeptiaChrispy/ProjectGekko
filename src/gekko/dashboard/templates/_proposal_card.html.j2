@@ -35,6 +35,13 @@
       {% if account_mode == "LIVE" %}
       <span class="chip-live" aria-label="status: live mode">LIVE</span>
       {% endif %}
+      {# Plan 05-05 Task 2 (UI-SPEC §Surface 4b): auto-executed proposals carry
+         a blue AUTO-EXECUTED chip — informational, blue = "system action, no
+         human gate". The Approve/Reject actions row is suppressed below. #}
+      {% if execution_path == "auto" %}
+      <span class="chip-auto-executed"
+            aria-label="executed automatically without human approval">AUTO-EXECUTED</span>
+      {% endif %}
       {% if status == "EXPIRED" %}
       <span class="chip-expired" aria-label="status: expired">EXPIRED</span>
       {% elif status == "AWAITING_2ND_CHANNEL" %}
@@ -68,7 +75,13 @@
      All terminal statuses render a read-only status line — never interactive buttons.
      Bug C (Plan 03-15): Buttons inside {% if status == "PENDING" %} only.
   #}
-  {% if status == "PENDING" %}
+  {% if execution_path == "auto" %}
+  {# Auto-executed: the timeline is already closed — no human action row.
+     Render a read-only status line; the AUTO-EXECUTED chip is in the header. #}
+  <div class="proposal-card-terminal-status" role="status">
+    🤖 Auto-executed — no human approval needed.
+  </div>
+  {% elif status == "PENDING" %}
   <div class="proposal-card-actions">
     <button class="btn-primary"
             hx-post="/approvals/{{ proposal_id }}/approve"

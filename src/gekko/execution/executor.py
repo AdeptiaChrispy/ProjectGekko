@@ -54,6 +54,7 @@ the SDK package name would trip it.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -71,6 +72,7 @@ from gekko.config import get_settings
 from gekko.core.errors import BrokerOrderError, OrderGuardRejected
 from gekko.core.types import OrderSide, OrderType, TimeInForce
 from gekko.db.engine import get_async_engine
+from gekko.db.models import Event
 from gekko.db.models import Proposal as ProposalRow
 from gekko.db.models import Strategy as StrategyRow
 from gekko.db.session import AsyncSessionLocal, make_session_factory
@@ -300,6 +302,64 @@ async def _send_slack_dm_respecting_quiet_hours(
     # bypass-category: routine-out-of-window — predicate returned False;
     # quiet hours not active, send the routine DM.
     await _send_slack_dm(user_id, text)
+
+
+async def _send_slack_dm_blocks_respecting_quiet_hours(
+    user_id: str,
+    *,
+    blocks: list[dict[str, Any]],
+    category: str,
+    fallback: str = "",
+) -> None:
+    """Block Kit variant of :func:`_send_slack_dm_respecting_quiet_hours`.
+
+    Plan 05-05 Task 2 — the auto-execution informational DM (Surface 4a) is a
+    Block Kit payload that MUST respect quiet hours (D-T18, it is not safety-
+    critical). This mirrors the bypass-vs-respect routing of the text variant
+    but dispatches via :func:`_send_slack_dm_blocks`.
+
+    The same ``_BYPASS_CATEGORIES`` set governs both functions: a routine
+    category (e.g. ``"auto_execution"`` — NOT in the bypass set) is suppressed
+    when the operator's quiet window is active. Inverting the auto-exec
+    (respect) and anomaly-demotion (bypass) categories is the documented
+    anti-pattern.
+    """
+    _BYPASS_CATEGORIES = frozenset({
+        "kill_active",
+        "executor_error",
+        "first_live_fill",
+        "cost_alert",
+        "anomaly_demotion",
+    })
+
+    if category in _BYPASS_CATEGORIES:
+        await _send_slack_dm_blocks(user_id, blocks=blocks, fallback=fallback)
+        return
+
+    from datetime import UTC as _UTC
+    from datetime import datetime as _dt
+
+    from gekko.approval.quiet_hours import _resolve_quiet_hours
+
+    try:
+        in_window = await _resolve_quiet_hours(user_id, _dt.now(_UTC))
+    except Exception:  # noqa: BLE001
+        log.exception(
+            "executor.quiet_hours_predicate_failed",
+            user_id=user_id,
+            category=category,
+        )
+        in_window = False
+
+    if in_window:
+        log.debug(
+            "slack_dm_blocks.suppressed",
+            user_id=user_id,
+            category=category,
+        )
+        return
+
+    await _send_slack_dm_blocks(user_id, blocks=blocks, fallback=fallback)
 
 
 async def _send_slack_dm_blocks(
@@ -846,6 +906,12 @@ async def on_fill_event(payload: dict[str, Any], *, user_id: str) -> None:
         # strategy after the fill is recorded.
         anomaly_strategy_name: str | None = None
         anomaly_account_mode: str = "PAPER"
+        # Plan 05-05 Task 2: detect whether this fill belongs to an auto-
+        # executed proposal (the auto-branch wrote an `approval` event with
+        # execution_path="auto"). If so, the post-fill DM is the Surface-4a
+        # informational FYI (no buttons), routed via a ROUTINE category that
+        # RESPECTS quiet hours (D-T18) — NOT the bypassing anomaly tier.
+        is_auto_execution: bool = False
         async with sf() as session, session.begin():
             row = (
                 await session.execute(
@@ -941,6 +1007,33 @@ async def on_fill_event(payload: dict[str, Any], *, user_id: str) -> None:
                 anomaly_strategy_name = tp_persisted.strategy_name
             anomaly_account_mode = row.account_mode or "PAPER"
 
+            # Plan 05-05 Task 2: was this proposal auto-executed? The auto-
+            # branch in runtime.py wrote an `approval` event whose payload
+            # carries execution_path="auto". Scan this user's approval events
+            # for one referencing this proposal_id with the auto path. (The
+            # event count per proposal is tiny — one approval — so this is a
+            # cheap targeted read.)
+            approval_rows = (
+                await session.execute(
+                    select(Event).where(
+                        Event.user_id == user_id,
+                        Event.event_type == "approval",
+                    )
+                )
+            ).scalars().all()
+            for ev in approval_rows:
+                try:
+                    outer = json.loads(ev.payload_json)
+                    ev_payload = outer.get("payload", outer)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if (
+                    ev_payload.get("proposal_id") == proposal_id
+                    and ev_payload.get("execution_path") == "auto"
+                ):
+                    is_auto_execution = True
+                    break
+
         # ---- First-live-trade stamp (outside the fill transaction). -----
         # Plan 02-06 Task 2 — opens its own transaction. Set-once on
         # `strategy_metadata.first_live_trade_confirmed_at`. Subsequent
@@ -1006,6 +1099,42 @@ async def on_fill_event(payload: dict[str, Any], *, user_id: str) -> None:
             else "routine_fill"
         )
         await _send_slack_dm_respecting_quiet_hours(user_id, msg, category=_fill_category)
+
+        # ---- Auto-execution informational DM (Plan 05-05 Task 2 / D-T18). --
+        # When the fill belongs to an auto-executed proposal, send the
+        # Surface-4a informational Block Kit FYI (no approve/reject block) via
+        # a ROUTINE category so it RESPECTS quiet hours (NOT the bypassing
+        # anomaly tier — inverting the two is the documented anti-pattern).
+        # Best-effort: a DM-send failure must never abort the (already-
+        # committed) fill.
+        if is_auto_execution and tp_persisted is not None:
+            try:
+                from gekko.reporter.slack import build_auto_execution_dm
+
+                _ref_price = payload.get("filled_avg_price") or "0"
+                auto_blocks = build_auto_execution_dm(
+                    strategy_name=tp_persisted.strategy_name,
+                    side=str(tp_persisted.side),
+                    qty=str(tp_persisted.qty),
+                    ticker=ticker,
+                    ref_price=_ref_price,
+                    rationale=tp_persisted.rationale,
+                )
+                await _send_slack_dm_blocks_respecting_quiet_hours(
+                    user_id,
+                    blocks=auto_blocks,
+                    category="auto_execution",
+                    fallback=(
+                        f"🤖 Auto-executed — {tp_persisted.strategy_name} "
+                        f"{tp_persisted.ticker}"
+                    ),
+                )
+            except Exception:  # noqa: BLE001 — never abort the fill
+                log.exception(
+                    "executor.auto_exec_dm_failed",
+                    proposal_id=proposal_id,
+                    strategy_name=tp_persisted.strategy_name,
+                )
 
         # ---- Post-fill anomaly hook (Plan 05-04 Task 2 / SC-4). ----------
         # A sudden realized loss on this fill may push the strategy's single-

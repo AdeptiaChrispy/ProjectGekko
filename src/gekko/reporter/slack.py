@@ -833,7 +833,78 @@ def build_first_live_card(
     return blocks
 
 
+def build_auto_execution_dm(
+    *,
+    strategy_name: str,
+    side: str,
+    qty: Decimal | str,
+    ticker: str,
+    ref_price: Decimal | str,
+    rationale: str,
+) -> list[dict[str, Any]]:
+    """Build the auto-execution informational Block Kit DM (UI-SPEC §Surface 4a).
+
+    Plan 05-05 Task 2 (TRUST-02 / SC-2 / D-T18). This DM is **informational
+    only** — it carries NO ``actions`` block (no approve/reject buttons): the
+    timeline is already closed because the trade auto-executed. It is sent via
+    ``_send_slack_dm_respecting_quiet_hours`` with a ROUTINE category so it is
+    SUPPRESSED during quiet hours (unlike the anomaly-demotion DM in Surface 6,
+    which bypasses — inverting the two is the documented anti-pattern).
+
+    All LLM-authored free-form text (``rationale``) is truncated to ~140 chars
+    and escaped via ``_escape_mrkdwn``. Deterministic fields (ticker, side, qty)
+    are schema-validated and safe; ``strategy_name`` is escaped defensively.
+
+    Shape (per UI-SPEC §Surface 4a):
+      * section: ``🤖 *Auto-executed* — `{strategy}` {side} {qty} {ticker} @ ~${price}``
+      * section: ``_{rationale_summary}_``
+      * context: ``No action needed — this is an FYI. Demote `{strategy}` if you
+        want approvals back.``
+    """
+    strategy_safe = _escape_mrkdwn(strategy_name)
+    side_upper = str(side).upper()
+    # ref_price formatted with thousands separator + 2dp per UI-SPEC copy.
+    try:
+        price_str = f"{Decimal(str(ref_price)):,.2f}"
+    except Exception:  # noqa: BLE001 — never let formatting abort the DM
+        price_str = str(ref_price)
+    rationale_summary = _escape_mrkdwn(rationale[:140])
+
+    return [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"🤖 *Auto-executed* — `{strategy_safe}` "
+                    f"{side_upper} {qty} {ticker} @ ~${price_str}"
+                ),
+            },
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"_{rationale_summary}_",
+            },
+        },
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": (
+                        "No action needed — this is an FYI. "
+                        f"Demote `{strategy_safe}` if you want approvals back."
+                    ),
+                }
+            ],
+        },
+    ]
+
+
 __all__: tuple[str, ...] = (
+    "build_auto_execution_dm",
     "build_fill_confirmation",
     "build_first_live_card",
     "build_no_action_message",

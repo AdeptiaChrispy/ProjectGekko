@@ -509,3 +509,58 @@ def test_runtime_has_no_direct_broker_place_order() -> None:
         "runtime.py must not call broker.place_order directly — route through "
         "execute_proposal so OrderGuard re-checks all caps (D-T08)."
     )
+
+
+# ---------------------------------------------------------------------------
+# 9. Proposal card: AUTO-EXECUTED chip + no Approve/Reject (UI-SPEC §4b)
+# ---------------------------------------------------------------------------
+
+
+def _render_card(**ctx_overrides: Any) -> str:
+    from pathlib import Path
+
+    from jinja2 import Environment, FileSystemLoader
+
+    templates_dir = (
+        Path(__file__).parent.parent.parent
+        / "src" / "gekko" / "dashboard" / "templates"
+    )
+    env = Environment(  # noqa: S701 — test render, autoescape on anyway
+        loader=FileSystemLoader(str(templates_dir)),
+        autoescape=True,
+    )
+    ctx: dict[str, Any] = {
+        "proposal_id": "p1",
+        "ticker": "NVDA",
+        "side": "BUY",
+        "qty": "5",
+        "rationale": "Bullish.",
+        "evidence": [],
+        "status": "APPROVED",
+        "account_mode": "PAPER",
+        "expires_at": None,
+        "slack_team_id": "",
+        "slack_channel_id": "",
+        "timeout_minutes": 30,
+        "expired_at_local": "",
+    }
+    ctx.update(ctx_overrides)
+    return env.get_template("_proposal_card.html.j2").render(**ctx)
+
+
+def test_auto_card_renders_chip_and_no_actions() -> None:
+    """An auto-executed card shows AUTO-EXECUTED chip and no Approve/Reject."""
+    html = _render_card(execution_path="auto", status="FILLED")
+    assert "chip-auto-executed" in html
+    assert "AUTO-EXECUTED" in html
+    # No human action buttons on an auto card.
+    assert "/approve" not in html
+    assert "/reject" not in html
+
+
+def test_hitl_pending_card_still_has_actions() -> None:
+    """A normal PENDING HITL card keeps Approve/Reject and no auto chip."""
+    html = _render_card(status="PENDING")  # no execution_path
+    assert "chip-auto-executed" not in html
+    assert "/approve" in html
+    assert "/reject" in html
