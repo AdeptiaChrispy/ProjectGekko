@@ -10,9 +10,13 @@ It runs as an always-on desktop client (Mac Mini or Windows machine) and support
 
 A trustworthy autonomous agent that turns a plain-English investment thesis into actual, monitored trades on the user's own brokerage account — starting human-in-the-loop with small dollars and graduating to autonomy as trust is earned. **v1.0 confirmed this is the right core value**: the manual walking-skeleton demo on 2026-06-12 produced three real paper-trading fills (AVGO, NVDA, AMD) with a SHA-256 audit-chain proof of correctness; the loop works.
 
-## Current State (v1.0 shipped 2026-06-15)
+## Current State (v2.0 shipped 2026-06-28)
 
-**Codebase:** ~37 src files, Python 3.12, Claude Agent SDK 0.2.93. 365+ unit tests + 11 integration tests passing on cassette mode; manual demo proved real-world correctness on real Slack + Alpaca paper + Claude Sonnet 4.6.
+**v2.0 "Safety & Trust"** (Phases 2-5, 44 plans, 94 tasks) added: the OrderGuard single deterministic order firewall (every order — HITL and auto — traverses one zero-decorator `place_order` pipeline), real-money Alpaca live with the first-live dual-channel gate, production HITL UX (Slack Block Kit, quiet hours, timeout=REJECT), agent Researcher/Decision separation + two-tier cost ceiling, and the **trust ladder**: per-strategy `propose-only → auto-within-caps` promotion, portfolio-level caps, capital scaling as a separate rung, and anomaly auto-demotion on single-day drawdown. Tagged `v2.0`.
+
+**v2.0 close note:** milestone audit was `tech_debt`. One in-scope gap (anomaly reflex not armed in the FastAPI lifespan) was fixed at close (commit `9e0fcb5`). Deferred to Phase 7: autonomous scheduled cadence + scheduled-run HITL surfacing (audit BLOCKER-2) and the COST-04 "longer cadence" reschedule. The full pytest suite has pre-existing order-dependent isolation fragility (reliable signal is per-file isolation).
+
+**Codebase (v1.0 baseline):** ~37 src files, Python 3.12, Claude Agent SDK 0.2.93. 365+ unit tests + 11 integration tests passing on cassette mode; manual demo proved real-world correctness on real Slack + Alpaca paper + Claude Sonnet 4.6.
 
 **Tech stack delivered:**
 - Backend: Python 3.12, Claude Agent SDK, FastAPI, SQLAlchemy 2.x async, Alembic, APScheduler 3.x
@@ -38,15 +42,15 @@ A trustworthy autonomous agent that turns a plain-English investment thesis into
 - ✓ Every record carries `user_id`; per-user encrypted credentials (SQLCipher PRAGMA-key) work end-to-end with no plaintext on disk — v1.0
 - ✓ Slack DM as the primary HITL surface — v1.0 (Block Kit card + Approve/Reject/Edit-Size/Escalate buttons, with cross-user defense)
 
-### Active (v2.0 — Safety & Trust)
+### Validated (shipped in v2.0)
 
-- [ ] **OrderGuard** — non-LLM cap-enforcement layer for size, daily loss, max trades/day, sector exposure, qty×price sanity (≤ 2%), paper-vs-live credential pairing; first-real-money two-channel confirmation; kill switch within 5s
-- [ ] **Real-money Alpaca live** — promote paper strategy to live with all OrderGuard guarantees, red banner everywhere, PDT-rule awareness, wash-sale flagging
-- [ ] **Production HITL UX** — idempotent Slack buttons (at-least-once delivery), configurable quiet hours, timeout=REJECT default, edit-size + escalate-to-dashboard, stale-proposal expiry
-- [ ] **Executor-error → Slack notification** (Phase-3 carry-forward from v1.0) — DM operator when post-approval execution fails (`MarketClosed`, `BrokerOrderError`)
-- [ ] **Agent architecture** — formalize Researcher (read-only, zero order/credential access) and Decision (structured-brief-only) separation; prompt-injection defense via source allowlist + `<UNTRUSTED>` delimiters; bounded research turns
-- [ ] **Two-tier cost ceiling** — 80% graceful degradation (longer cadence, Haiku triage, shorter context) + 100% hard halt; user-configurable daily ceiling; per-strategy/per-user cost ledger visible in dashboard
-- [ ] **Trust Ladder** — `propose-only` → `auto-execute-within-caps` per strategy with explicit promotion gate; portfolio-level caps stack on per-strategy caps; capital scaling is a separate trust rung; anomaly auto-demotion on drawdown
+- ✓ **OrderGuard** — non-LLM cap-enforcement firewall (size, daily loss, max trades/day, sector exposure, qty×price ≤2%, paper/live pairing); first-real-money dual-channel confirmation; kill switch — v2.0 (single zero-decorator pipeline; every order traverses it)
+- ✓ **Real-money Alpaca live** — paper→live promotion with all OrderGuard guarantees, red banner, PDT awareness, wash-sale flagging — v2.0
+- ✓ **Production HITL UX** — idempotent Slack buttons, quiet hours, timeout=REJECT, edit-size + escalate, stale-proposal expiry — v2.0
+- ✓ **Executor-error → Slack notification** (Phase-3 carry-forward) — operator DM on post-approval execution failure — v2.0
+- ✓ **Agent architecture** — Researcher/Decision separation, prompt-injection defense (source allowlist + delimiters), bounded turns — v2.0
+- ✓ **Two-tier cost ceiling** — 80% degrade (Haiku triage, shorter context) + 100% hard halt; per-user ledger — v2.0 *(note: "longer cadence" reschedule half deferred to Phase 7 — COST-04 partial)*
+- ✓ **Trust Ladder** — per-strategy `propose-only → auto-within-caps` promotion gate, portfolio caps, capital-scaling rung, anomaly auto-demotion — v2.0
 
 ### Active (v3.0 — Multi-User + Multi-Broker + Deployment)
 
@@ -129,4 +133,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-15 after v1.0 Vertical-Slice MVP milestone*
+*Last updated: 2026-06-28 after v2.0 Safety & Trust milestone*
