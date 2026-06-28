@@ -68,8 +68,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from gekko.execution.executor import on_fill_event
     from gekko.scheduler.jobs import (
         build_scheduler,
+        register_anomaly_evaluator,
         register_daily_pnl_cron,
         register_expire_stale_sweep,
+        register_market_open_snapshot,
     )
     from gekko.vault.passphrase import get_passphrase
 
@@ -150,6 +152,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # P1 scheduler instance (PATTERNS §2f warning). CronTrigger 16:30 ET; the
     # handler applies the D-59 NYSE schedule gate internally.
     register_daily_pnl_cron(app.state.scheduler, user_id=user_id)
+
+    # 2c. Register the NYSE-open start-of-day snapshot job (TRUST-04 / SC-4 /
+    # Plan 05-04 Task 3). MUST run before the anomaly evaluator can trip: it
+    # writes the STABLE per-strategy start-of-day denominator that
+    # evaluate_drawdown divides by all day. Without it, _load_start_of_day_value
+    # returns Decimal('0') and the drawdown guard (`if sod <= 0: return 0`)
+    # makes the reflex inert (v2.0 audit BLOCKER-1). Same P1 scheduler instance.
+    register_market_open_snapshot(app.state.scheduler, user_id=user_id)
+
+    # 2d. Register the NYSE-gated anomaly-evaluator tick (TRUST-04 / SC-4 /
+    # Plan 05-04 Task 3) — the unrealized-drawdown fallback partner to the
+    # post-fill anomaly hook. Both paths read the 2c snapshot denominator.
+    register_anomaly_evaluator(app.state.scheduler, user_id=user_id)
 
     # 3. AlpacaFillStream — wires the executor's on_fill_event callback.
     async def _on_fill(payload: dict) -> None:

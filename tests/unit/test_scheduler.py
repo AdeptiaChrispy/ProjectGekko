@@ -128,3 +128,30 @@ def test_no_apscheduler_4x_apis_in_jobs_source() -> None:
     assert "AsyncScheduler(" not in src
     assert "apscheduler.triggers.interval" in src
     assert "apscheduler.triggers.cron" in src
+
+
+def test_lifespan_arms_anomaly_snapshot_and_evaluator() -> None:
+    """The FastAPI lifespan MUST register the start-of-day snapshot AND the
+    anomaly evaluator (TRUST-04 / SC-4) — v2.0 audit BLOCKER-1 regression gate.
+
+    Source-level invariant in the project's AST/grep-gate idiom (cf.
+    ``test_no_apscheduler_4x_apis_in_jobs_source`` and the OrderGuard
+    zero-decorator gate). Without these two registrars in the lifespan, no
+    start-of-day snapshot is written → ``evaluate_drawdown``'s denominator is
+    Decimal('0') → the anomaly auto-demotion reflex is inert in production even
+    though the unit-level evaluator is correct. This guards the *wiring*, which
+    a heavy lifespan integration test cannot do reliably here (the lifespan
+    stubs the scheduler and pulls in SQLCipher)."""
+    import inspect
+
+    from gekko.dashboard import app as dashboard_app
+
+    src = inspect.getsource(dashboard_app.lifespan)
+    assert "register_market_open_snapshot(" in src, (
+        "lifespan must call register_market_open_snapshot — without the "
+        "start-of-day snapshot the anomaly reflex cannot trip (BLOCKER-1)"
+    )
+    assert "register_anomaly_evaluator(" in src, (
+        "lifespan must call register_anomaly_evaluator — the unrealized-drawdown "
+        "fallback tick (BLOCKER-1)"
+    )
