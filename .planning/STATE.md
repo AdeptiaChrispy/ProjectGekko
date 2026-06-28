@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Safety & Trust
-current_phase: 05
-status: verifying
+current_phase: 0
+status: Awaiting next milestone
 stopped_at: Phase 5 UI-SPEC approved
-last_updated: "2026-06-26T20:08:51.219Z"
-last_activity: 2026-06-26
-last_activity_desc: Phase 05 complete
+last_updated: "2026-06-28T11:54:37.384Z"
+last_activity: 2026-06-28
+last_activity_desc: Milestone v2.0 completed and archived
 progress:
   total_phases: 5
   completed_phases: 5
@@ -29,11 +29,10 @@ current_phase_name: trust-ladder-per-strategy-promotion-portfolio-caps
 
 ## Current Position
 
-Phase: 05
-Plan: Not started
-Status: Phase complete — ready for verification
-Last activity: 2026-06-26 — Phase 05 complete
-Next: `/gsd-discuss-phase 5` (or `/gsd-plan-phase 5`)
+Phase: Milestone v2.0 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-06-28 — Milestone v2.0 completed and archived
 
 ## Performance Metrics
 
@@ -407,17 +406,7 @@ After the manual demo passes, the next milestone-level step is either `/gsd-comp
 
 ## Operator Next Steps
 
-**Phases 3 AND 4 are fully closed** (executed → verified → human UAT → security-verified). Roadmap pointer is now on **Phase 5 (Trust Ladder)**, not yet started.
-
-- **Phase 3** — 15/15 plans; verification 5/5; human UAT closed; security 98/98 threats CLOSED (`03-SECURITY.md`). The 5 manual-only items from `deferred-items.md` were exercised in live UAT.
-- **Phase 4** — 8/8 plans; verification 5/5; human UAT (3 live pass: /spend renders, cost-alert DMs one-per-threshold, hard-halt resume; 2 deferred-with-coverage: tz-midnight reset + prompt-injection event); security 32/32 threats CLOSED (`04-SECURITY.md`, commit `8ab6598`). Two real bugs were caught live during UAT and fixed: 04-07 (`/spend` 500 from over-quoted migration server_default + fragile parse → migration 0006 repair) and 04-08 (cost-alert DM spam from flush-without-commit → `session.begin()` + real-session regression test).
-
-**Next command:** `/gsd-discuss-phase 5` to scope Trust Ladder (per-strategy promotion propose-only → auto-within-caps, portfolio-level caps, capital-scaling rung, anomaly auto-demotion), or `/gsd-plan-phase 5` to go straight to planning. NOTE: the Phase-5 open question "trust ladder statistical promotion criteria (N successful HITL approvals, no cap breaches)" must be resolved with Chris during discuss-phase — see Open Questions Carried Forward.
-
-**Known tracked test-debt (not blocking):** `tests/unit/test_dashboard_edit_size.py` has 4 stale tests asserting `200` that should expect `302` after the 03-15 contract change (route now 302-redirects on non-HX requests). Deselect when gating unrelated work; fix mirrors `test_dashboard_hitl_actions.py::test_edit_size_get_hx_vs_direct_nav`.
-
-- Before placing real-money live trades, the operator MUST: (1) sign up for an Alpaca live account, (2) generate live API key + secret, (3) `uv run gekko credentials add-alpaca-live`, (4) `uv run gekko strategy promote-live <name>` (or click "Promote to Live" in the dashboard with typed-name confirm), (5) flip the strategy's mode to "live" in the dashboard. Once promoted, the FIRST live trade per strategy requires BOTH Slack approve AND dashboard `/live-confirm` (with 5s read timer + 2 ack checkboxes); subsequent live trades on the same strategy use the standard single-channel approve path.
-- The `dashboard_url` Setting defaults to `http://localhost:8000`. Operators running with an ngrok / public-facing tunnel MUST override `DASHBOARD_URL` in `.env` so the HITL-06 dual-channel Slack DM points at the correct host.
+- Start the next milestone with /gsd-new-milestone
 
 ## Decisions
 
