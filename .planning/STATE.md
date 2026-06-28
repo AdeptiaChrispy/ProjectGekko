@@ -5,15 +5,15 @@ milestone_name: Safety & Trust
 current_phase: 0
 status: Awaiting next milestone
 stopped_at: Phase 5 UI-SPEC approved
-last_updated: "2026-06-28T11:54:37.384Z"
+last_updated: "2026-06-28T12:18:51.751Z"
 last_activity: 2026-06-28
 last_activity_desc: Milestone v2.0 completed and archived
 progress:
-  total_phases: 5
+  total_phases: 10
   completed_phases: 5
   total_plans: 44
   completed_plans: 44
-  percent: 100
+  percent: 50
 current_phase_name: trust-ladder-per-strategy-promotion-portfolio-caps
 ---
 
@@ -189,6 +189,14 @@ Items acknowledged and proceeded-past at milestone close on 2026-06-15:
 |---|-------------|------|--------|-----------|
 | 260612-dix | raise rationale cap to 5000 + Slack-render truncate guard (fix 01-09 demo finding) | 2026-06-12 | 03a9b8e | [260612-dix-raise-rationale-cap-to-5000-slack-render](./quick/260612-dix-raise-rationale-cap-to-5000-slack-render/) |
 | 260612-nlv | _send_slack_dm identity-split: translate gekko_user_id → slack_user_id (6th 01-09 demo finding; channel_not_found fix) | 2026-06-12 | d7b26c8 | [260612-nlv-fix-send-slack-dm-identity-split-transla](./quick/260612-nlv-fix-send-slack-dm-identity-split-transla/) |
+
+### Roadmap Evolution
+
+- Phase 05.1 inserted after Phase 5: Backtesting Engine
+- Phase 05.2 inserted after Phase 5: Quant Factor and Signal Library
+- Phase 05.3 inserted after Phase 5: Fundamental Research and Reports
+- Phase 05.4 inserted after Phase 5: Behavior Analytics Shadow Account
+- Phase 05.5 inserted after Phase 5: Conversational Strategy Interface
 
 ## Session Continuity
 

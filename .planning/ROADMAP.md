@@ -9,7 +9,7 @@
 
 - ✅ **v1.0 Vertical-Slice MVP** — Phase 1 (shipped 2026-06-15) — Paper-trading + Slack HITL works end-to-end on the operator's machine. See `milestones/v1.0-ROADMAP.md` for the archived snapshot.
 - 🚧 **v2.0 Safety & Trust** — Phases 2-5 (planned) — OrderGuard, real-money Alpaca live, production HITL UX, agent architecture hardening, trust ladder.
-- 📋 **v3.0 Multi-User + Multi-Broker + Deployment** — Phases 6-9 (planned) — Web dashboard with multi-user auth, operations/observability, IBKR + Schwab, browser-fallback brokers + one-command install.
+- 📋 **v3.0 Research & Analysis + Multi-User + Multi-Broker + Deployment** — Phases 5.1–5.5 + 6-9 (planned) — Research & Analysis block (backtesting, quant factor library, fundamental research/reports, behavior analytics, conversational strategy UI), then web dashboard with multi-user auth, operations/observability, IBKR + Schwab, browser-fallback brokers + one-command install.
 
 ## Phase Ordering Rationale
 
@@ -25,11 +25,14 @@ This roadmap reflects the **safety-first sequencing** that all four research dim
 8. **Additional API brokers (IBKR + Schwab).** Layer onto a hardened `Broker` ABC; Schwab's 7-day refresh-token coordinator is the operational headline.
 9. **Browser-Fallback Brokers + Deployment Packaging.** Robinhood + Fidelity last (fragility, TOS risk); merged with one-command install + first-run wizard.
 
+**Research & Analysis block (Phases 5.1–5.5, inserted 2026-06-28):** A native Claude Agent SDK reimplementation of capabilities inspired by HKUDS/Vibe-Trading and ai4finance-foundation/finrobot — concepts only, no LangChain/AutoGen, Claude-only LLM (honors the "stay in the Anthropic ecosystem" constraint). Sequenced *before* the dashboard so the dashboard has real backtests, factors, reports, and analytics to surface. Internal order: 5.1 Backtesting Engine → 5.2 Factor/Signal Library (feeds the backtester) → 5.3 Fundamental Research & Reports → 5.4 Behavior Analytics → 5.5 Conversational Strategy Interface (the chat-driven surface that presents all of the above; precursor to the Phase 6 dashboard).
+
 **Hard sequencing constraints:**
 
 - Phases 1 → 2 → 3 cannot be reordered (slice → safety floor → production HITL UX)
 - Phase 5 (Trust Ladder) must precede Phase 9 (Browser-Fallback) — graduate autonomy on stable API brokers, not fragile browser path
 - Phase 7 (Ops) must precede full autonomy in production usage
+- Phases 5.1 → 5.2 build the quant validation stack; 5.5 (Conversational Interface) depends on 5.1–5.4 and precedes Phase 6 (Dashboard reuses the 5.5 surface)
 
 ## Phases
 
@@ -51,8 +54,15 @@ See `milestones/v1.0-ROADMAP.md` for the full archived snapshot (with detailed p
 - [x] **Phase 4: Agent Architecture & Cost Bounds** — Research/decision separation, prompt-injection defense, two-tier cost ceiling. 8/8 plans executed (5 + 3 gap-closure). Verification 5/5; human UAT closed (3 live pass, 2 deferred-with-coverage; 2 live bugs found+fixed: 04-07 /spend, 04-08 DM dedup). Security verified — 32/32 threats closed (04-SECURITY.md). (completed 2026-06-25)
 - [x] **Phase 5: Trust Ladder (Per-Strategy Promotion & Portfolio Caps)** — Propose-only → auto-within-caps; portfolio-level caps; capital scaling rung; anomaly demotion. (completed 2026-06-26)
 
-### 📋 v3.0 Multi-User + Multi-Broker + Deployment (Planned)
+### 📋 v3.0 Research & Analysis + Multi-User + Multi-Broker + Deployment (Planned)
 
+*Research & Analysis block (Phases 5.1–5.5, INSERTED 2026-06-28): a native Claude Agent SDK reimplementation of capabilities inspired by [HKUDS/Vibe-Trading](https://github.com/HKUDS/Vibe-Trading) and [ai4finance-foundation/finrobot](https://github.com/ai4finance-foundation/finrobot). Concepts only — no LangChain/AutoGen, Claude-only LLM, honoring the PROJECT.md "stay in the Anthropic ecosystem" constraint. 5.1–5.4 build the analysis capabilities; 5.5 is the chat-driven web interface that surfaces them. Sequenced before the dashboard so it has real backtests/reports/analytics to surface.*
+
+- [ ] **Phase 05.1: Backtesting Engine** *(INSERTED)* — Validate a strategy on history before it trades live: walk-forward, Monte Carlo CIs, point-in-time safety, Sharpe/drawdown/IR/win-rate, reproducible run cards. Feeds the trust-ladder.
+- [ ] **Phase 05.2: Quant Factor and Signal Library** *(INSERTED)* — Library of testable quant factors/signals with IC/IR ranking, lookahead-guard tests, alive/reversed/dead categorization. Feeds the 05.1 backtester.
+- [ ] **Phase 05.3: Fundamental Research and Reports** *(INSERTED)* — Financial-statement analysis, DCF valuation, peer comparables, 3-yr projections, and equity-research report generation (HTML/PDF). Deepens the "research the thesis" half.
+- [ ] **Phase 05.4: Behavior Analytics Shadow Account** *(INSERTED)* — Import broker journals; profile disposition effect/overtrading; extract recurring trades into signal logic; counterfactual rule-vs-actual; reports with audit trails.
+- [ ] **Phase 05.5: Conversational Strategy Interface** *(INSERTED)* — Chat-driven web UI (Vibe-Trading-style) to build strategies in plain English, watch the agent's step-trace, see trade proposals, and view strategy performance over time inline. Surfaces 5.1–5.4 outputs; precedes the full dashboard.
 - [ ] **Phase 6: Web Dashboard & Multi-User Auth** — Magic-link auth, strategy editor, portfolio view, audit browser, web approval fallback.
 - [ ] **Phase 7: Operations & Observability** — launchd/NSSM supervision, heartbeat, NTP, reconciliation, market-hours scheduling.
 - [ ] **Phase 8: Additional API Brokers (IBKR + Schwab)** — `Broker` ABC implementations; Schwab 7-day OAuth refresh coordinator; IBKR Gateway supervision.
@@ -200,13 +210,115 @@ Plans:
 
 **UI hint**: yes
 
+### Phase 05.1: Backtesting Engine
+
+> *INSERTED 2026-06-28. Native Claude Agent SDK reimplementation — concept inspired by [HKUDS/Vibe-Trading](https://github.com/HKUDS/Vibe-Trading)'s signal/backtest core. No LangChain; Python + SQLite on the existing stack.*
+
+**Goal**: User can run a defined strategy against historical market data and get a trustworthy, reproducible performance report — walk-forward windows, Monte Carlo / bootstrap confidence intervals, point-in-time data safety, and OHLC integrity checks — so a strategy is validated on history before it ever trades live, feeding the existing trust-ladder (paper-validated → live promotion).
+**Milestone:** v3.0
+**Mode:** mvp
+**Depends on**: Phase 5
+**Requirements**: BTST-01, BTST-02, BTST-03, BTST-04, BTST-05 *(NEW — to be formalized in REQUIREMENTS.md before planning)*
+**Success Criteria** (what must be TRUE):
+
+  1. User can point a strategy at a historical date range and receive a run card with Sharpe ratio, max drawdown, information ratio, win rate, and benchmark comparison, all computed from point-in-time-safe data (no lookahead leakage)
+  2. User running the same backtest twice with the same inputs gets identical results — every run card records its inputs, data snapshot, and code version for reproducibility
+  3. User sees walk-forward results (out-of-sample windows), not just a single in-sample fit, and a Monte Carlo / bootstrap confidence interval around the headline metrics so a lucky single path is distinguishable from a robust edge
+  4. Backtest hard-rejects data that fails OHLC integrity checks (high < low, non-positive prices, gaps) with the offending rows surfaced, rather than silently producing a misleading result
+  5. A strategy that fails to clear a user-set backtest threshold cannot be promoted toward live trading — the result is wired into the trust-ladder promotion gate
+
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 05.2: Quant Factor and Signal Library
+
+> *INSERTED 2026-06-28. Native reimplementation — concept inspired by Vibe-Trading's alpha-factor zoos (GTJA191 / Qlib158 / Kakushadze101). Factor formulas reimplemented in Python; Claude-only for any reasoning.*
+
+**Goal**: User (and the agent) can draw on a library of testable quantitative factors/signals — each with an information-coefficient (IC) and information-ratio (IR) profile, lookahead-guard tests, and an alive/reversed/dead status — so trade decisions rest on concrete, backtestable signals rather than pure-LLM hunches. Factors feed directly into the Phase 5.1 backtester.
+**Milestone:** v3.0
+**Mode:** mvp
+**Depends on**: Phase 05.1
+**Requirements**: SGNL-01, SGNL-02, SGNL-03, SGNL-04, SGNL-05 *(NEW — to be formalized in REQUIREMENTS.md before planning)*
+**Success Criteria** (what must be TRUE):
+
+  1. User can list available factors and see each one's IC mean/std and IR ranking over a chosen universe and period, computed through the Phase 5.1 backtest harness
+  2. Every factor passes an automated lookahead-guard test before it can be listed; a factor that references future data is rejected and flagged, never silently included
+  3. User sees each factor categorized as alive / reversed / dead based on recent vs. historical performance, so decayed signals are visibly distinguished from live ones
+  4. The decision agent can request one or more factors as structured inputs to a trade rationale, and the chosen factors plus their current values are recorded in the trade's audit record
+  5. User can add a new factor definition and have it validated (purity/lookahead checks) and benched against the standard universe without writing bespoke harness code
+
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 05.3: Fundamental Research and Reports
+
+> *INSERTED 2026-06-28. Native reimplementation — concept inspired by [ai4finance-foundation/finrobot](https://github.com/ai4finance-foundation/finrobot)'s equity-research agents. Built on Gekko's existing SEC EDGAR + data sources and the Claude Agent SDK; no AutoGen, Claude-only LLM.*
+
+**Goal**: User can request a fundamental research brief on a ticker and receive a structured, sourced analysis — financial-statement extraction (income / balance sheet / cash flow), DCF valuation, peer comparables (P/E, EV/EBITDA), and 3-year projections — rendered as a shareable equity-research report (HTML/PDF with charts), deepening the "research the thesis" half of the agent.
+**Milestone:** v3.0
+**Mode:** mvp
+**Depends on**: Phase 05.2
+**Requirements**: FUND-01, FUND-02, FUND-03, FUND-04, FUND-05 *(NEW — to be formalized in REQUIREMENTS.md before planning)*
+**Success Criteria** (what must be TRUE):
+
+  1. User can request a research brief for a ticker and get income statement, balance sheet, and cash-flow figures extracted from primary filings (SEC EDGAR) with every figure traceable to its source filing and date
+  2. User sees a DCF valuation with its assumptions (discount rate, growth, terminal value) shown and adjustable, plus a peer-comparables table (P/E, EV/EBITDA) against a named peer set
+  3. User receives 3-year projections clearly labeled as model estimates (not facts), with the inputs that drive them visible
+  4. The agent can attach a fundamental brief's key findings to a trade proposal's rationale, with confidence and the specific evidence cited, consistent with the existing structured-rationale format
+  5. User can export the full brief as an HTML/PDF report with charts; the report carries a disclaimer consistent with the project's personal-use / non-regulated-advice posture
+
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 05.4: Behavior Analytics Shadow Account
+
+> *INSERTED 2026-06-28. Native reimplementation — concept inspired by Vibe-Trading's "Shadow Account" behavior analytics. Python + SQLite + Claude Agent SDK; a trust/observability feature, not a trading one.*
+
+**Goal**: User can import their own broker trade journal and get an honest mirror of their trading behavior — holding days, win rate, PnL ratio, drawdown, disposition effect, and overtrading detection — plus extraction of recurring trades into explicit signal logic and a counterfactual rule-vs-actual comparison, delivered as a report with an audit trail.
+**Milestone:** v3.0
+**Mode:** mvp
+**Depends on**: Phase 05.3
+**Requirements**: BHVR-01, BHVR-02, BHVR-03, BHVR-04, BHVR-05 *(NEW — to be formalized in REQUIREMENTS.md before planning)*
+**Success Criteria** (what must be TRUE):
+
+  1. User can import a broker trade journal (CSV) and see it parsed into per-trade records scoped to their own account, with malformed rows surfaced rather than silently dropped
+  2. User sees a behavior profile — holding days, win rate, PnL ratio, drawdown, disposition effect (holding losers / selling winners), and overtrading flags — computed from their actual fills
+  3. The system extracts recurring trade patterns into explicit, human-readable signal logic the user can review and optionally turn into a candidate strategy
+  4. User sees a counterfactual comparison: how a rule-based "shadow" version of their behavior would have performed versus their actual trades, highlighting misses and rule violations
+  5. User can export the analysis as an HTML/PDF report; all imported data and derived findings are recorded in the append-only audit log and isolated per user
+
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 05.5: Conversational Strategy Interface
+
+> *INSERTED 2026-06-28. Chat-driven web surface, visually modeled on the Vibe-Trading agent UI. Built on Gekko's existing FastAPI + HTMX + Jinja2 web stack (extending the Phase 3 dashboard surface) — no new SPA framework, Claude Agent SDK for the conversation. Precursor to, and reused by, the Phase 6 dashboard.*
+
+**Goal**: User can open a web chat interface, describe and refine an investment strategy in plain English, watch the agent's research/decision work as a live step-trace, review generated trade proposals, and view each strategy's performance over time — all inline in the conversation — turning Gekko's core "plain-English thesis → monitored trades" loop into a first-class visual experience.
+**Milestone:** v3.0
+**Mode:** mvp
+**Depends on**: Phase 05.4
+**Requirements**: CHAT-01, CHAT-02, CHAT-03, CHAT-04, CHAT-05 *(NEW — to be formalized in REQUIREMENTS.md before planning)*
+**Design reference**: `../../../Interface Examples/` (4 Vibe-Trading screenshots, 2026-06-28) — left sidebar (Home / Agent / Sessions), welcome screen with capability chips + grouped example-prompt cards, conversational results with step-trace + inline metrics tables, analysis narrative + equity-curve sparkline + "Full Report", and a full-report view with metrics ribbon, Chart/Trades/Code tabs, candlestick chart, and CSV download. *(Visual inspiration; a UI-SPEC via `/gsd-ui-phase 5.5` should formalize the contract before planning.)*
+**Success Criteria** (what must be TRUE):
+
+  1. From the web UI, user describes a strategy in plain English in a chat input and the agent responds conversationally, producing/updating the same canonical strategy document used by the existing onboarding flow — no form required to get started
+  2. User sees the agent's work as a live step-trace (e.g., "Done · N steps · Ns") and structured results — strategy summary and a key-metrics table — rendered inline in the conversation, visually consistent with the reference mockup
+  3. A left sidebar lists prior sessions and the user can resume any past conversation with its context intact; a welcome screen offers example-prompt cards to start a new one
+  4. User can see trade proposals for a strategy inline and act on them through the existing HITL approval path, and can view the strategy's performance over time (equity curve + key metrics with a link to the full report) drawing on the Phase 5.1 backtester and 5.4 analytics
+  5. The interface runs on the existing FastAPI + HTMX web surface behind the current session login, is scoped to the signed-in user, and shows the paper-vs-live banner on every view — no new front-end framework introduced
+
+**Plans**: TBD
+**UI hint**: yes
+
 ### Phase 6: Web Dashboard & Multi-User Auth
 
 **Goal**: Each user can sign into a personal web dashboard via magic-link email, view their portfolio and trade history with rationale, edit strategies via chat-and-form, drop ad-hoc guidance, browse the audit log, and approve trades via web fallback when Slack is unavailable.
 **Milestone:** v3.0
 **Mode:** mvp
-**Depends on**: Phase 5
+**Depends on**: Phase 05.5
 **Requirements**: AUTH-01, AUTH-02, DASH-01, DASH-02, DASH-03, DASH-05, DASH-06, REPT-02, REPT-03, REPT-05, AUDT-03, AUDT-04
+**Note**: Phases 5.1–5.5 were inserted ahead of this phase (2026-06-28). The conversational interface (5.5) and the research/analysis capabilities (5.1–5.4) are reused here; the dashboard layers multi-user magic-link auth, audit browsing, and the web approval fallback on top of that surface.
 **Success Criteria** (what must be TRUE):
 
   1. User can request a magic-link email, click the link, and land on their dashboard with a session that persists across browser refresh (default 7-day timeout); sessions are scoped per user and never leak data across users
